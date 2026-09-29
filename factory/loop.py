@@ -53,6 +53,26 @@ logger = logging.getLogger("factory.loop")
 # ESM 环境下非法的 CommonJS 惯用法（④ 静态拦截用）
 _CJS_REQUIRE = re.compile(r"""require\s*\(\s*['"]vitest['"]\s*\)""")
 
+# 「测试自身坏了」的信号：一旦出现就不再是「缺实现」，而是真的 TEST_BROKEN
+_BROKEN_TEST_PATTERNS = (
+    re.compile(r"Parse failure|Unexpected token|SyntaxError", re.IGNORECASE),
+    re.compile(r"ReferenceError", re.IGNORECASE),
+)
+
+# 收集阶段「模块找不到」的两种典型措辞
+#   Rolldown/Node: Cannot find module '<spec>' imported from <file>
+#   Vite:          Failed to resolve import "<spec>" from "<file>"
+_MISSING_MODULE_PATTERNS = (
+    re.compile(
+        r"""Cannot find module\s*['"](?P<spec>[^'"]+)['"]\s*imported from\s*(?P<frm>[^\s'"]+)""",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"""Failed to resolve import\s*['"](?P<spec>[^'"]+)['"]\s*from\s*['"](?P<frm>[^'"]+)['"]""",
+        re.IGNORECASE,
+    ),
+)
+
 
 def _backend_relative(path: str, backend_dir: str = "backend") -> str:
     """把 output_dir 相对路径转成 backend/ 相对路径，供测试运行器使用。"""
@@ -199,6 +219,67 @@ class TddLoop:
             return False
         return bool(audit.weak_files)
 
+    def _expected_red_reason(self, outcome: TestOutcome) -> str | None:
+        """0 个测试是否只是「import 了尚未实现的模块」——是则返回说明，否则 None。
+
+        ★这是一处**架构性矛盾**，不是模型写得不好：
+
+          A（反 WEAK_TEST）：测试必须 import 真实实现，否则断言的是自己造的假数据
+          B（RED 门禁）    ：测试必须在实现存在前失败
+
+        在 vitest + 静态 ESM 下，A 会让文件在**收集阶段**就因模块不存在而整体失败，
+        于是 B 永远观察不到 `total > 0` 的失败。实测（vitest 4.1.8）：
+
+            Error: Cannot find module '../src/services/summary.js'
+                   imported from .../tests/missing.test.js
+            Test Files  1 failed (1)
+            Tests  no tests            <- total == 0
+
+        而模块存在、只是断言失败时是 `Tests 1 failed (1)`（total == 1）。
+
+        旧判据把 `total == 0` 一律当 TEST_BROKEN，于是模型被要求去修一个
+        **它无法修**的问题：删掉 import 就不再引用实现（变成 WEAK_TEST），
+        留着 import 就永远收集失败。重写预算被烧光，真凶却不在测试里。
+
+        实测对照：node 方言下「加载失败」被计为 1 个失败测试（total == 1），
+        所以从来没暴露这个问题 —— 这也是它只在 vitest 上出现的原因。
+        """
+        if outcome.passed or outcome.total > 0:
+            return None
+        merged = f"{outcome.stdout or ''}\n{outcome.stderr or ''}"
+        if not merged.strip():
+            return None
+        # 出现语法 / 运行期错误 -> 确实是测试自身坏了，仍判 TEST_BROKEN
+        if any(p.search(merged) for p in _BROKEN_TEST_PATTERNS):
+            return None
+
+        impl_root = (self.output_dir / self.config.implementation_root).resolve()
+        for pattern in _MISSING_MODULE_PATTERNS:
+            for match in pattern.finditer(merged):
+                spec = match.group("spec")
+                if not spec.startswith((".", "/")):
+                    continue  # 裸包名（如 'vitest'）缺失不是「实现尚未生产」
+                origin = match.group("frm")
+                # 报错里的「from」基准不统一，必须逐个试：
+                #   Rolldown/Node 给**绝对路径**（.../out/backend/tests/x.test.js）
+                #   Vite 给**相对 vitest root 的路径**（tests/x.test.js，root=backend/）
+                # 只按 output_dir 解析会让 Vite 措辞漏判（实测 T32h 就是这么挂的）。
+                candidates = []
+                base = Path(origin)
+                if base.is_absolute():
+                    candidates.append(base)
+                else:
+                    candidates.append(self.output_dir / origin)
+                    candidates.append(self.output_dir / self.config.backend_dir / origin)
+                for candidate in candidates:
+                    target = (candidate.parent / spec).resolve()
+                    if target == impl_root or impl_root in target.parents:
+                        return (
+                            f"收集失败的原因是 import 的实现模块尚不存在（{spec}）——"
+                            "这是 RED 阶段的常态而非测试缺陷，按有效 RED 放行"
+                        )
+        return None
+
     def _is_uncollectable(self, outcome: TestOutcome) -> bool:
         """测试文件能否被收集执行 —— 区分「测试失败」与「测试根本跑不起来」。
 
@@ -212,7 +293,16 @@ class TddLoop:
           收集失败 = 测试自己写坏了（实现阶段无论如何都修不好）
         旧行为把两者都当"整组失败"，于是 RED 门禁放行，
         4 轮实现修复全部白费 —— 任何实现都救不了一个坏掉的测试文件。
+
+        ★但「收集失败」本身还要再分两种（实测补充，见 _expected_red_reason）：
+          1) 测试自身坏了（语法错误 / 非法惯用法）      -> TEST_BROKEN，回退重写
+          2) 测试 import 了**尚未实现**的模块           -> 有效 RED，进实现阶段
+        第 2 种在静态 ESM + vitest 下是 RED 阶段的**常态**：
+        实现还没生产出来，import 必然解析不到。把它当 TEST_BROKEN
+        等于要求模型去修一个它修不了的问题（删掉 import 反而变成 WEAK_TEST）。
         """
+        if self._expected_red_reason(outcome) is not None:
+            return False
         return not outcome.passed and outcome.total == 0
 
     def _runner_excerpt(self, outcome: TestOutcome, limit: int = 18) -> str:
@@ -842,6 +932,11 @@ class TddLoop:
         rewrites = 0
         last_violations: list[dict[str, Any]] = []
         broken_test = False
+        # 0 个测试但成因是「实现尚未生产」-> 有效 RED，放行。
+        # 必须显式记一条：否则日志里只看到 0 个测试，读的人会以为测试坏了。
+        expected_red = self._expected_red_reason(red)
+        if expected_red:
+            logger.info("[门禁] %s %s", req_id, expected_red)
         while (self._is_weak(red, audit) or self._is_uncollectable(red)) and self.config.require_red_first:
             if rewrites >= self.config.max_test_rewrites:
                 break

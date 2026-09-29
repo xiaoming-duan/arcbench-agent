@@ -1006,6 +1006,76 @@ def t31_code_version_anchor() -> None:
         shutil.rmtree(repo, ignore_errors=True)
 
 
+def t32_missing_implementation_is_valid_red() -> None:
+    """★ 架构性矛盾：反 WEAK_TEST 要求「必须 import 真实实现」，而 RED 阶段
+    实现**还不存在** —— 静态 ESM 下这会让文件在收集阶段整体失败、报 0 个测试。
+
+    实测（vitest 4.1.8）：
+        Cannot find module '../src/services/summary.js' imported from .../tests/x.test.js
+        Tests  no tests        <- total == 0
+    模块存在、只是断言失败时才是  Tests 1 failed (1)（total == 1）。
+
+    旧判据把 total==0 一律当 TEST_BROKEN，等于要求模型去修一个它修不了的问题：
+    删掉 import 就不再引用实现（变 WEAK_TEST），留着 import 就永远收集失败。
+    重写预算被烧光，而真凶不在测试里。
+
+    实测对照：node 方言把「加载失败」计为 1 个失败测试（total==1），
+    所以这个坑只在 vitest 上暴露。
+    """
+    from factory.models import TestOutcome as TO
+
+    ws = make_workspace()
+    loop = build_loop(ws, FakeGenerator(write_script=[], design=sample_design(),
+                                        plan=sample_plan()))
+    tests_dir = ws / "backend" / "tests"
+    tests_dir.mkdir(parents=True, exist_ok=True)
+    tf = tests_dir / "x.test.js"
+    tf.write_text("import { f } from '../src/svc.js';\n", encoding="utf-8")
+
+    def outcome(stderr: str, total: int = 0, passed: bool = False) -> TO:
+        return TO(passed=passed, command="vitest", exit_code=1, total=total,
+                  failed=0, stdout="", stderr=stderr)
+
+    missing_impl = (
+        "Error: Cannot find module '../src/services/summary.js' "
+        f"imported from {tf}\n\n Test Files  1 failed (1)\n      Tests  no tests"
+    )
+    o = outcome(missing_impl)
+    check("T32a 缺实现模块的收集失败 -> 不算 TEST_BROKEN（有效 RED）",
+          loop._is_uncollectable(o) is False, str(loop._expected_red_reason(o)))
+    check("T32b 且给出可读理由（点明是 RED 常态）",
+          "尚未存在" in (loop._expected_red_reason(o) or "")
+          or "RED 阶段" in (loop._expected_red_reason(o) or ""),
+          str(loop._expected_red_reason(o)))
+
+    syntax = "RolldownError: Parse failure: Parse failed with 1 error:\nUnexpected token\n3: const x = ;"
+    check("T32c 真语法错误仍判 TEST_BROKEN",
+          loop._is_uncollectable(outcome(syntax)) is True)
+
+    hoisted = "ReferenceError: Cannot access '__vi_import_0__' before initialization"
+    check("T32d vi.hoisted 顶层引用仍判 TEST_BROKEN（旧病理不能放走）",
+          loop._is_uncollectable(outcome(hoisted)) is True)
+
+    bare = "Error: Cannot find module 'vitest' imported from " + str(tf)
+    check("T32e 缺的是裸包名（vitest）-> 不算有效 RED，仍判 TEST_BROKEN",
+          loop._is_uncollectable(outcome(bare)) is True)
+
+    helper = ("Error: Cannot find module '../helpers/util.js' "
+              f"imported from {tf}")
+    check("T32f 缺的是实现根之外的模块 -> 不算有效 RED（那是测试自己的依赖）",
+          loop._is_uncollectable(outcome(helper)) is True)
+
+    check("T32g 模块存在且断言失败（total=1）本来就放行",
+          loop._is_uncollectable(outcome("", total=1)) is False)
+
+    # Vite 的另一种措辞也要认
+    vite = ('Failed to resolve import "../src/svc.js" from "tests/x.test.js". '
+            "Does the file exist?")
+    check("T32h Vite 措辞（Failed to resolve import）同样识别",
+          loop._is_uncollectable(outcome(vite)) is False)
+    shutil.rmtree(ws, ignore_errors=True)
+
+
 def t23_uncollectable_test_rolls_back_to_test_stage() -> None:
     """测试文件跑不起来（0 个测试被收集）-> 判 TEST_BROKEN 并回退到写测试阶段，
     而不是把 4 轮实现预算浪费在一个坏掉的测试文件上。
@@ -1271,6 +1341,7 @@ def main() -> int:
         t29_test_file_drift_and_broken_priority,
         t30_esm_contract_and_static_syntax_check,
         t31_code_version_anchor,
+        t32_missing_implementation_is_valid_red,
     ):
         try:
             fn()
