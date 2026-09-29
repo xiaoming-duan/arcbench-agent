@@ -227,6 +227,10 @@ RUN_REPORT_FIELDS: tuple[str, ...] = (
     "results",
     "cost",
     "artifacts",
+    # 代码版本锚点：head / dirty_count / trustworthy。
+    # 没有它就无法回答「这次跑在哪份代码上」——已为此付过三次代价
+    # （to_dict 缺字段静默失败、measure_source 别名断言失效、并发写入污染运行）。
+    "code_version",
 )
 
 REQUIREMENT_RESULT_FIELDS: tuple[str, ...] = (
@@ -316,6 +320,10 @@ class RunReport:
     error: str = ""
     # 成本记账：token 累计 + 网关重试（与需求级的 rewrite_rounds 分开）
     cost: dict[str, Any] = field(default_factory=dict)
+    # 代码版本锚点（factory/version.py:git_state）。
+    # trustworthy=False 表示工作区有未提交改动 / 取不到 git 信息 ——
+    # 该次运行的测量基础可疑，结论不应被当成干净数据使用。
+    code_version: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         payload = {
@@ -353,6 +361,7 @@ class RunReport:
             ],
             "cost": dict(self.cost),
             "artifacts": list(self.artifacts),
+            "code_version": dict(self.code_version),
         }
         # 输出即校验：字段缺失直接报错，不产出不完整的报告
         return validate_run_report(payload)

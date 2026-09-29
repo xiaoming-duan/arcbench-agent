@@ -20,9 +20,13 @@ from .loop import TddLoop
 from .models import RequirementResult, RunReport
 from .store import FactoryStore
 from .testrunner import build_runner, ensure_backend_dependencies
+from .version import git_state, log_state
 from .workspace import copy_template_contents, load_requirements_raw, write_json
 
 logger = logging.getLogger("factory.pipeline")
+
+# 代码版本锚点的仓库根：factory/ 的上一级即工作区根
+ROOT_FOR_VERSION = Path(__file__).resolve().parent.parent
 
 
 def build_children_map(requirements) -> dict[str, list[str]]:
@@ -90,6 +94,14 @@ def run_factory(
     report = RunReport(project_name="", requirements_total=0)
     logger.info("工厂启动: requirements=%s output=%s", requirements_dir, output_dir)
     logger.info("配置: %s", config.describe())
+
+    # ---- 代码版本锚点 ----
+    # 记录本次运行跑在哪份代码上，并写入报告（.arc/factory-report.json）。
+    # 脏工作区 -> trustworthy=False：不是失败，而是标注「测量基础可疑」。
+    # 这个工作区已为此付过三次代价（to_dict 缺字段静默失败、measure_source
+    # 别名断言失效、并发写入污染运行到一半的测量），见 factory/version.py。
+    report.code_version = git_state(ROOT_FOR_VERSION)
+    log_state(report.code_version)
 
     store.start_run(f"工厂启动: {requirements_dir.name} -> {output_dir.name}")
 

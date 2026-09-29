@@ -939,6 +939,69 @@ def t30_esm_contract_and_static_syntax_check() -> None:
           "tests/_example.test.js" in cfg_text)
 
 
+def t31_code_version_anchor() -> None:
+    """代码版本锚点：每次运行自带 HEAD + 脏文件数；脏 / 取不到 都标不可信。
+
+    为什么值得断言：这个工作区已为「验证代码本身没被验证」付过三次代价 ——
+    to_dict 缺字段导致 patch 静默失败、measure_source 别名断言失效、
+    并发写入把一次测量改到一半。没有版本锚点，这三种事故在报告上都不留痕迹。
+
+    关键语义：**unknown != clean**。取不到 git 信息时必须判不可信，
+    否则「不知道干不干净」会被当成「干净」用。
+    """
+    import os
+    import subprocess
+    import tempfile
+
+    from factory.models import RUN_REPORT_FIELDS, RunReport, validate_run_report
+    from factory.version import UNKNOWN, describe, git_state
+
+    check("T31a code_version 已进入 RunReport 字段契约",
+          "code_version" in RUN_REPORT_FIELDS)
+    payload = RunReport(project_name="p", requirements_total=0).to_dict()
+    check("T31b to_dict 输出 code_version", "code_version" in payload)
+    check("T31c 含 code_version 的报告能通过 validate_run_report",
+          isinstance(validate_run_report(payload), dict))
+
+    # 非仓库：unknown != clean
+    norepo = Path(tempfile.mkdtemp(prefix="ver-norepo-"))
+    try:
+        st = git_state(norepo)
+        check("T31d 非 git 目录 -> head=unknown / dirty=-1 / 不可信",
+              st["head"] == UNKNOWN and st["dirty_count"] == -1
+              and st["trustworthy"] is False, str(st))
+        check("T31e 描述文本明说不可信", "不可信" in describe(st), describe(st))
+    finally:
+        shutil.rmtree(norepo, ignore_errors=True)
+
+    # 干净仓库 vs 有未提交改动
+    repo = Path(tempfile.mkdtemp(prefix="ver-clean-"))
+    env = dict(os.environ)
+    env.update({
+        "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.com",
+        "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.com",
+    })
+    try:
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True, env=env)
+        (repo / "a.txt").write_text("x", encoding="utf-8")
+        subprocess.run(["git", "add", "-A"], cwd=repo, check=True, env=env)
+        subprocess.run(["git", "commit", "-qm", "init"], cwd=repo, check=True, env=env)
+
+        clean = git_state(repo)
+        check("T31f 干净仓库 -> dirty=0 且可信",
+              clean["dirty_count"] == 0 and clean["trustworthy"] is True, str(clean))
+        check("T31g 干净时描述不含『可疑』", "可疑" not in describe(clean), describe(clean))
+
+        (repo / "a.txt").write_text("y", encoding="utf-8")
+        dirty = git_state(repo)
+        check("T31h 有未提交改动 -> 不可信，且列出具体文件",
+              dirty["dirty_count"] == 1 and dirty["trustworthy"] is False
+              and dirty["dirty_files"], str(dirty))
+        check("T31i 脏时描述点名『测量基础可疑』", "可疑" in describe(dirty), describe(dirty))
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+
+
 def t23_uncollectable_test_rolls_back_to_test_stage() -> None:
     """测试文件跑不起来（0 个测试被收集）-> 判 TEST_BROKEN 并回退到写测试阶段，
     而不是把 4 轮实现预算浪费在一个坏掉的测试文件上。
@@ -1203,6 +1266,7 @@ def main() -> int:
         t28_verdict_judgment_is_unified,
         t29_test_file_drift_and_broken_priority,
         t30_esm_contract_and_static_syntax_check,
+        t31_code_version_anchor,
     ):
         try:
             fn()
