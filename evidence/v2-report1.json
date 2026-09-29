@@ -1,0 +1,250 @@
+{
+  "project_name": "库存周转报表依赖闭包（6 需求）",
+  "requirements_total": 6,
+  "upstream_failed": 3,
+  "generator": "llm",
+  "test_dialect": "vitest",
+  "ok": false,
+  "error": "",
+  "results": [
+    {
+      "req_id": "REQ-1",
+      "state": "PASSED",
+      "attempts": 1,
+      "red_first_ok": true,
+      "note": "WEAK_TEST 经 1 次重写后修复",
+      "test_rewrites": 1,
+      "write_attempts": 1,
+      "cost": {
+        "calls": 5,
+        "prompt_tokens": 5909,
+        "completion_tokens": 10003,
+        "total_tokens": 15912,
+        "reasoning_tokens": 8833,
+        "gateway_retries": 0,
+        "adaptation_retries": 0,
+        "json_retries": 0,
+        "retries_succeeded": 0,
+        "retries_exhausted": 0,
+        "prompt_chars": 11958,
+        "max_prompt_chars": 3721
+      },
+      "test_plan_files": [
+        "backend/tests/items.listItems.test.js"
+      ],
+      "test_plan_baselines": {
+        "backend/tests/items.listItems.test.js": {
+          "path": "backend/tests/items.listItems.test.js",
+          "sha256": "babc9aad1bb7adf95de5feb9ce6278eb7caeebf43a86308a8bd385f2038c4985",
+          "assertions": 16,
+          "test_cases": 1
+        }
+      },
+      "unauthorized_files": [],
+      "weakening_violations": [],
+      "dependency_violations": [],
+      "dependency_uncertain": [],
+      "dependency_injection_warnings": [],
+      "regressions": [],
+      "gate_audits": {
+        "dep_ok": true,
+        "mock_ok": true,
+        "bypass_ok": true,
+        "combined_ok": true,
+        "enforce_dependency_usage": true,
+        "enforce_mock_check": true,
+        "block_injection_bypass": true
+      },
+      "broken_test": false,
+      "blocked_test_writes": [],
+      "test_rewrite_reasons": []
+    },
+    {
+      "req_id": "REQ-5",
+      "state": "FAILED",
+      "attempts": 1,
+      "red_first_ok": true,
+      "note": "实现失败: 连接异常（RemoteDisconnected）: Remote end closed connection without response",
+      "test_rewrites": 2,
+      "write_attempts": 1,
+      "cost": {
+        "calls": 5,
+        "prompt_tokens": 6172,
+        "completion_tokens": 13787,
+        "total_tokens": 19959,
+        "reasoning_tokens": 12211,
+        "gateway_retries": 2,
+        "adaptation_retries": 0,
+        "json_retries": 0,
+        "retries_succeeded": 0,
+        "retries_exhausted": 2,
+        "prompt_chars": 16632,
+        "max_prompt_chars": 1032
+      },
+      "test_plan_files": [
+        "backend/tests/req5.validateItem.test.js"
+      ],
+      "test_plan_baselines": {
+        "backend/tests/req5.validateItem.test.js": {
+          "path": "backend/tests/req5.validateItem.test.js",
+          "sha256": "41e7a94ba3c89c5c970fde9481d7862849806e4df5ea34a38a486fedf495fb21",
+          "assertions": 12,
+          "test_cases": 2
+        }
+      },
+      "unauthorized_files": [],
+      "weakening_violations": [
+        {
+          "code": "ASSERTION_DELETION",
+          "path": "backend/tests/req5.validateItem.test.js",
+          "detail": "用例数减少 2 -> 1"
+        }
+      ],
+      "dependency_violations": [],
+      "dependency_uncertain": [],
+      "dependency_injection_warnings": [],
+      "regressions": [],
+      "gate_audits": {},
+      "broken_test": false,
+      "blocked_test_writes": [],
+      "test_rewrite_reasons": []
+    },
+    {
+      "req_id": "REQ-3",
+      "state": "PASSED",
+      "attempts": 2,
+      "red_first_ok": true,
+      "note": "WEAK_TEST 经 1 次重写后修复",
+      "test_rewrites": 1,
+      "write_attempts": 1,
+      "cost": {
+        "calls": 6,
+        "prompt_tokens": 8121,
+        "completion_tokens": 18307,
+        "total_tokens": 26428,
+        "reasoning_tokens": 16533,
+        "gateway_retries": 1,
+        "adaptation_retries": 0,
+        "json_retries": 0,
+        "retries_succeeded": 1,
+        "retries_exhausted": 0,
+        "prompt_chars": 16802,
+        "max_prompt_chars": 0
+      },
+      "test_plan_files": [
+        "backend/tests/req3.summary.test.js"
+      ],
+      "test_plan_baselines": {
+        "backend/tests/req3.summary.test.js": {
+          "path": "backend/tests/req3.summary.test.js",
+          "sha256": "538ac192f97a0f04d49eae48e058f1de5e06536c97f910ba0754068ee87458e3",
+          "assertions": 6,
+          "test_cases": 3
+        }
+      },
+      "unauthorized_files": [],
+      "weakening_violations": [],
+      "dependency_violations": [],
+      "dependency_uncertain": [],
+      "dependency_injection_warnings": [],
+      "regressions": [],
+      "gate_audits": {
+        "dep_ok": true,
+        "mock_ok": true,
+        "bypass_ok": true,
+        "combined_ok": true,
+        "enforce_dependency_usage": true,
+        "enforce_mock_check": true,
+        "block_injection_bypass": true
+      },
+      "broken_test": false,
+      "blocked_test_writes": [],
+      "test_rewrite_reasons": []
+    },
+    {
+      "req_id": "REQ-7",
+      "state": "UPSTREAM_FAILED",
+      "attempts": 0,
+      "red_first_ok": null,
+      "note": "上游未通过，未进入 TDD 循环（REQ-5=FAILED）",
+      "test_rewrites": 0,
+      "write_attempts": 0,
+      "cost": {},
+      "test_plan_files": [],
+      "test_plan_baselines": {},
+      "unauthorized_files": [],
+      "weakening_violations": [],
+      "dependency_violations": [],
+      "dependency_uncertain": [],
+      "dependency_injection_warnings": [],
+      "regressions": [],
+      "gate_audits": {},
+      "broken_test": false,
+      "blocked_test_writes": [],
+      "test_rewrite_reasons": []
+    },
+    {
+      "req_id": "REQ-11",
+      "state": "UPSTREAM_FAILED",
+      "attempts": 0,
+      "red_first_ok": null,
+      "note": "上游未通过，未进入 TDD 循环（REQ-7=UPSTREAM_FAILED）",
+      "test_rewrites": 0,
+      "write_attempts": 0,
+      "cost": {},
+      "test_plan_files": [],
+      "test_plan_baselines": {},
+      "unauthorized_files": [],
+      "weakening_violations": [],
+      "dependency_violations": [],
+      "dependency_uncertain": [],
+      "dependency_injection_warnings": [],
+      "regressions": [],
+      "gate_audits": {},
+      "broken_test": false,
+      "blocked_test_writes": [],
+      "test_rewrite_reasons": []
+    },
+    {
+      "req_id": "REQ-12",
+      "state": "UPSTREAM_FAILED",
+      "attempts": 0,
+      "red_first_ok": null,
+      "note": "上游未通过，未进入 TDD 循环（REQ-11=UPSTREAM_FAILED）",
+      "test_rewrites": 0,
+      "write_attempts": 0,
+      "cost": {},
+      "test_plan_files": [],
+      "test_plan_baselines": {},
+      "unauthorized_files": [],
+      "weakening_violations": [],
+      "dependency_violations": [],
+      "dependency_uncertain": [],
+      "dependency_injection_warnings": [],
+      "regressions": [],
+      "gate_audits": {},
+      "broken_test": false,
+      "blocked_test_writes": [],
+      "test_rewrite_reasons": []
+    }
+  ],
+  "cost": {
+    "calls": 16,
+    "prompt_tokens": 20202,
+    "completion_tokens": 42097,
+    "total_tokens": 62299,
+    "reasoning_tokens": 37577,
+    "gateway_retries": 3,
+    "adaptation_retries": 0,
+    "json_retries": 0,
+    "retries_succeeded": 1,
+    "retries_exhausted": 2,
+    "prompt_chars": 45392,
+    "max_prompt_chars": 4753
+  },
+  "artifacts": [
+    ".arc/factory-report.json",
+    ".arc/runner-events.jsonl",
+    ".arc/traceability/"
+  ]
+}

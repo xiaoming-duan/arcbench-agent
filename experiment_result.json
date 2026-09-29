@@ -1,0 +1,176 @@
+{
+  "model": "deepseek-v4-pro",
+  "trials": [
+    {
+      "req_id": "REQ-1",
+      "variant": "basic",
+      "rep": 1,
+      "red_achieved": true,
+      "imports_impl": true,
+      "audit_verdict": "IMPORTS_IMPLEMENTATION",
+      "elapsed_s": 106.76694512367249,
+      "error": ""
+    },
+    {
+      "req_id": "REQ-1",
+      "variant": "import_aware",
+      "rep": 1,
+      "red_achieved": true,
+      "imports_impl": true,
+      "audit_verdict": "IMPORTS_IMPLEMENTATION",
+      "elapsed_s": 59.772926330566406,
+      "error": ""
+    },
+    {
+      "req_id": "REQ-1",
+      "variant": "basic",
+      "rep": 2,
+      "red_achieved": true,
+      "imports_impl": true,
+      "audit_verdict": "IMPORTS_IMPLEMENTATION",
+      "elapsed_s": 38.41797637939453,
+      "error": ""
+    },
+    {
+      "req_id": "REQ-1",
+      "variant": "import_aware",
+      "rep": 2,
+      "red_achieved": false,
+      "imports_impl": false,
+      "audit_verdict": "",
+      "elapsed_s": 0.0,
+      "error": "RemoteDisconnected: Remote end closed connection without response"
+    },
+    {
+      "req_id": "REQ-2",
+      "variant": "basic",
+      "rep": 1,
+      "red_achieved": true,
+      "imports_impl": true,
+      "audit_verdict": "IMPORTS_IMPLEMENTATION",
+      "elapsed_s": 137.52505469322205,
+      "error": ""
+    },
+    {
+      "req_id": "REQ-2",
+      "variant": "import_aware",
+      "rep": 1,
+      "red_achieved": true,
+      "imports_impl": true,
+      "audit_verdict": "IMPORTS_IMPLEMENTATION",
+      "elapsed_s": 98.21623921394348,
+      "error": ""
+    },
+    {
+      "req_id": "REQ-2",
+      "variant": "basic",
+      "rep": 2,
+      "red_achieved": true,
+      "imports_impl": false,
+      "audit_verdict": "NO_RELATIVE_IMPORT",
+      "elapsed_s": 66.88141083717346,
+      "error": ""
+    },
+    {
+      "req_id": "REQ-2",
+      "variant": "import_aware",
+      "rep": 2,
+      "red_achieved": true,
+      "imports_impl": true,
+      "audit_verdict": "IMPORTS_IMPLEMENTATION",
+      "elapsed_s": 95.70868253707886,
+      "error": ""
+    },
+    {
+      "req_id": "REQ-3",
+      "variant": "basic",
+      "rep": 1,
+      "red_achieved": true,
+      "imports_impl": true,
+      "audit_verdict": "IMPORTS_IMPLEMENTATION",
+      "elapsed_s": 100.03935050964355,
+      "error": ""
+    },
+    {
+      "req_id": "REQ-3",
+      "variant": "import_aware",
+      "rep": 1,
+      "red_achieved": true,
+      "imports_impl": true,
+      "audit_verdict": "IMPORTS_IMPLEMENTATION",
+      "elapsed_s": 69.04940056800842,
+      "error": ""
+    },
+    {
+      "req_id": "REQ-3",
+      "variant": "basic",
+      "rep": 2,
+      "red_achieved": true,
+      "imports_impl": true,
+      "audit_verdict": "IMPORTS_IMPLEMENTATION",
+      "elapsed_s": 57.510472536087036,
+      "error": ""
+    },
+    {
+      "req_id": "REQ-3",
+      "variant": "import_aware",
+      "rep": 2,
+      "red_achieved": true,
+      "imports_impl": true,
+      "audit_verdict": "IMPORTS_IMPLEMENTATION",
+      "elapsed_s": 124.25730633735657,
+      "error": ""
+    },
+    {
+      "req_id": "REQ-4",
+      "variant": "basic",
+      "rep": 1,
+      "red_achieved": true,
+      "imports_impl": true,
+      "audit_verdict": "IMPORTS_IMPLEMENTATION",
+      "elapsed_s": 90.20445656776428,
+      "error": ""
+    },
+    {
+      "req_id": "REQ-4",
+      "variant": "import_aware",
+      "rep": 1,
+      "red_achieved": true,
+      "imports_impl": true,
+      "audit_verdict": "IMPORTS_IMPLEMENTATION",
+      "elapsed_s": 110.27866077423096,
+      "error": ""
+    },
+    {
+      "req_id": "REQ-4",
+      "variant": "basic",
+      "rep": 2,
+      "red_achieved": true,
+      "imports_impl": true,
+      "audit_verdict": "IMPORTS_IMPLEMENTATION",
+      "elapsed_s": 80.80318355560303,
+      "error": ""
+    },
+    {
+      "req_id": "REQ-4",
+      "variant": "import_aware",
+      "rep": 2,
+      "red_achieved": true,
+      "imports_impl": true,
+      "audit_verdict": "IMPORTS_IMPLEMENTATION",
+      "elapsed_s": 104.7063455581665,
+      "error": ""
+    }
+  ],
+  "summary": {
+    "basic": {
+      "one_shot_red": "8/8",
+      "imports_impl": "7/8"
+    },
+    "import_aware": {
+      "one_shot_red": "7/8",
+      "imports_impl": "7/8"
+    },
+    "fisher_p": 1.0
+  }
+}

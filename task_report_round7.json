@@ -1,0 +1,141 @@
+{
+  "d3_fix_verification": {
+    "tool": "tools/test_measures.py（part1，18 项断言之一部分）",
+    "user_specified_aliases": {
+      "a.equal(x, 1)": "识别，计数 1",
+      "a.deepStrictEqual(y, {})": "识别，计数 1",
+      "a.throws(() => fn())": "识别，计数 1"
+    },
+    "aliases_tested": [
+      "a.equal", "a.deepStrictEqual", "a.throws", "assert. 直写",
+      "expect().toBe", "chai should 链", "chai assert 别名", "jest 风格", "sinon.assert"
+    ],
+    "recognized": [
+      "a.equal", "a.deepStrictEqual", "a.throws", "assert. 直写",
+      "expect().toBe", "chai should 链", "chai assert 别名", "jest 风格", "sinon.assert"
+    ],
+    "not_recognized": [],
+    "method_list_size": 40,
+    "list_complete": true,
+    "list_completeness_note": "40 个方法名覆盖 node:assert 全部常用断言、chai 的 equal/strictEqual/deepEqual/match/throws 等、jest/vitest 的 toBe/toEqual/toHaveProperty/toThrow 等。已识别 9/9 类写法。",
+    "known_gaps": [
+      "纯方法调用且无 assert./expect( 前缀的写法（如 sinon 的 spy.called()、自定义断言 helper）不计入 —— 属非标准断言，且不影响「新计数 >= 旧计数」的单调比较",
+      "assert.ok(v) 只计 1 次而非 2 次（正则交替匹配非重叠），不影响单调性"
+    ],
+    "monotonicity_verified": "删除断言可被检出：3 -> 1（①d 断言通过）",
+    "d3_fix_confirmed": true
+  },
+  "measure_function_audit": {
+    "method": "读代码定位调用图 + 断言测试验证（tools/test_measures.py part2）",
+    "measure_source_call_sites": [
+      "factory/loop.py:333（_enforce_no_weakening 读旧内容）",
+      "factory/loop.py:334（_enforce_no_weakening 读新内容）",
+      "factory/testplan.py:248（record_baseline）",
+      "factory/testplan.py:263（check_baseline）"
+    ],
+    "audit_imports": {
+      "detects_require": "是（CommonJS require('x')，含测试函数体内）",
+      "detects_esm_import": "是（import x from 'y' / import 'y'）",
+      "detects_dynamic_import": "是，且分两种情况：字面量 import('x') 正常解析；非字面量 import(变量) 判 DYNAMIC_IMPORT（WEAK_TEST）",
+      "detects_path_alias": "是。looks_like_alias 识别 @/ 与 ~/ 前缀；未配置别名规则判 ALIAS_UNRESOLVED（WEAK_TEST）；配置 FACTORY_IMPORT_ALIASES 后可正确解析并判 IMPORTS_IMPLEMENTATION",
+      "other_verdicts": ["IMPORTS_IMPLEMENTATION", "NO_IMPLEMENTATION_IMPORT", "MISSING_FILE", "E2E_EXEMPT", "HELPER_EXEMPT"],
+      "verdict": "覆盖完整，无已知缺口"
+    },
+    "_meaningful_files": {
+      "checks": "双信号合取：单独跑失败(red) AND import 真实实现",
+      "depends_on_measure_source": "否（代码断言 ②g 通过；且 ③ 用猴补证明）",
+      "actually_uses": "audit_imports 的 verdict + NodeTestRunner 逐文件单独执行",
+      "verdict": "未受影响"
+    },
+    "red_first_ok": {
+      "checks": "RED 门禁：整组是否通过 OR 任一文件未引用实现",
+      "depends_on_measure_source": "否（代码断言 ②f 通过；且 ③ 用猴补证明）",
+      "actually_uses": "TestOutcome.passed（runner 退出码）+ ImportAudit.weak_files（audit_imports）",
+      "red_gate_likely_broken": "否。**RED 门禁从未被 D3 缺陷污染**——这是本次审计最关键的结论。",
+      "verdict": "未受影响"
+    },
+    "CallStats": {
+      "checks": "token 累计（prompt/completion/total/reasoning）+ 重试分类计数",
+      "missed_response_formats": [
+        "total_tokens 缺失时不回退为 prompt+completion（**已修**：回退为两者之和）",
+        "input_tokens / output_tokens 命名（Anthropic 风格）未兼容（**未修**：当前 ARC-Bench 网关为 OpenAI 兼容格式，不涉及）",
+        "无 usage 字段的响应（如部分流式响应）不计 token（**未修**：流式未使用）"
+      ],
+      "verdict": "一个真实缺口已修（total_tokens 回退）；其余两项与当前网关无关，记录在案"
+    },
+    "summary_table": {
+      "audit_imports": "检查 import 路径 —— 覆盖完整",
+      "_meaningful_files": "双信号合取 —— 不依赖 measure_source",
+      "red_first_ok": "RED 门禁 —— **不依赖 measure_source**，未失效",
+      "CallStats": "token 计数 —— 1 个真实缺口已修，2 个不涉及"
+    }
+  },
+  "previous_conclusion_trace": {
+    "quadrant_verification_function": "TddLoop._meaningful_files(audit) + factory.testaudit.audit_imports + NodeTestRunner 逐文件单独执行",
+    "uses_measure_source": "否",
+    "why_no_contradiction": "四象限验证的两个信号分别是「单独运行时退出码非零」与「audit_imports 的 verdict」，两者都不经过断言计数。所以 measure_source 恒为 0 并不影响它通过——**没有矛盾**。",
+    "decisive_proof": {
+      "method": "把 measure_source 猴补成恒返回 (0,0)（模拟 D3 未修复的行为），重跑同一条四象限验证",
+      "result_with_real_measure_source": "['a.test.js']",
+      "result_with_zero_measure_source": "['a.test.js']",
+      "same": "是 —— 证明结构性无关，不是巧合"
+    },
+    "red_first_ok_independent_proof": {
+      "method": "同法猴补后重跑 RED 门禁",
+      "result_with_real": "red_first_ok = True",
+      "result_with_broken": "red_first_ok = True",
+      "same": "是"
+    },
+    "quadrant_still_valid": true,
+    "measure_source_failure_scope": [
+      "factory/loop.py:_enforce_no_weakening（弱化守卫 ASSERTION_DELETION 判定）",
+      "factory/testplan.py:record_baseline（基线记录）",
+      "factory/testplan.py:check_baseline（基线对比）"
+    ],
+    "affected_conclusions_review": [
+      {
+        "conclusion": "A+C 实验「静默假通过 8/8 → 0/8」",
+        "affected": "否",
+        "reason": "该结论依赖 unauthorized_files 与 red_gate_passed，两者分别来自白名单执行与 _is_weak；measure_source 不参与"
+      },
+      {
+        "conclusion": "弱化守卫（ASSERTION_DELETION）有效",
+        "affected": "是（已作废）",
+        "reason": "守卫依赖 measure_source，而它对模型惯用的别名断言恒返回 0，因此该守卫在修复前**从未真正生效**。修复后已由 tools/test_gates.py 的 T5c 断言覆盖。"
+      },
+      {
+        "conclusion": "test_plan_baselines（哈希+断言数+用例数）",
+        "affected": "部分（已随 D3 修复一并修正）",
+        "reason": "基线里的断言数此前恒为 0，现在为真实值"
+      }
+    ]
+  },
+  "dependency_chain_run": {
+    "status": "未执行 —— 按任务要求等 1–3 结论出来后由用户确认再跑",
+    "gateway_health_5x": "n/a",
+    "REQ-1": {"status": "n/a", "token": "n/a", "duration": "n/a"},
+    "REQ-7": {"status": "n/a", "token": "n/a", "duration": "n/a", "executed_once": "n/a"},
+    "REQ-11": {"status": "n/a", "token": "n/a", "duration": "n/a"},
+    "REQ-12": {"status": "n/a", "token": "n/a", "duration": "n/a", "prompt_length": "n/a", "fail_stage": "n/a"},
+    "gateway_retries": "n/a",
+    "dependency_accumulation_confirmed": "n/a",
+    "prerequisites_now_met": [
+      "D3 修复已用别名断言实测验证（9/9 类写法识别，40 个方法名）",
+      "RED 门禁确认未被 measure_source 污染（猴补证明）",
+      "完整依赖链 REQ-1 → REQ-7 → REQ-11 → REQ-12 的集合已可构造（这 4 个是闭包：REQ-7 依赖 REQ-1；REQ-11 依赖 REQ-1、REQ-7；REQ-12 依赖 REQ-3、REQ-11 —— 注意 REQ-12 还依赖 REQ-3，需要确认是否纳入）"
+    ],
+    "prerequisite_caveat": "REQ-12 的声明依赖是 [REQ-3, REQ-11]。若只跑 REQ-1/7/11/12，REQ-3 仍是悬空依赖 —— 要真正验证「依赖累积」需要把 REQ-3 一并纳入（5 需求），或接受 REQ-12 的汇总部分依赖缺失。这一点需要用户在确认时一并决定。"
+  },
+  "systemic_treatment": {
+    "problem": "关键度量 / 验证函数没有断言保护，只能靠肉眼确认 —— 已发生两次（to_dict 缺字段、measure_source 计数恒零）",
+    "solution": "tools/check_all.py —— 一键执行三类断言，任一失败即整体失败",
+    "suites": [
+      "tools/verify_changes.py：24 项，声称的改动是否真的在代码里",
+      "tools/test_gates.py：21 项，门禁行为是否符合契约",
+      "tools/test_measures.py：18 项，度量函数是否真的在度量"
+    ],
+    "total_assertions": 63,
+    "convention": "任何关键改动之后重跑 tools/check_all.py，而不是靠肉眼确认"
+  },
+  "gate_output": "三类断言 63/63 通过；gate 三项回归通过（干净 2 通过/EXIT=0；脏 0 通过/2 空转/EXIT=2；对照臂 2 通过/EXIT=0）；真实 LLM 冒烟确认 CallStats 回退生效（prompt 93 + completion 23 = total 116）"
+}

@@ -1,0 +1,358 @@
+"""内部规范化模型。
+
+关键约定：这是工厂的**内部契约**，与平台原始需求格式解耦。
+平台格式的任何变化都只影响 adapter._adapt()，不会波及下游。
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+
+# --------------------------------------------------------------------------
+# 需求侧
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ScenarioSpec:
+    """验收场景（GIVEN/WHEN/THEN）。"""
+
+    scenario_id: str
+    name: str
+    req_id: str = ""
+    steps: tuple[dict[str, str], ...] = ()
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "id": self.scenario_id,
+            "name": self.name,
+            "steps": list(self.steps),
+        }
+
+
+@dataclass(frozen=True)
+class InterfaceSpec:
+    """实现接口：一个需求对外/对内的可验证边界（UI / API / DB）。"""
+
+    interface_id: str
+    req_ids: tuple[str, ...]
+    type: str
+    content: str
+    file_path: str | None = None
+    first_line: str | None = None
+    implemented: bool = False
+
+
+@dataclass(frozen=True)
+class TestSpec:
+    """测试用例。intent 描述"要验证什么"，供生成器产出断言。"""
+
+    test_id: str
+    req_id: str
+    type: str
+    intent: str = ""
+    scenario_id: str | None = None
+    interface_ids: tuple[str, ...] = ()
+    file_path: str | None = None
+    first_line: str | None = None
+
+
+@dataclass(frozen=True)
+class Requirement:
+    """规范化需求节点。"""
+
+    req_id: str
+    name: str
+    description: str = ""
+    parent_id: str | None = None
+    children_ids: tuple[str, ...] = ()
+    dependencies: tuple[str, ...] = ()
+    visual_reference: tuple[str, ...] = ()
+    acceptance: tuple[str, ...] = ()
+    scenarios: tuple[ScenarioSpec, ...] = ()
+    interfaces: tuple[InterfaceSpec, ...] = ()
+    tests: tuple[TestSpec, ...] = ()
+
+    # 执行期可变的接口实现状态由 store 负责，不放在这里
+
+    def to_requirement_payload(self) -> dict[str, Any]:
+        """转成 ARC-Bench traceability 的 requirement payload。"""
+        return {
+            "req_id": self.req_id,
+            "name": self.name,
+            "description": self.description,
+            "visual_reference": list(self.visual_reference),
+            "scenarios": [s.to_payload() for s in self.scenarios],
+            "parent_id": self.parent_id,
+            "children_ids": list(self.children_ids),
+            "dependencies": list(self.dependencies),
+        }
+
+
+@dataclass(frozen=True)
+class RequirementSet:
+    """一次任务的全部需求（已做依赖拓扑排序）。"""
+
+    requirements: tuple[Requirement, ...]
+    source_path: Path
+    project_name: str = ""
+    schema_version: str = ""
+    raw: dict[str, Any] = field(default_factory=dict)
+
+    def by_id(self, req_id: str) -> Requirement | None:
+        for req in self.requirements:
+            if req.req_id == req_id:
+                return req
+        return None
+
+    def __len__(self) -> int:
+        return len(self.requirements)
+
+
+# --------------------------------------------------------------------------
+# 生成侧
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class GeneratedFile:
+    """生成器产出的一个文件变更。
+
+    mode:
+      - write        整体写入（覆盖）
+      - insert_after 在 marker 行之后插入 content（幂等：已存在则跳过）
+    """
+
+    path: str
+    content: str
+    mode: str = "write"
+    marker: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.mode not in {"write", "insert_after"}:
+            raise ValueError(f"不支持的 mode: {self.mode}")
+        if self.mode == "insert_after" and not self.marker:
+            raise ValueError("insert_after 模式必须提供 marker")
+
+
+@dataclass(frozen=True)
+class DesignPlan:
+    """一个需求的设计产物。"""
+
+    req_id: str
+    summary: str
+    steps: tuple[str, ...] = ()
+    interfaces: tuple[InterfaceSpec, ...] = ()
+    tests: tuple[TestSpec, ...] = ()
+
+
+@dataclass
+class TestOutcome:
+    """一次测试执行的结构化结果。"""
+
+    passed: bool
+    command: str
+    exit_code: int
+    total: int = 0
+    failed: int = 0
+    failures: list[str] = field(default_factory=list)
+    stdout: str = ""
+    stderr: str = ""
+    dialect: str = ""
+
+    def summary(self) -> str:
+        if self.total:
+            return f"{'PASS' if self.passed else 'FAIL'} ({self.total - self.failed}/{self.total})"
+        return "PASS" if self.passed else "FAIL"
+
+
+@dataclass
+class RequirementResult:
+    """单个需求的执行结果，用于最终报告。"""
+
+    req_id: str
+    state: str
+    attempts: int = 0
+    red_first_ok: bool | None = None
+    note: str = ""
+    # A：计划内测试文件（白名单）
+    test_plan_files: list[str] = field(default_factory=list)
+    test_plan_baselines: dict[str, Any] = field(default_factory=dict)
+    # 测试重写轮次（WEAK_TEST 回退次数）
+    test_rewrites: int = 0
+    # 写测试阶段的尝试次数（白名单拒绝导致的重试）。
+    # 必须与 test_rewrites 分开：D2 造成的额外调用发生在这里，不在重写轮次里——
+    # 只看 test_rewrites 会把这类浪费完全掩盖掉。
+    write_attempts: int = 0
+    # 该需求消耗的成本增量（token / 网关重试 / 适配重试）
+    cost: dict[str, Any] = field(default_factory=dict)
+    # B：依赖使用审计（声明依赖是否被真实调用）
+    dependency_violations: list[dict[str, Any]] = field(default_factory=list)
+    dependency_uncertain: list[dict[str, Any]] = field(default_factory=list)
+    # 方案 2-B：注入旁路警告（第一轮不阻断，只记录）
+    dependency_injection_warnings: list[dict[str, Any]] = field(default_factory=list)
+    # 重写后回归（曾通过、重写后失败，已回退）
+    regressions: list[dict[str, Any]] = field(default_factory=list)
+    # 最终门禁三段审计的 ok 标志（用于验证判定本身，而不是只能看结果）
+    gate_audits: dict[str, Any] = field(default_factory=dict)
+    # 测试文件无法被收集/执行（RED 门禁判 TEST_BROKEN，回退到写测试阶段）
+    broken_test: bool = False
+    # 重写边界：被拦截的测试文件写入 / 走显式通道允许的测试重写
+    blocked_test_writes: list[dict[str, Any]] = field(default_factory=list)
+    test_rewrite_reasons: list[dict[str, Any]] = field(default_factory=list)
+    # 被拒绝的计划外测试文件 / 被拒绝的弱化改动
+    unauthorized_files: list[str] = field(default_factory=list)
+    weakening_violations: list[dict[str, Any]] = field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# RunReport schema —— 声明字段必须全部存在，缺失即报错
+# ---------------------------------------------------------------------------
+#
+# 动机：曾出现 patch 锚点静默失败导致 to_dict 少输出 5 个字段，
+# 而报告的使用者（实验脚本 / 人工核对）无从察觉。字段清单必须是被断言的事实，
+# 而不是"我记得加了"。
+
+RUN_REPORT_FIELDS: tuple[str, ...] = (
+    "project_name",
+    "requirements_total",
+    "upstream_failed",
+    "generator",
+    "test_dialect",
+    "ok",
+    "error",
+    "results",
+    "cost",
+    "artifacts",
+)
+
+REQUIREMENT_RESULT_FIELDS: tuple[str, ...] = (
+    "req_id",
+    "state",
+    "attempts",
+    "red_first_ok",
+    "note",
+    "test_rewrites",
+    "write_attempts",
+    "cost",
+    "test_plan_files",
+    "test_plan_baselines",
+    "unauthorized_files",
+    "weakening_violations",
+    "dependency_violations",
+    "dependency_uncertain",
+    "dependency_injection_warnings",
+    "broken_test",
+    "regressions",
+    "gate_audits",
+    "blocked_test_writes",
+    "test_rewrite_reasons",
+)
+
+COST_FIELDS: tuple[str, ...] = (
+    "calls",
+    "prompt_tokens",
+    "completion_tokens",
+    "total_tokens",
+    "reasoning_tokens",
+    "gateway_retries",
+    "json_retries",
+)
+
+
+class RunReportSchemaError(ValueError):
+    """RunReport 输出缺少声明字段。"""
+
+
+def validate_run_report(payload: dict[str, Any]) -> dict[str, Any]:
+    """校验 RunReport 输出。缺失字段即抛异常，附缺失字段名与位置。"""
+    problems: list[str] = []
+
+    missing_top = [f for f in RUN_REPORT_FIELDS if f not in payload]
+    if missing_top:
+        problems.append(f"顶层缺字段: {missing_top}")
+
+    results = payload.get("results")
+    if not isinstance(results, list):
+        problems.append("results 不是列表")
+    else:
+        for index, row in enumerate(results):
+            if not isinstance(row, dict):
+                problems.append(f"results[{index}] 不是对象")
+                continue
+            missing = [f for f in REQUIREMENT_RESULT_FIELDS if f not in row]
+            if missing:
+                problems.append(f"results[{index}] (req_id={row.get('req_id')}) 缺字段: {missing}")
+
+    cost = payload.get("cost")
+    if isinstance(cost, dict) and cost:
+        missing_cost = [f for f in COST_FIELDS if f not in cost]
+        if missing_cost:
+            problems.append(f"cost 非空但缺字段: {missing_cost}")
+
+    if problems:
+        raise RunReportSchemaError(
+            "RunReport schema 校验失败：\n  - " + "\n  - ".join(problems)
+        )
+    return payload
+
+
+@dataclass
+class RunReport:
+    """整次运行的报告。"""
+
+    project_name: str
+    requirements_total: int
+    results: list[RequirementResult] = field(default_factory=list)
+    # 因上游未通过而未进入 TDD 循环的需求数（不计入通过率分母）
+    upstream_failed: int = 0
+    artifacts: list[str] = field(default_factory=list)
+    generator: str = ""
+    test_dialect: str = ""
+    ok: bool = False
+    error: str = ""
+    # 成本记账：token 累计 + 网关重试（与需求级的 rewrite_rounds 分开）
+    cost: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = {
+            "project_name": self.project_name,
+            "requirements_total": self.requirements_total,
+            "upstream_failed": self.upstream_failed,
+            "generator": self.generator,
+            "test_dialect": self.test_dialect,
+            "ok": self.ok,
+            "error": self.error,
+            "results": [
+                {
+                    "req_id": r.req_id,
+                    "state": r.state,
+                    "attempts": r.attempts,
+                    "red_first_ok": r.red_first_ok,
+                    "note": r.note,
+                    "test_rewrites": r.test_rewrites,
+                    "write_attempts": r.write_attempts,
+                    "cost": dict(r.cost),
+                    "test_plan_files": list(r.test_plan_files),
+                    "test_plan_baselines": dict(r.test_plan_baselines),
+                    "unauthorized_files": list(r.unauthorized_files),
+                    "weakening_violations": list(r.weakening_violations),
+                    "dependency_violations": list(r.dependency_violations),
+                    "dependency_uncertain": list(r.dependency_uncertain),
+                    "dependency_injection_warnings": list(r.dependency_injection_warnings),
+                    "regressions": list(r.regressions),
+                    "gate_audits": dict(r.gate_audits),
+                    "broken_test": r.broken_test,
+                    "blocked_test_writes": list(r.blocked_test_writes),
+                    "test_rewrite_reasons": list(r.test_rewrite_reasons),
+                }
+                for r in self.results
+            ],
+            "cost": dict(self.cost),
+            "artifacts": list(self.artifacts),
+        }
+        # 输出即校验：字段缺失直接报错，不产出不完整的报告
+        return validate_run_report(payload)

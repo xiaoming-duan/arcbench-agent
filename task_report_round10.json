@@ -1,0 +1,126 @@
+{
+  "read_locations": {
+    "test_executor": "factory/testrunner.py —— TestRunner:137（基类，run() 在 :157）、VitestRunner:210、NodeTestRunner:226、build_runner:244、_parse_vitest:50、_parse_node_tap:96；返回结构 TestOutcome 在 factory/models.py:153",
+    "extract_specifiers": "factory/testaudit.py:72 —— 用 _IMPORT_FROM:23 / _REQUIRE:25 / _DYNAMIC_LITERAL:27 三个正则抽取并去重",
+    "regression_check_insertion_point": "factory/loop.py 实现循环内、测试失败分支之前（重写后 outcome 非通过时判定）"
+  },
+  "A_implemented": {
+    "function_name": "audit_mocked_dependencies",
+    "module": "factory/testaudit.py",
+    "line_count": 72,
+    "plus_describe": "describe_mocked_dependencies 20 行",
+    "reuses_extract_specifiers": true,
+    "reuse_detail": "mock 目标用 _resolve_specifier 解析（与 audit_imports/extract_specifiers 同一套相对路径语义），再与上游实现文件比对",
+    "mock_apis_covered": ["vi.mock", "vi.doMock", "jest.mock", "jest.doMock", "jest.setMock", "mock.module（node:test）", "sinon.stub"],
+    "blocks_undeclared_mock": true,
+    "verdicts": {
+      "UNVERIFIED_DEPENDENCY": "测试 mock 了声明依赖的上游且未声明 -> 阻断",
+      "MOCK_DECLARED_OK": "已在测试计划 mocked_dependencies 里声明（含理由）-> 放行"
+    },
+    "legal_exit_via_test_plan": true,
+    "legal_exit_field": "RequirementTestPlan.mocked_dependencies: [(target, reason)]，落盘到 .arc/test_plan.yaml，校验强制要求理由非空",
+    "scope_note": "只对「mock 目标解析后命中声明依赖的上游文件」产生判定；mock axios 等非依赖模块不产生任何判定（已断言）"
+  },
+  "reason_feedback": {
+    "violation_code_included": true,
+    "mocked_upstream_path_included": true,
+    "upstream_exports_included": true,
+    "fix_hint_included": true,
+    "sample": "测试层 mock 检查未通过：\\n  - [UNVERIFIED_DEPENDENCY] REQ-12 依赖 REQ-3：测试文件 mock 了声明依赖的上游模块 backend/src/services/summary.js，该依赖在运行时从未被真实验证\\n    被 mock 的模块路径: backend/src/services/summary.js\\n    mock 说明符: ../src/services/summary\\n    上游导出清单（请改为真实调用）: summarizeItems\\n请改为**真实调用上游模块**：删掉 mock，直接 require 上游并断言它的真实行为。\\n如果你确实必须 mock（例如上游依赖外部服务），请在测试计划里为该上游声明 `mocked_dependencies` 并写明理由。",
+    "reuses_A_mechanism": "同构复用：拒绝理由作为 failures 传入 generator.implement()，走同一条修复循环"
+  },
+  "B_implemented": {
+    "function_name": "audit_injection_bypass",
+    "module": "factory/testaudit.py",
+    "line_count": 54,
+    "plus_describe": "describe_injection_bypass 16 行",
+    "detection_pattern": "函数形参集合 ∩ `typeof <param> === 'function'` 守卫集合，且该需求声明了依赖且上游有导出符号",
+    "mode": "warning",
+    "warning_only_first_round": true,
+    "escalation_switch": "block_injection_bypass（默认 False）。实验里用 True 回答「若升级为阻断，模型能否修好」这个假设性问题",
+    "recorded_to": "RequirementResult.dependency_injection_warnings -> .arc/factory-report.json",
+    "rationale": "假阳性风险：合法模式（可选回调、策略注入）可能被误判。第一轮只观察发生率。"
+  },
+  "regression_check": {
+    "added": true,
+    "line_count": 22,
+    "location": "factory/loop.py 实现循环内（测试失败分支之前）",
+    "mechanism": "记录最近一次「测试通过」的实现快照；若后续重写使测试失败，则回退到该快照、复测、记录 IMPLEMENTATION_REGRESSION",
+    "detects_regression": true,
+    "reverts_on_regression": true,
+    "real_run_evidence": "实验中出现真实触发：[回归] REQ-12 重写把测试从 PASSED 改坏为 FAIL (0/1)，已回退到重写前版本（回退后 PASS (1/1)）",
+    "recorded_to": "RequirementResult.regressions -> .arc/factory-report.json",
+    "adds_execution_cost": "仅在「曾通过 + 当前失败」时额外跑一次回退后复测，正常路径零开销"
+  },
+  "paired_control": {
+    "design": "三种逃逸形态 × 多组对照。上游 REQ-3 模块已存在于工作区，所以「真实调用」始终可达。三组共用同一起点与同一个 TddLoop，只切换三个门禁开关。",
+    "forms": {
+      "mock_api": "测试用 vi.mock('../src/services/summary') 把上游整个换掉",
+      "param_injection": "测试把假实现当参数传进去（chain5 里 REQ-12 的真实形态）",
+      "nominal_require": "实现加了名义 require，但运行时仍优先用注入的回调（上一轮 B+feedback 的真实产物形态）"
+    },
+    "control_REQ12": "passed_falsely（三种形态全部 PASSED，0 违规）",
+    "A_REQ12": "mock_api -> blocked（UNVERIFIED_DEPENDENCY）；param_injection 与 nominal_require -> 未被 A 检出（A 只覆盖 mock API 形态）",
+    "A_verdict": "UNVERIFIED_DEPENDENCY",
+    "A_B_REQ12": "mock_api -> blocked（DEPENDENCY_NOT_USED + UNVERIFIED_DEPENDENCY）；param_injection -> blocked（DEPENDENCY_NOT_USED）；nominal_require -> passed（仅警告）",
+    "A_B_verdict": "DEPENDENCY_NOT_USED / UNVERIFIED_DEPENDENCY / （nominal_require 仅 DEPENDENCY_INJECTION_BYPASS 警告）",
+    "A_B_feedback_REQ12": "passed（B 为警告级，不触发重写，因此该组未发生重写）",
+    "A_B_feedback_verdict": "无违规，仅 1 条旁路警告",
+    "A_B_escalated_feedback_REQ12": "failed（B 升为阻断后触发重写；模型重写把测试改坏 -> 回归检查回退 -> 回退后的实现仍带旁路 -> 阻断）",
+    "dependency_violations": {"control": 0, "A": "1（仅 mock_api）", "A+B": "1–2", "escalated+feedback": "0 违规但 1 旁路警告（回退后以旁路阻断）"},
+    "upstream_called_after_rewrite": "escalated 臂：是（重写后真实调用上游）；但该次重写同时把测试改坏，已被回归检查回退",
+    "test_passed_after_rewrite": "否（重写后 FAIL 0/1）-> 触发 IMPLEMENTATION_REGRESSION -> 回退后恢复 PASS (1/1)",
+    "detection_matrix": {
+      "mock_api": {"control": "未检出", "A": "阻断", "A+B": "阻断"},
+      "param_injection": {"control": "未检出", "A": "未检出", "A+B": "阻断"},
+      "nominal_require": {"control": "未检出", "A": "未检出", "A+B": "仅警告", "A+B+feedback": "仅警告", "A+B(escalated)+feedback": "阻断"}
+    },
+    "raw_result_file": "experiment_plan2_result.json"
+  },
+  "bugs_found_and_fixed_this_round": [
+    {
+      "id": "D10",
+      "severity": "高",
+      "what": "最终门禁判定只检查 dep_audit.ok（方案1），漏看 mock_audit.ok（方案2-A）—— mock 违规被记录却仍判 PASSED",
+      "found_by": "四组对照实验的 A 组：mock_api 形态 status=PASSED 但 violation_count=1",
+      "fix": "最终判定改为 dep_ok AND mock_ok AND bypass_ok 三者合取",
+      "verified": "新增断言 T16：只开 mock 检查时，未声明 mock 必须真的阻断（而非记了违规却 PASSED）"
+    },
+    {
+      "id": "D11",
+      "severity": "中",
+      "what": "enforce_dependency_usage 一个开关同时控制方案1 / 2-A / 2-B，无法做逐项对照",
+      "fix": "拆为 enforce_dependency_usage / enforce_mock_check / warn_injection_bypass（+ block_injection_bypass）四个独立开关",
+      "verified": "四组对照实验可逐项切换"
+    },
+    {
+      "id": "D12",
+      "severity": "低",
+      "what": "阻断提示文案只拼 dep/mock 违规，B 升级为阻断时括号内为空",
+      "found_by": "T17b 的 note 显示「测试通过但依赖未真实使用（）：…」",
+      "fix": "note 拼接三段违规（含 INJECTION_BYPASS 及形参名）",
+      "verified": "T17b note 现在为「…（REQ-3=INJECTION_BYPASS(summarizeItems)）」"
+    }
+  ],
+  "key_findings": {
+    "A_covers_only_mock_api": "A（测试层 mock 检测）只覆盖 vi.mock/jest.mock 这类 API 形态；chain5 的真实形态是**参数注入**（把假实现当参数传进去），A 检不出。param_injection 一行在矩阵里 control 与 A 都是「未检出」。",
+    "B_is_the_only_net_for_nominal_require": "「名义 require + 仍优先用注入回调」这一形态：方案1 放行（require 存在）、A 放行（无 mock API）、只有 B 能看见——但 B 目前只警告。",
+    "escalation_works_but_model_breaks_tests": "把 B 升为阻断后，模型确实开始真实调用上游（verdict=DEP_USED），但同一轮重写把测试改坏，被回归检查回退。说明「让模型同时满足依赖真实性与测试契约」比单一约束更难，需要多轮修复预算。",
+    "regression_check_paid_off_immediately": "本轮刚加的回归检查在实验中就真实触发了一次，把一次会让需求带着坏实现失败的退化拦了下来。"
+  },
+  "gate_output": "tools/check_all.py：4 类断言 86/86 全过（verify_changes 24 + test_gates 40 + test_measures 18 + test_dependency_audit 22）；gate 三项回归通过（干净 2 通过/EXIT=0；脏 0 通过/2 空转/EXIT=2；四开关全关对照臂 2 通过/EXIT=0）",
+  "files_changed": [
+    "factory/testaudit.py（+ audit_mocked_dependencies 72 行、audit_injection_bypass 54 行、两个 describe；总 976 行）",
+    "factory/testplan.py（RequirementTestPlan.mocked_dependencies + 解析 + 落盘 + 校验）",
+    "factory/loop.py（_audit_mocks / _audit_bypass；最终判定三合一；回归检查 22 行；阻断文案）",
+    "factory/config.py（enforce_mock_check / warn_injection_bypass / block_injection_bypass 三个开关 + 环境变量）",
+    "factory/models.py（dependency_injection_warnings / regressions 字段，含 schema 与 to_dict）",
+    "tools/test_dependency_audit.py（22 项断言，新增 A/B 共 8 项）",
+    "tools/test_gates.py（40 项断言，新增 T12-T17 共 10 项）",
+    "tools/experiment_plan2.py（新增：四组配对对照 + 三种逃逸形态 + 升级假设臂）"
+  ],
+  "not_done": {
+    "C_runtime_probe": "运行时探针本轮未做 —— 按任务要求等 A+B 数据再定。本轮数据：A 覆盖 mock API 形态并阻断；B 能看见 nominal_require 但只警告；升级为阻断后模型会尝试真实调用但会破坏测试。是否值得做 C（改测试执行器、成本最高）建议由用户决定。"
+  }
+}
+  

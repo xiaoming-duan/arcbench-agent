@@ -1,0 +1,132 @@
+{
+  "d10_verification": {
+    "test_case_constructed": true,
+    "test_case": "测试文件用 vi.mock('../src/services/summary') mock 了声明依赖的上游 REQ-3，且未在测试计划 mocked_dependencies 里声明；实现走参数注入不调用上游",
+    "tool": "tools/verify_d10.py（6 项断言，已登记进 check_all）",
+    "expected_before": "PASSED",
+    "expected_after": "FAILED",
+    "actual_result": "FAILED，违规判定 ['UNVERIFIED_DEPENDENCY']",
+    "d10_fix_effective": true,
+    "falsifiability_evidence": {
+      "method": "不只看结果，还用**同一次运行的真实审计结果**复算旧判定表达式",
+      "gate_audits_from_real_run": {"dep_ok": true, "mock_ok": false, "bypass_ok": true, "combined_ok": false},
+      "old_decision": "dep_ok_old = dep_audit.ok or not enforce_dependency_usage = True -> 修复前会判 PASSED",
+      "new_decision": "combined_ok = dep_ok AND mock_ok AND bypass_ok = False -> 现在判 FAILED",
+      "conclusion": "漏看 mock_audit.ok 正是旧代码放行的**唯一**原因（其余两段均为 ok）"
+    },
+    "regression_guard": "新增可观测字段 RequirementResult.gate_audits + 断言 T16，锁死该修复",
+    "exit_code": 0
+  },
+  "rewrite_boundary": {
+    "read_location": "factory/loop.py:_guard_implementation_files（定义 :419，实现循环内调用 :665）",
+    "finding": "**边界早已存在**。该方法在实现循环里被调用，一律拦截 backend/tests/ 下的写入。所以上一轮我推断的「模型同时改了实现和测试」**不成立**——那次回归是实现回归（模型改了 report.js 的行为导致测试失败），护栏并未被越界。",
+    "evidence": "E1–E3 全部 12 次试验中 blocked_test_writes 均为 0，说明模型从未试图写测试文件；回归日志的成因是实现行为变化，不是测试被改。",
+    "current_allowed_files": ["backend/src/**（实现，放行）", "backend/tests/**（拦截）"],
+    "new_whitelist": ["src/（实现）"],
+    "test_files_blocked": true,
+    "explicit_test_rewrite_channel": true,
+    "channel_field": "RequirementTestPlan.test_rewrite_reasons: [(path, reason)]；声明后放行并记录，未声明则拦截并记入 blocked_test_writes",
+    "test_rewrite_reasons_recorded": true,
+    "switch_added": "enforce_impl_only_rewrite（默认 True = 只改实现）。对照实验可关闭以比较两种边界",
+    "assertions_added": ["T18 默认拦截测试写入并记录", "T19 显式声明后放行并记录理由；边界关闭时标记对照臂"],
+    "new_result_fields": ["blocked_test_writes", "test_rewrite_reasons"]
+  },
+  "E1_E3": {
+    "design": "四组同一起点（nominal_require 形态：名义 require + 仍优先用注入回调），检测器统一为 A+B 升级为阻断，只变化 max_repairs 与重写边界。每组 3 次重复。",
+    "note_on_samples": "E3 rep1 因 RemoteDisconnected（环境）失败，token=0、未产生任何重写。故 E3 的有效样本为 2。下表同时给出原始与排除环境后的数字。",
+    "control": {
+      "max_repairs": 1,
+      "passed_rate": "0/3",
+      "passed_rate_excl_env": "0/3",
+      "upstream_called_rate": "3/3",
+      "tests_broken_rate": "3/3",
+      "token_delta": "+0（基线 7,351 token/次）",
+      "rewrites_total": 3,
+      "note": "每次都是「重写 1 次 -> 回归 -> 回退 -> 预算耗尽 -> 阻断」，一致地失败"
+    },
+    "E1": {
+      "max_repairs": 3,
+      "passed_rate": "2/3",
+      "passed_rate_excl_env": "2/3",
+      "upstream_called_rate": "2/3",
+      "tests_broken_rate": "3/3",
+      "token_delta": "+183.9%（20,866 token/次）",
+      "rewrites_total": 7,
+      "note": "唯一失败的一次是**发散**（用满 3 次重写后实现变成 DEPENDENCY_NOT_USED，即干脆不调用上游了），不是预算不足"
+    },
+    "E2": {
+      "max_repairs": 5,
+      "passed_rate": "3/3",
+      "passed_rate_excl_env": "3/3",
+      "upstream_called_rate": "3/3",
+      "tests_broken_rate": "3/3",
+      "token_delta": "+79.3%（13,177 token/次）",
+      "rewrites_total": 6,
+      "note": "三次全部在**第 2 次重写**收敛；预算 5 相较 3 的增益来自给发散留出恢复余量"
+    },
+    "E3": {
+      "max_repairs": 3,
+      "only_impl": true,
+      "passed_rate": "2/3",
+      "passed_rate_excl_env": "2/2",
+      "upstream_called_rate": "3/3",
+      "tests_broken_rate": "2/3",
+      "token_delta": "+11.5%（8,195 token/次）",
+      "rewrites_total": 5,
+      "note": "同样在第 2 次重写收敛；与 E1 同为预算 3，通过率相当而 token 只有 E1 的 39%、E2 的 62%"
+    },
+    "invariant_observed": "**所有成功试验都恰好在第 2 次重写收敛**（E1 的 2 次成功、E2 的 3 次、E3 的 2 次，全部 rewrites=2）。自然收敛深度为 2 —— 这解释了为什么 control（预算 1）必然 0/3。",
+    "raw_result_file": "experiment_e13_final.json",
+    "pre_fix_run_for_contrast": "experiment_e13_result.json —— 修复 require 路径前：四组全部 0/2，且预算完全没被用上（回归检查回退后 break，一口吃掉全部剩余预算）"
+  },
+  "decision": {
+    "budget_increase_justified": "是（但幅度很小）。control(预算1)=0/3 → E1(3)=2/3 → E2(5)=3/3，单调提升。机理清晰：自然收敛深度是 2 次重写，预算 1 在结构上不可能成功。但从 3 提到 5 的增益只是一个发发散样本的恢复余量，n=3 不足以断言。",
+    "three_enough": "是，建议默认 3。理由：① 所有成功样本都在第 2 次重写收敛，3 次留了 1 次余量；② E1 的唯一失败是**发散**（用满预算仍失败），不是预算不足，加到 5 未必能救；③ E1 与 E2 的差值来自单个样本。",
+    "only_impl_is_key": "是，且应保持默认开启。E3 与 E1 同为预算 3、通过率相当（2/2 对 2/3 排除环境后），但 token 只有 E1 的 39%。边界收紧消除了整类歧义（测试是否被改），且实测零代价——12 次试验中模型从未试图写测试文件。",
+    "need_plan_C": "否。本轮数据不支持做方案 C（运行时探针）。原因：失败模式**从来不是**「模型不理解要调用上游」——模型每次都能正确理解并真的开始调用上游（调用上游率 8/12，成功样本 100%）。真正的失败原因是**拒绝理由缺了可用的 require 路径**，模型只能猜文件名（实测写成 require('./items')，而正确是 './summary'），模块不存在导致测试崩掉。补齐路径信息后 E1 从 0/2 升到 3/3、token/次降 71%。这是信息问题，不是检测能力问题。"
+  },
+  "bugs_found_and_fixed_this_round": [
+    {
+      "id": "D13",
+      "severity": "高",
+      "what": "回归检查在回退后 `break`，一口吃掉剩余全部修复预算 —— E1/E2/E3 的预算变量完全失效（E2 给 5 次却只用 1 次）",
+      "found_by": "E1–E3 首轮实验：四组 rewrites 全为 1，与 max_repairs 无关",
+      "fix": "回退后**继续**，并把「上次重写把测试改坏了」+ 失败输出 + 三条硬约束回传给模型",
+      "verified": "新增断言 T20：序列 ①通过但依赖未用 → ②改坏测试 → ③修好，max_repairs=3 时必须最终 PASSED"
+    },
+    {
+      "id": "D14",
+      "severity": "高",
+      "what": "describe_injection_bypass 只给上游导出清单、**不给上游文件路径** —— 模型只能猜文件名，实测写了 require('./items')（正确应为 './summary'），模块不存在导致重写在语义正确的情况下依然把测试改坏",
+      "found_by": "抓取 E1 真实产物：模型已正确忽略注入参数、直接调用上游，唯一错误是路径",
+      "fix": "InjectionBypass 增加 require_path / upstream_file；理由里给出「在本文件里应当写 require('./summary')」+ 三条硬要求（去旁路 / 用给定路径 / 不改签名与返回结构）",
+      "verified": "新增断言 B④/B⑤；实测 E1 从 0/2 → 3/3，token/次 40,886 → 11,823（−71%）",
+      "same_lesson_as": "A 那轮的 F1：拒绝理由必须给出可执行的具体信息，否则模型只能猜"
+    },
+    {
+      "id": "D15",
+      "severity": "低",
+      "what": "check_all 的摘要行提取取到了 JSON 收尾或非结论行",
+      "fix": "统一 verify_d10 的输出格式为「✅ 全部 N 项断言通过」，并修正提取条件"
+    }
+  ],
+  "gate_output": "tools/check_all.py：5 类断言 119/119 全过（verify_changes 24 + test_gates 47 + test_measures 18 + test_dependency_audit 24 + verify_d10 6）；gate 三项回归通过（干净 2 通过/EXIT=0；脏 0 通过/2 空转/EXIT=2；五开关全关对照臂 2 通过/EXIT=0）",
+  "files_changed": [
+    "factory/testaudit.py（InjectionBypass.require_path/upstream_file；describe_injection_bypass 给出精确 require 路径与三条硬要求）",
+    "factory/loop.py（回归检查改为回退后继续并回传回归信息；最终判定三段合取；gate_audits 可观测字段；重写边界可切换 + 显式测试重写通道）",
+    "factory/testplan.py（RequirementTestPlan.test_rewrite_reasons + 解析 + 校验）",
+    "factory/config.py（enforce_impl_only_rewrite 开关）",
+    "factory/models.py（gate_audits / blocked_test_writes / test_rewrite_reasons 字段）",
+    "tools/verify_d10.py（新增：D10 可证伪验证 6 项）",
+    "tools/experiment_e13.py（新增：E1–E3 四组配对对照 + 真实产物捕获）",
+    "tools/test_gates.py（47 项，新增 T18/T19/T20）",
+    "tools/test_dependency_audit.py（24 项，新增 B④/B⑤）",
+    "tools/check_all.py（登记 5 类套件）"
+  ],
+  "next_steps_per_plan": [
+    "用 control=1 / 推荐 3 / 只改实现 开启 的配置跑完整传递闭包",
+    "跑 check_all.py 确认全过",
+    "打包提交 v1"
+  ],
+  "closure_size_not_yet_computed": "本轮未计算传递闭包大小 —— 按任务范围只做了 ①–③。闭包计算（≤8 全跑 / 9–12 跑闭包 / >12 选最短链）留到下一步。"
+}

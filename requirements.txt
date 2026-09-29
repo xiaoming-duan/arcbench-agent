@@ -1,0 +1,10 @@
+# 只用真正的 PyPI 依赖。
+#
+# 注意：这里**不要**再写相对路径 "./arcbench-agent-runtime"。
+# pip 会相对 CWD 解析该路径，平台若不在 zip 根目录执行安装就会直接报
+#   ERROR: Invalid requirement: './arcbench-agent-runtime'
+# 导致依赖安装中断、进程启动即 ImportError（0 事件、0s 静默退出）。
+# 自带的 SDK（arcbench-agent-runtime/src）改由 main.py 的 _bootstrap_sdk()
+# 挂到 sys.path 上，不再依赖 pip 安装；平台若已注入内置 SDK 则优先使用内置版。
+openai
+PyYAML

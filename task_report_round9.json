@@ -1,0 +1,100 @@
+{
+  "read_locations": {
+    "audit_imports": "factory/testaudit.py:155（函数），复用件：extract_specifiers:72（抽取 import/require 说明符）、looks_like_alias:67、正则 _IMPORT_FROM:23 / _REQUIRE:25 / _DYNAMIC_LITERAL:27 / _DYNAMIC_NON_LITERAL:29",
+    "depends_on_reading": "factory/adapter.py:39（别名表 _FIELD_ALIASES['dependencies'] = ('dependencies','depends_on','depends','deps','requires')）-> :324 dependencies=_as_str_list(_pick(node,'dependencies')) -> factory/models.py:Requirement.dependencies",
+    "depends_on_consumers_before_B": [
+      "factory/adapter.py:379 —— 拓扑排序（唯一的功能性用途）",
+      "factory/generator.py:270-271 —— 把依赖名拼成提示词里的一行文本「依赖: REQ-1, REQ-5」",
+      "factory/models.py:91 —— 写入 traceability payload"
+    ],
+    "conclusion": "depends_on 此前**只用于拓扑排序与提示词文本**，没有任何机制校验下游是否真的调用了上游 —— 这正是「模块层空转」的入口",
+    "implementation_produced_files_site": "factory/loop.py:579 impl_files = self.generator.implement(...) -> :588 护栏 -> :589 apply_generated_files —— B 以此为「下游/上游代码」的数据来源"
+  },
+  "static_check": {
+    "function_name": "audit_dependency_usage",
+    "module": "factory/testaudit.py",
+    "line_count": 129,
+    "b_module_total_lines": 345,
+    "detects_import_only": true,
+    "detects_fake_export": true,
+    "reuses_audit_imports_path_resolution": true,
+    "reuse_detail": "直接调用 extract_specifiers()，并沿用同一套「相对路径按文件所在目录解析」语义（_resolve_specifier）",
+    "verdicts": {
+      "DEPENDENCY_USED": "真实引用了上游导出（附带是否被调用）",
+      "DEPENDENCY_NOT_USED": "违规。完全未 import 上游，或只 import 未引用其导出",
+      "FAKE_DEPENDENCY": "违规。访问了上游模块但成员不在其导出清单里",
+      "UPSTREAM_MISSING": "违规。声明的上游没有产出任何实现文件（上游失败或未执行）",
+      "SKIPPED_INDIRECT": "不违规。测试计划里显式声明了 indirect_dependencies",
+      "DEPENDENCY_CHECK_UNCERTAIN": "不违规。上游实现里解析不出任何导出符号，记录人工复核"
+    },
+    "extra_capabilities": [
+      "上游导出解析支持 module.exports={...} / exports.a= / export function / export const / export {a as b}",
+      "re-export 壳跟随一层（movement.js -> movementsService.js），覆盖实测中出现的转发文件",
+      "绑定形式识别：解构（const {a}=require / import {a} from）、命名空间（const ns=require / import * as ns / import ns from）、ESM 默认导入"
+    ],
+    "aggregate_helper": "audit_requirement_dependencies()（遍历一个需求的全部声明依赖）+ describe_dependencies()（生成可执行拒绝理由）"
+  },
+  "reason_feedback": {
+    "reuses_A_mechanism": true,
+    "mechanism": "与 A 完全同构：拒绝 -> 生成可执行理由文本 -> 作为 failures 传入 generator.implement() -> 模型据此重写。复用同一条修复循环（max_repairs），不新建通道。",
+    "reason_text_present": true,
+    "reason_text_contains": [
+      "违规码与具体说明（[DEPENDENCY_NOT_USED] REQ-12 依赖 REQ-3：下游完全没有 import 上游模块）",
+      "**上游实现文件路径**（请 require 这些路径）—— 这一条是复用 A 经验补上的：只说「要调用」而不给路径，模型仍不知道从哪 require",
+      "上游导出清单（请调用其中之一）",
+      "明确的动作要求：必须真实调用导出函数/方法，不能只声明依赖、也不能用参数注入绕过",
+      "合法出口：如果确实只能间接使用，在测试计划里声明 indirect_dependencies 并写明理由"
+    ],
+    "verified_by": "tools/test_gates.py T7c：断言重写调用收到的是依赖理由文本（而非测试 TAP 输出）"
+  },
+  "indirect_dependency_declaration": {
+    "test_plan_field_added": true,
+    "field": "RequirementTestPlan.indirect_dependencies: tuple[(req_id, reason), ...]",
+    "schema_form": "indirect_dependencies: [{requires: REQ-3, reason: '由调用方注入 summarizeItems'}]（也接受 dict 形式）",
+    "skips_dependency_not_used": true,
+    "records_to_uncertain_list": true,
+    "uncertain_list": "RequirementResult.dependency_uncertain -> .arc/factory-report.json",
+    "validation_added": [
+      "声明的 indirect 上游必须是本需求的真实声明依赖，否则判计划违规",
+      "每条 indirect 声明必须附理由，缺理由判计划违规"
+    ],
+    "not_failed_by_design": "UNCERTAIN 类判定（SKIPPED_INDIRECT / DEPENDENCY_CHECK_UNCERTAIN）只记录、不阻断 —— 对应「类型定义/常量只 import 不调用」「A->B->C 间接调用」「回调/事件调用静态分析看不见」三类假阳性",
+    "persisted_to": ".arc/test_plan.yaml（随计划一起落盘，可审计）"
+  },
+  "paired_control": {
+    "design": "三组共用同一份起点（参数注入式实现，不 import 上游）与同一个 TddLoop，只切换依赖门禁配置与是否给重写机会。上游 REQ-3 的模块**已存在于工作区**，所以「真实调用」是可达的。",
+    "control_REQ12_status": "passed_falsely（PASSED，0 违规）—— 复现了 chain5 里 REQ-12 的假阳性",
+    "B_REQ12_status": "blocked（FAILED，1 违规，DEPENDENCY_NOT_USED）",
+    "B_feedback_REQ12_status": "重写后真实调用上游=是（独立复核 verdict=DEP_USED），但最终状态 FAILED —— 模型的重写把测试改坏了（FAIL 0/1），属实现回归而非依赖问题",
+    "dependency_violations_count": {"control": 0, "B": 1, "B_feedback": 1},
+    "upstream_called_after_rewrite": "是（B_feedback 组；由 audit_dependency_usage 独立复核，不依赖门禁内部状态）",
+    "raw_result_file": "experiment_dependency_result.json"
+  },
+  "critical_finding": {
+    "finding": "方案 1（静态检查）可被「名义调用 + 保留注入路径」满足，而运行时仍走注入",
+    "evidence": "B_feedback 组模型重写后的实现：新增 `const { summarizeItems: upstreamSummarizeItems } = require('./summary');`（静态检查因此判 DEPENDENCY_USED），但函数仍保留 `summarizeItems` 形参，且逻辑是 `if (typeof summarizeItems === 'function') { ... }` 优先用注入的回调，真实上游只作 fallback",
+    "implication": "静态检查能消除「完全不 import」这一最粗的形态，但消除不了「运行时仍以 mock 为准」。这与测试层的空转同构：形式上引用了，实质上没用。",
+    "recommendation": "数据支持做方案 2（动态依赖注入检查）：运行下游测试时上游必须真实存在且已 PASSED；禁止 mock 上游；若必须 mock，须在测试计划里声明 mocked_dependencies 并说明理由，未声明即判 UNVERIFIED_DEPENDENCY。"
+  },
+  "gate_output": "tools/check_all.py：4 类断言 86/86 全过（verify_changes 24 + test_gates 30 + test_measures 18 + test_dependency_audit 14）；gate 三项回归通过（干净 2 通过/EXIT=0；脏 0 通过/2 空转/EXIT=2；全关对照臂 2 通过/EXIT=0）",
+  "new_assertions_added": {
+    "tools/test_dependency_audit.py": "14 项，不调模型：真实病理复现 / 上游缺失 / 只 import 不调用 / 假成员 / 解构调用 / 命名空间调用 / 间接声明 / 导出解析 / re-export 跟随 / 解析失败降级 / 多依赖聚合 / 理由文本可执行",
+    "tools/test_gates.py T7-T11": "5 组端到端断言：依赖未使用阻断 / 真实调用通过 / 间接声明跳过 / 对照臂假阳性 / 上游缺失阻断",
+    "test_helper_bug_found": "build_loop 硬编码 config.max_repairs=0，把调用方传入的 max_repairs 静默吞掉 —— 导致「拒绝理由回传」这一环测不到（T7c 初跑失败）。已修。"
+  },
+  "files_changed": [
+    "factory/testaudit.py（新增 B 模块 345 行：导出解析 / 依赖使用审计 / 聚合 / 可执行理由）",
+    "factory/testplan.py（RequirementTestPlan.indirect_dependencies + 解析 + 落盘 + 校验；validate_requirement_plan 增加 requirement_dependencies 参数）",
+    "factory/loop.py（_record_impl_files / _audit_dependencies；实现循环内接入依赖门禁；失败理由回传；结果字段记录）",
+    "factory/config.py（enforce_dependency_usage 开关 + FACTORY_DEP_USAGE 环境变量）",
+    "factory/models.py（RequirementResult.dependency_violations / dependency_uncertain，含 schema 与 to_dict）",
+    "tools/test_dependency_audit.py（新增 214 行断言）",
+    "tools/test_gates.py（新增 T7-T11；修正 build_loop 的 max_repairs 覆盖 bug）",
+    "tools/experiment_dependency.py（新增：三组配对对照实验）",
+    "tools/check_all.py（登记第 4 类断言）"
+  ],
+  "not_done": {
+    "plan_2_dynamic_check": "动态依赖注入检查（禁止 mock 上游 / 强制 mocked_dependencies 声明）—— 按任务要求等方案 1 的数据再定；本轮数据支持做",
+    "full_closure_run": "完整闭包重跑 —— 未执行。建议在方案 2 之后再跑，否则仍会被「名义调用」绕过"
+  }
+}

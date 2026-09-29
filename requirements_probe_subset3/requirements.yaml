@@ -1,0 +1,102 @@
+schema_version: '1.0'
+project:
+  id: inventory-probe-subset3
+  name: 库存管理探针集（3 需求子集）
+requirements:
+- id: REQ-1
+  name: 库存条目数据源
+  description: 提供库存条目的只读列表，是所有查询与统计的基础。
+  depends_on: []
+  acceptance:
+  - listItems() 返回非空数组
+  - 每个条目含 id / sku / name / quantity / category
+  - quantity 为非负整数
+  scenarios:
+  - id: REQ-1-SCN-1
+    name: 列出全部条目
+    steps:
+    - keyword: GIVEN
+      content: 库存中有若干条目
+    - keyword: WHEN
+      content: 调用 listItems()
+    - keyword: THEN
+      content: 返回非空且字段完整的数组
+  interfaces:
+  - id: REQ-1.SVC.Items
+    type: db
+    content: 'listItems(): Item[]'
+    file_path: backend/src/services/items.js
+  tests:
+  - id: REQ-1.TEST.list
+    type: unit
+    scenario_id: REQ-1-SCN-1
+    interface_ids:
+    - REQ-1.SVC.Items
+    file_path: backend/tests/req1.list.test.js
+    intent: listItems() 返回非空数组，条目字段完整且 quantity 为非负整数
+- id: REQ-7
+  name: 更新条目数量
+  description: 按 SKU 更新数量，返回更新后的条目。
+  depends_on:
+  - REQ-1
+  - REQ-5
+  acceptance:
+  - 存在的 SKU 更新成功并返回新数量
+  - 负数数量被拒绝
+  - 不存在的 SKU 返回 null
+  scenarios:
+  - id: REQ-7-SCN-1
+    name: 更新数量
+    steps:
+    - keyword: GIVEN
+      content: 存在 SKU-1001，当前数量 12
+    - keyword: WHEN
+      content: 调用 updateQuantity('SKU-1001', 20)
+    - keyword: THEN
+      content: 返回条目且 quantity 为 20
+  interfaces:
+  - id: REQ-7.SVC.UpdateQty
+    type: db
+    content: 'updateQuantity(sku, quantity): Item | null'
+    file_path: backend/src/services/items.js
+  tests:
+  - id: REQ-7.TEST.update-qty
+    type: unit
+    scenario_id: REQ-7-SCN-1
+    interface_ids:
+    - REQ-7.SVC.UpdateQty
+    file_path: backend/tests/req7.update-qty.test.js
+    intent: 正常更新返回新数量，负数被拒，不存在的 SKU 返回 null
+- id: REQ-12
+  name: 库存周转报表
+  description: 综合汇总与流水，产出一个可直接渲染的报表对象。
+  depends_on:
+  - REQ-3
+  - REQ-11
+  acceptance:
+  - buildReport() 返回 summary 与 movements 两部分
+  - summary 与 summarizeItems() 一致
+  - 无数据时返回结构完整但内容为空的对象
+  scenarios:
+  - id: REQ-12-SCN-1
+    name: 生成报表
+    steps:
+    - keyword: GIVEN
+      content: 库存有若干条目且存在变动流水
+    - keyword: WHEN
+      content: 调用 buildReport()
+    - keyword: THEN
+      content: 返回含 summary.total 与 movements 数组的对象
+  interfaces:
+  - id: REQ-12.SVC.Report
+    type: db
+    content: 'buildReport(): {summary, movements}'
+    file_path: backend/src/services/report.js
+  tests:
+  - id: REQ-12.TEST.report
+    type: unit
+    scenario_id: REQ-12-SCN-1
+    interface_ids:
+    - REQ-12.SVC.Report
+    file_path: backend/tests/req12.report.test.js
+    intent: 报表结构完整，summary 与汇总模块一致，无数据时依然结构完整

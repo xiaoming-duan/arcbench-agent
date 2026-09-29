@@ -1,0 +1,39 @@
+schema_version: '1.0'
+test_plan:
+- requirement: REQ-1
+  scenarios:
+  - REQ-1-SCN-1
+  test_files:
+  - path: backend/tests/req1.listItems.test.js
+    covers:
+    - REQ-1-SCN-1
+    type: unit
+- requirement: REQ-7
+  scenarios:
+  - REQ-7-SCN-1
+  test_files:
+  - path: backend/tests/req7.update-qty.test.js
+    covers:
+    - REQ-7-SCN-1
+    type: unit
+  notes: 测试直接 require backend/src/services/ 下的纯函数 updateQuantity，覆盖正常更新、负数拒绝、不存在 SKU
+    返回 null。
+- requirement: REQ-11
+  scenarios:
+  - REQ-11-SCN-1
+  test_files:
+  - path: backend/tests/req11.movements.test.js
+    covers:
+    - REQ-11-SCN-1
+    type: unit
+  notes: 测试纯函数库存流水服务，直接 require backend/src/services 下的模块，不加载 Express/SQLite。
+- requirement: REQ-12
+  scenarios:
+  - REQ-12-SCN-1
+  test_files:
+  - path: backend/tests/req12.report.test.js
+    covers:
+    - REQ-12-SCN-1
+    type: unit
+  notes: 新增 backend/src/services/ 下纯函数 buildReport(items, movements, summarizeItems)，测试直接
+    require 该模块，验证 summary 与 movements 结构完整、summary 与 summarizeItems 一致、无数据时结构完整且内容为空。

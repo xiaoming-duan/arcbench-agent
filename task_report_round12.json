@@ -1,0 +1,127 @@
+{
+  "closure": {
+    "requirements": ["REQ-1", "REQ-3", "REQ-5", "REQ-7", "REQ-11", "REQ-12"],
+    "closure_of": "REQ-12（最深节点）",
+    "topological_depth": {
+      "REQ-1": 0, "REQ-5": 0, "REQ-3": 1, "REQ-7": 1, "REQ-11": 2, "REQ-12": 3
+    },
+    "max_depth": 3,
+    "layers": {"0": ["REQ-1", "REQ-5"], "1": ["REQ-3", "REQ-7"], "2": ["REQ-11"], "3": ["REQ-12"]},
+    "hub_requirements": [
+      {"req": "REQ-1", "dependents": 3, "scope": "闭包内"},
+      {"req": "REQ-1", "dependents": 8, "scope": "全量探针集（失败影响面最大）"},
+      {"req": "REQ-3", "dependents": 2, "scope": "全量探针集"},
+      {"req": "REQ-5", "dependents": 2, "scope": "全量探针集"}
+    ],
+    "dangling_dependencies": [],
+    "dangling_note": "✅ 全量探针集与 closure6 都无悬空依赖，种子集合完整",
+    "size": 6,
+    "strategy": "full",
+    "full_probe_set_size": 12,
+    "full_probe_set_strategy": "closure",
+    "tool": "tools/closure.py（新增，输出需求列表 / 拓扑深度 / 枢纽 / 悬空依赖四项）",
+    "note": "closure(REQ-12)=6 而上一轮我构造的 chain5 集合只有 5 个（缺 REQ-5）——闭包工具证实了当时那个集合确实不完整"
+  },
+  "upstream_failed_propagation": {
+    "scheduler_location": "factory/pipeline.py:run_factory 的逐需求循环（`for requirement in req_set.requirements`，需求已由 adapter._topological_order 排好序）",
+    "lines_added": 39,
+    "assertion_added": true,
+    "assertion_detail": "tools/test_gates.py T21a–T21e（端到端跑真实 main.py，含关闭传播的对照臂）",
+    "behavior": [
+      "声明依赖的上游未 PASSED -> 下游判 UPSTREAM_FAILED，**不进入 TDD 循环**",
+      "不计入通过率分母（摘要单独报「尝试 N 个」）",
+      "失败归因写入 note：`上游未通过，未进入 TDD 循环（REQ-X=FAILED）`",
+      "report.upstream_failed 计数 + report.ok 在存在跳过时为 False",
+      "开关 enforce_upstream_gate（默认 True，环境变量 FACTORY_UPSTREAM_GATE）"
+    ],
+    "real_run_evidence": "closure6 第 3 轮：REQ-1 环境失败 -> REQ-3/REQ-7 跳过 -> REQ-11 跳过（REQ-7=UPSTREAM_FAILED）-> REQ-12 跳过（REQ-3、REQ-11 均跳过）——**两级级联正确**",
+    "gate_output": "三配置回归：干净 2 通过 / 0 跳过 / EXIT=0；脏 0 通过 / 1 失败 / 1 跳过 / 1 空转 / EXIT≠0；全关对照臂 2 通过 / EXIT=0"
+  },
+  "deepest_chain_run": {
+    "chain": ["REQ-1", "REQ-7", "REQ-11", "REQ-12"],
+    "chain_note": "最长链 4 层；实际运行覆盖了整个 closure6（含旁支 REQ-5、REQ-3）",
+    "upstream_failed_triggered": "是。第 3 轮 REQ-1 环境失败 -> 4 个下游按依赖关系全部正确跳过；第 1/2/4 轮 REQ-7 失败 -> REQ-11 -> REQ-12 两级级联跳过",
+    "tdd_loop_skipped_correctly": true,
+    "evidence": "跳过记录见 evidence/closure6-run{1,3,4}.log 的 [上游传播] 行；断言 T21c 验证被跳过的需求无测试计划、无成本、attempts=0"
+  },
+  "full_closure_run": {
+    "scope": "closure6（REQ-12 的完整传递闭包，6 个需求），共跑 4 轮",
+    "passed": "3",
+    "total": 6,
+    "attempted": 4,
+    "pass_rate": "3/4 = 75%（按尝试数；跳过的 2 个不计入分母）",
+    "per_requirement_4run_aggregate": {
+      "REQ-1": {"PASSED": 3, "FAILED": 1, "fail_reason": "环境（网关 proxy_error: connection reset by peer）"},
+      "REQ-5": {"PASSED": 4, "note": "每轮都先触发 TEST_BROKEN，回退重写后通过"},
+      "REQ-3": {"PASSED": 3, "UPSTREAM_FAILED": 1, "note": "每轮都触发依赖门禁 REQ-1=DEPENDENCY_NOT_USED，重写后通过"},
+      "REQ-7": {"FAILED": 3, "UPSTREAM_FAILED": 1, "note": "**从未通过**；持续受阻于测试文件不可收集"},
+      "REQ-11": {"UPSTREAM_FAILED": 4, "note": "从未进入 TDD 循环"},
+      "REQ-12": {"UPSTREAM_FAILED": 4, "note": "从未进入 TDD 循环"}
+    },
+    "UPSTREAM_FAILED_count": "2（第 1/2/4 轮）、4（第 3 轮）",
+    "gateway_retries": "第 4 轮 3 次（成功 3 / 耗尽 0，100%）；含若干 RemoteDisconnected 导致的重写失败",
+    "dependency_violations": "0（所有轮次所有需求均为 0 条最终违规；依赖门禁被触发了 4 次，每次都在重写后满足）",
+    "token_consumed": "第 4 轮 105,596 / 第 3 轮 99,281（含环境失败的 0-token 需求）",
+    "wall_clock": "第 4 轮 21:56:16 → 22:42:37 = 46 分 21 秒；第 3 轮约 16 分钟（早停于 REQ-1 环境失败）",
+    "config": "max_repairs=3、enforce_impl_only_rewrite=True（默认）、enforce_dependency_usage=True、enforce_mock_check=True、block_injection_bypass=True（B 升级）",
+    "evidence_files": ["evidence/closure6-report1..4.json", "evidence/closure6-run1..4.log"]
+  },
+  "check_all": {
+    "assertions_passed": "119/119（verify_changes 24 + test_gates 60 + test_measures 18 + test_dependency_audit 24 + verify_d10 6）",
+    "all_pass": true,
+    "output_file": "check_all_output.txt（已随包提交）"
+  },
+  "v1_package": {
+    "tag": "上游失败传播已修；REQ-7 待修（测试可收集性）",
+    "tag_rationale": "失败集中在 REQ-7 —— 它是 REQ-11/REQ-12 的上游节点，不在最深链末端，故按决策树落在「上游失败传播已修」分支。补充：REQ-7 的阻塞点是测试自身写不出来（不可收集），不是实现能力。",
+    "artifact": "dist/arcbench-agent-v1.tar.gz（295 KB / 183 项）",
+    "verified": ["包内 check_all_output.txt 显示 119 项通过", "factory/ 下 13 个源码文件语法校验通过"],
+    "contents": [
+      "factory/ —— 工厂实现（13 个模块）",
+      "tools/ —— 验证与实验工具 18 个（含 closure.py / verify_d10.py / check_all.py / 四个实验脚本）",
+      "schemas/ · template/ · skills/ · examples/",
+      "requirements_sample + requirements_probe{,_closure6,_chain5,_subset3,_roots}",
+      "evidence/ —— 全部运行日志与报告（closure6 四轮 + chain5 + subset3 + probe12）",
+      "实验结果 6 个 JSON + closure_req12.json",
+      "V1_RELEASE.md · check_all_output.txt · task_report.json",
+      "软件工厂-项目架构文档.md · FACTORY.md · VERIFICATION.md · EXPERIMENT.md · EXPERIMENT2.md"
+    ]
+  },
+  "structural_fixes_this_round": [
+    {
+      "id": "UPSTREAM_FAILED",
+      "location": "factory/pipeline.py",
+      "lines": 39,
+      "problem": "上游失败后下游仍被调度，浪费预算，且可能靠旁路造成假阳性通过，使失败归因不可分辨",
+      "fix": "上游未通过 -> 下游判 UPSTREAM_FAILED，不进 TDD 循环、不计入分母",
+      "assertions": "T21a–T21e"
+    },
+    {
+      "id": "TEST_SOURCE_AS_CONTRACT",
+      "location": "factory/generator.py:LLMGenerator.implement + factory/loop.py:_collect_test_context",
+      "problem": "实现阶段给「接口契约」并要求「测试是权威」，却从不给测试源码。REQ-7 的接口契约与测试签名互相矛盾（updateQuantity(sku,quantity) vs updateQuantity(repository,sku,quantity)），模型只能猜",
+      "fix": "实现提示词直接嵌入测试源码，并声明「与接口契约冲突时以测试源码为准」",
+      "assertions": "T22a–T22c",
+      "cost": "协议签名变更波及 9 处测试替身，已同步更新"
+    },
+    {
+      "id": "D16 TEST_BROKEN",
+      "severity": "高",
+      "location": "factory/loop.py:_is_uncollectable / _broken_test_reason / _broken_test_feedback",
+      "problem": "模型写了非法 vitest 惯用法（在 vi.hoisted 里引用顶层 import，必然抛 ReferenceError），文件在收集阶段失败、0 个测试被发现。RED 门禁把它当成有效 RED，于是 4 轮实现预算全部浪费在一个坏掉的测试文件上——任何实现都救不了它",
+      "fix": "新增 TEST_BROKEN 判据（not passed and total==0）-> 回退到**写测试阶段**（复用 WEAK_TEST 成对回退），并给出针对 vi.hoisted 的可执行修法",
+      "assertions": "T23a–T23e",
+      "real_run_evidence": "第 4 轮中 REQ-1、REQ-5、REQ-3 各触发一次并成功修复；第 3 轮 REQ-5 触发并修复"
+    }
+  ],
+  "known_blockers": {
+    "REQ-7": "持续受阻于测试可收集性。max_test_rewrites=2 用尽仍未产出可收集的测试；第 4 轮最后一次重写尝试死于环境（RemoteDisconnected），故「预算是否足够」尚无干净数据。",
+    "recommendation": "把 max_test_rewrites 从 2 提到 4 再跑 closure6 —— 这是当前唯一与实测阻塞点直接对应的旋钮。"
+  },
+  "not_run": {
+    "full_12_requirement_set": "未跑。本轮只跑 closure6（REQ-12 的完整闭包）。全量 12 集策略为 closure（9–12 带）。",
+    "req11_req12_never_executed": "REQ-11/REQ-12 **从未进入 TDD 循环**——依赖累积在「最深链末端」的结论仍无数据。",
+    "multi_module_dag": "未实现，等上述阻塞解除。"
+  },
+  "gate_output": "check_all 5 类 119/119 全过；gate 三配置回归通过（干净 2 通过/EXIT=0；脏 0 通过/1 失败/1 上游跳过/1 空转/EXIT≠0；全关对照臂 2 通过/EXIT=0）；包内 check_all_output.txt 与 factory 语法校验均通过"
+}

@@ -1,0 +1,32 @@
+{
+  "requirements": [
+    "REQ-1",
+    "REQ-11",
+    "REQ-12",
+    "REQ-3",
+    "REQ-5",
+    "REQ-7"
+  ],
+  "topological_depth": {
+    "REQ-5": 0,
+    "REQ-1": 0,
+    "REQ-3": 1,
+    "REQ-7": 1,
+    "REQ-11": 2,
+    "REQ-12": 3
+  },
+  "max_depth": 3,
+  "deepest": [
+    "REQ-12"
+  ],
+  "hub_requirements": [
+    {
+      "req": "REQ-1",
+      "dependents": 3
+    }
+  ],
+  "dangling_dependencies": {},
+  "closure_relative_dangling": {},
+  "size": 6,
+  "strategy": "full"
+}

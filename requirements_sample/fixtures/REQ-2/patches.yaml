@@ -1,0 +1,10 @@
+# REQ-2 对模板基础设施的插入式补丁（幂等）
+- path: backend/src/app.js
+  mode: insert_after
+  marker: "// route modules imports"
+  content: "const inventorySummaryRouter = require('./routes/inventory-summary');"
+
+- path: backend/src/app.js
+  mode: insert_after
+  marker: "// register routes"
+  content: "app.use('/api/inventory', inventorySummaryRouter);"

@@ -1,0 +1,182 @@
+{
+  "guard_weakening_standard": {
+    "reuses_audit_imports": true,
+    "no_new_detector": true,
+    "implementation": "factory/loop.py:276 _meaningful_files()（判定）+ :297 _enforce_no_weakening()（执行）",
+    "meaningful_rule": "单独跑失败(red) AND import 实现",
+    "meaningless_rule": "单独跑通过 OR 无 import 实现",
+    "two_signals": {
+      "import_signal": "复用 C 的 audit_imports() -> FileAudit.verdict == IMPORTS_IMPLEMENTATION",
+      "red_signal": "逐文件单独执行（runner.run([单个路径])），由 _meaningful_files 补齐"
+    },
+    "behaviour": {
+      "meaningful_file": "只允许追加/修改，断言数或用例数下降即拒（ASSERTION_DELETION）",
+      "meaningless_file": "允许整体重写（其断言本就无价值，删掉正是所需）"
+    },
+    "control_arm_restored": "两个门禁开关都关时 _meaningful_files 返回空集，还原'无守卫'行为",
+    "truth_table_verified": [
+      {
+        "case": "单独跑失败 + import 实现",
+        "meaningful": true
+      },
+      {
+        "case": "单独跑通过 + import 实现",
+        "meaningful": false
+      },
+      {
+        "case": "单独跑失败 + 无 import",
+        "meaningful": false
+      },
+      {
+        "case": "单独跑通过 + 无 import",
+        "meaningful": false
+      }
+    ],
+    "note": "与上一版的关键差异：上一版把'已 import 实现'直接当作有意义，于是 b 类文件（import 了实现但单独跑通过，即实际上什么也没断言住）会被错误保护。现改为双信号取合取。"
+  },
+  "cost_accounting": {
+    "token_counter_added": true,
+    "gateway_retries_separated": true,
+    "implementation": {
+      "counter": "factory/llm.py:34 CallStats（calls / prompt_tokens / completion_tokens / total_tokens / reasoning_tokens / gateway_retries / json_retries）",
+      "usage_site": "factory/llm.py:237 _record_usage()，每次成功响应累加 usage（含 completion_tokens_details.reasoning_tokens）",
+      "gateway_retry_sites": [
+        "HTTP 可重试状态码（408/409/425/429/5xx）",
+        "网络错误 URLError",
+        "读取超时 TimeoutError",
+        "服务端限制 temperature -> 改为 1 重试",
+        "服务端不支持 response_format -> 去掉重试",
+        "服务端不接受 max_tokens -> 改 max_completion_tokens 重试",
+        "推理占满预算、正文为空 -> 放大 max_tokens 重试"
+      ],
+      "separate_from_rewrite_rounds": "json_retries 与 gateway_retries 都计入 CallStats；rewrite_rounds 走 RequirementResult.test_rewrites，两者完全独立",
+      "surfaced_in": [
+        ".arc/factory-report.json 的 cost 字段（factory/models.py RunReport.cost / factory/pipeline.py:141）",
+        "main.py 结束时打印成本行",
+        "tools/experiment_gates.py 结束时打印 CallStats.summary() 并写入结果 JSON 的 cost 字段"
+      ],
+      "rationale": "网关延迟方差极大（同一调用 36s~>600s 且会直接断连）。实测有过 trial 因断连而'失败'（拒绝新增=0、重写=1，说明重写调用根本没跑完）。混在 rewrite_rounds 里会把环境失败误判为逻辑失败。"
+    }
+  },
+  "architecture_doc": {
+    "file": "软件工厂-项目架构文档.md",
+    "section_added": "第 17 章 过程发现：门禁的度量与修订（含 7 个小节，已加入目录）",
+    "process_finding_written": true,
+    "process_finding_text": "光有白名单只能阻断，回传理由才能纠正。",
+    "subsections": [
+      "17.1 核心过程发现（本章最重要的一条）——含第一版 A 失效的实测记录",
+      "17.2 度量口径错误：一次被反例推翻的判定（集合级判定 vs 逐条证据）",
+      "17.3 修订方案与被证伪的预测（含 A+C 三组对照数据表）",
+      "17.4 C 的定位登记：它是诊断工具，不是检测器",
+      "17.5 弱化守卫的判定标准（双信号合取）",
+      "17.6 成本记账：环境失败不能混进逻辑失败",
+      "17.7 对第 4 章与第 7 章的修订（逐条列出被修正的原文）"
+    ]
+  },
+  "probe_set": {
+    "file": "requirements_probe/requirements.yaml",
+    "before_count": 4,
+    "after_count": 12,
+    "ran_full_flow_this_round": false,
+    "dependencies_added": {
+      "REQ-1": [],
+      "REQ-2": [
+        "REQ-1"
+      ],
+      "REQ-3": [
+        "REQ-1"
+      ],
+      "REQ-4": [
+        "REQ-1",
+        "REQ-3"
+      ],
+      "REQ-5": [],
+      "REQ-6": [
+        "REQ-1",
+        "REQ-5"
+      ],
+      "REQ-7": [
+        "REQ-1",
+        "REQ-5"
+      ],
+      "REQ-8": [
+        "REQ-1"
+      ],
+      "REQ-9": [],
+      "REQ-10": [
+        "REQ-1",
+        "REQ-9"
+      ],
+      "REQ-11": [
+        "REQ-1",
+        "REQ-7"
+      ],
+      "REQ-12": [
+        "REQ-3",
+        "REQ-11"
+      ]
+    },
+    "dag_shape": {
+      "roots": [
+        "REQ-1",
+        "REQ-5",
+        "REQ-9"
+      ],
+      "longest_chain": "REQ-1 -> REQ-7 -> REQ-11 -> REQ-12（4 层）",
+      "diamonds": [
+        "REQ-1 -> {REQ-3, REQ-7} -> REQ-11 -> REQ-12"
+      ],
+      "parallelizable_after_bootstrap": [
+        "REQ-2",
+        "REQ-3",
+        "REQ-8",
+        "REQ-6",
+        "REQ-7",
+        "REQ-10"
+      ]
+    },
+    "topological_order_verified": "REQ-1 -> REQ-5 -> REQ-9 -> REQ-2 -> REQ-3 -> REQ-8 -> REQ-10 -> REQ-4 -> REQ-6 -> REQ-7 -> REQ-11 -> REQ-12（adapter 校验：全部依赖先于自身）"
+  },
+  "gate_output": {
+    "gate_1_stub_clean": {
+      "command": "python3 main.py requirements_sample --output-dir out --type web --install-deps never",
+      "result": "完成: 2 通过 / 0 失败 / 0 空转测试(WEAK_TEST) / 共 2 个需求",
+      "exit_code": 0
+    },
+    "gate_2_stub_dirty": {
+      "command": "同上（同一目录重复运行）",
+      "result": "守卫日志: [守卫] REQ-1 有意义的文件 0/1 个（单独跑失败 + import 实现）: (无)；门禁 BLOCK -> FAILED（整组测试在实现前就通过）",
+      "summary": "完成: 0 通过 / 2 失败 / 2 空转测试(WEAK_TEST) / 共 2 个需求",
+      "exit_code": 2
+    },
+    "gate_3_control_arm": {
+      "command": "FACTORY_WHITELIST=0 FACTORY_AUDIT_GATE=0 python3 main.py ...（还原修订前行为）",
+      "result": "完成: 2 通过 / 0 失败 / 0 空转测试(WEAK_TEST) / 共 2 个需求",
+      "exit_code": 0
+    },
+    "notes": "gate 3 同时是对照臂可复现性的回归验证：两个开关都能完整还原修订前行为"
+  },
+  "not_done_this_round": {
+    "multi_module_dag": "多模块串行 + 任务 DAG（topological_sort + 按依赖串行 tdd_loop）——等用户确认，本轮不写",
+    "probe_full_run": "12 需求完整流程运行——等下一轮",
+    "cost_accounting_live_data": "成本计数器已实现但本轮未产生模型调用（gate 用桩跑），实测数据待下次探针集运行"
+  },
+  "files_changed": [
+    "factory/loop.py（新增 _meaningful_files，_enforce_no_weakening 改收 meaningful 集合；重写循环记录守卫日志）",
+    "factory/llm.py（新增 CallStats、_record_usage、7 处 gateway_retries 埋点、json_retries）",
+    "factory/models.py（RunReport.cost）",
+    "factory/pipeline.py（把 CallStats 写入报告并打日志）",
+    "main.py（结束时打印成本行）",
+    "tools/experiment_gates.py（打印并写入 cost 与 rewrite_rounds_total）",
+    "软件工厂-项目架构文档.md（新增第 17 章 + 目录项）",
+    "requirements_probe/requirements.yaml（4 -> 12 需求，含依赖 DAG）",
+    "factory/models.py（修正 RunReport.to_dict 静默未生效的问题，补齐 5 个可观测字段）"
+  ],
+  "incidental_fix": {
+    "what": "factory/models.py RunReport.to_dict 未输出本轮与上一轮新增的可观测字段",
+    "cause": "早前一次 patch 的锚点未匹配且未加断言，静默失败",
+    "effect": "A/C 的白名单、拒绝记录、弱化违规一直没进 .arc/factory-report.json",
+    "fix": "补齐 test_rewrites / test_plan_files / test_plan_baselines / unauthorized_files / weakening_violations 五个字段",
+    "verified": "results[0] 字段已包含全部 10 项"
+  }
+}

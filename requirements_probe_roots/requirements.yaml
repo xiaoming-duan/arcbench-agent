@@ -1,0 +1,107 @@
+schema_version: '1.0'
+project:
+  id: inventory-probe-roots
+  name: 库存管理探针集（3 个根）
+requirements:
+- id: REQ-1
+  name: 库存条目数据源
+  description: 提供库存条目的只读列表，是所有查询与统计的基础。
+  depends_on: []
+  acceptance:
+  - listItems() 返回非空数组
+  - 每个条目含 id / sku / name / quantity / category
+  - quantity 为非负整数
+  scenarios:
+  - id: REQ-1-SCN-1
+    name: 列出全部条目
+    steps:
+    - keyword: GIVEN
+      content: 库存中有若干条目
+    - keyword: WHEN
+      content: 调用 listItems()
+    - keyword: THEN
+      content: 返回非空且字段完整的数组
+  interfaces:
+  - id: REQ-1.SVC.Items
+    type: db
+    content: 'listItems(): Item[]'
+    file_path: backend/src/services/items.js
+  tests:
+  - id: REQ-1.TEST.list
+    type: unit
+    scenario_id: REQ-1-SCN-1
+    interface_ids:
+    - REQ-1.SVC.Items
+    file_path: backend/tests/req1.list.test.js
+    intent: listItems() 返回非空数组，条目字段完整且 quantity 为非负整数
+- id: REQ-5
+  name: 条目入库校验
+  description: 校验待入库条目，返回违规描述列表（空数组表示合法）。
+  depends_on: []
+  acceptance:
+  - sku 必填且形如 SKU-数字
+  - name 必填且非空白
+  - quantity 必须是非负整数
+  - 合法输入返回空数组
+  scenarios:
+  - id: REQ-5-SCN-1
+    name: 非法条目
+    steps:
+    - keyword: GIVEN
+      content: sku 格式错误、quantity 为负的条目
+    - keyword: WHEN
+      content: 调用 validateItem(item)
+    - keyword: THEN
+      content: 返回包含全部违规项的错误数组
+  - id: REQ-5-SCN-2
+    name: 合法条目
+    steps:
+    - keyword: GIVEN
+      content: 字段全部合法的条目
+    - keyword: WHEN
+      content: 调用 validateItem(item)
+    - keyword: THEN
+      content: 返回空数组
+  interfaces:
+  - id: REQ-5.SVC.Validate
+    type: db
+    content: 'validateItem(item): string[]'
+    file_path: backend/src/services/validation.js
+  tests:
+  - id: REQ-5.TEST.validate
+    type: unit
+    scenario_id: REQ-5-SCN-1
+    interface_ids:
+    - REQ-5.SVC.Validate
+    file_path: backend/tests/req5.validate.test.js
+    intent: 非法条目的每种违规都被检出，合法条目返回空数组
+- id: REQ-9
+  name: 分类字典
+  description: 提供条目分类的枚举与合法性判断。
+  depends_on: []
+  acceptance:
+  - listCategories() 返回去重后的分类名数组
+  - isValidCategory(name) 对未知分类返回 false
+  scenarios:
+  - id: REQ-9-SCN-1
+    name: 查询分类
+    steps:
+    - keyword: GIVEN
+      content: 系统内置若干分类
+    - keyword: WHEN
+      content: 调用 listCategories()
+    - keyword: THEN
+      content: 返回非空且无重复的分类数组
+  interfaces:
+  - id: REQ-9.SVC.Categories
+    type: db
+    content: 'listCategories(): string[]'
+    file_path: backend/src/services/categories.js
+  tests:
+  - id: REQ-9.TEST.categories
+    type: unit
+    scenario_id: REQ-9-SCN-1
+    interface_ids:
+    - REQ-9.SVC.Categories
+    file_path: backend/tests/req9.categories.test.js
+    intent: listCategories() 返回去重且非空的分类数组，isValidCategory 能识别未知值

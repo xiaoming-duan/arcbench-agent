@@ -1,0 +1,315 @@
+{
+  "project_name": "库存管理探针集（扩展版）",
+  "requirements_total": 12,
+  "generator": "llm",
+  "test_dialect": "vitest",
+  "ok": false,
+  "error": "",
+  "results": [
+    {
+      "req_id": "REQ-1",
+      "state": "PASSED",
+      "attempts": 1,
+      "red_first_ok": true,
+      "note": "",
+      "test_rewrites": 0,
+      "test_plan_files": [
+        "backend/tests/req1.listItems.test.js"
+      ],
+      "test_plan_baselines": {
+        "backend/tests/req1.listItems.test.js": {
+          "path": "backend/tests/req1.listItems.test.js",
+          "sha256": "a726178b951ecb811cdd9fcc87d18f34bcb9c758a52aab317e7c33ef118e2d09",
+          "assertions": 8,
+          "test_cases": 1
+        }
+      },
+      "unauthorized_files": [
+        "backend/tests/inventoryItems.test.js"
+      ],
+      "weakening_violations": [],
+      "started_at": "22:57:05",
+      "gate_finished_at": "23:01:24"
+    },
+    {
+      "req_id": "REQ-5",
+      "state": "PASSED",
+      "attempts": 1,
+      "red_first_ok": true,
+      "note": "",
+      "test_rewrites": 0,
+      "test_plan_files": [
+        "backend/tests/req5.validateItem.test.js"
+      ],
+      "test_plan_baselines": {
+        "backend/tests/req5.validateItem.test.js": {
+          "path": "backend/tests/req5.validateItem.test.js",
+          "sha256": "38a7cd6a8b4b12a7813b85e2d1d4fd7cb120b59bf7f49e8ebd4a89f8ede9facc",
+          "assertions": 21,
+          "test_cases": 8
+        }
+      },
+      "unauthorized_files": [
+        "backend/tests/itemValidator.test.js"
+      ],
+      "weakening_violations": [],
+      "started_at": "23:01:24",
+      "gate_finished_at": "23:10:22"
+    },
+    {
+      "req_id": "REQ-9",
+      "state": "PASSED",
+      "attempts": 1,
+      "red_first_ok": true,
+      "note": "",
+      "test_rewrites": 0,
+      "test_plan_files": [
+        "backend/tests/req9.categories.test.js"
+      ],
+      "test_plan_baselines": {
+        "backend/tests/req9.categories.test.js": {
+          "path": "backend/tests/req9.categories.test.js",
+          "sha256": "8510de9cb9ece7161e49954a6d89e993d8767f4647dd63d9fe8cb8be96d0744f",
+          "assertions": 9,
+          "test_cases": 3
+        }
+      },
+      "unauthorized_files": [
+        "backend/tests/categories.test.js"
+      ],
+      "weakening_violations": [],
+      "started_at": "23:10:22",
+      "gate_finished_at": "23:23:51"
+    },
+    {
+      "req_id": "REQ-2",
+      "state": "PASSED",
+      "attempts": 1,
+      "red_first_ok": true,
+      "note": "",
+      "test_rewrites": 0,
+      "test_plan_files": [
+        "backend/tests/req2.findItemBySku.test.js"
+      ],
+      "test_plan_baselines": {
+        "backend/tests/req2.findItemBySku.test.js": {
+          "path": "backend/tests/req2.findItemBySku.test.js",
+          "sha256": "1899a4394c9934d087335905407891febe5f4361f0e4f7405d0dcb35d8d312a6",
+          "assertions": 3,
+          "test_cases": 3
+        }
+      },
+      "unauthorized_files": [
+        "backend/tests/itemService.findBySku.test.js"
+      ],
+      "weakening_violations": [],
+      "started_at": "23:23:51",
+      "gate_finished_at": "23:34:30"
+    },
+    {
+      "req_id": "REQ-3",
+      "state": "PASSED",
+      "attempts": 1,
+      "red_first_ok": true,
+      "note": "",
+      "test_rewrites": 0,
+      "test_plan_files": [
+        "backend/tests/req3.summarizeItems.test.js"
+      ],
+      "test_plan_baselines": {
+        "backend/tests/req3.summarizeItems.test.js": {
+          "path": "backend/tests/req3.summarizeItems.test.js",
+          "sha256": "d4bfd3ed25a256e559023fd46f1ab5f4debce99a4477f1c672b0108b19f5e599",
+          "assertions": 3,
+          "test_cases": 3
+        }
+      },
+      "unauthorized_files": [
+        "backend/tests/inventorySummary.test.js"
+      ],
+      "weakening_violations": [],
+      "started_at": "23:34:30",
+      "gate_finished_at": "23:40:45"
+    },
+    {
+      "req_id": "REQ-8",
+      "state": "FAILED",
+      "attempts": 3,
+      "red_first_ok": true,
+      "note": "测试未通过: FAIL",
+      "test_rewrites": 0,
+      "test_plan_files": [
+        "backend/tests/req8.deleteItem.test.js"
+      ],
+      "test_plan_baselines": {
+        "backend/tests/req8.deleteItem.test.js": {
+          "path": "backend/tests/req8.deleteItem.test.js",
+          "sha256": "f0a7ab123a3c620b0d424ccdd37a845b1ff5e9dcd554c981d581bb5f34166b09",
+          "assertions": 4,
+          "test_cases": 2
+        }
+      },
+      "unauthorized_files": [
+        "backend/tests/deleteItem.test.js"
+      ],
+      "weakening_violations": [],
+      "started_at": "23:40:45",
+      "gate_finished_at": "23:57:10"
+    },
+    {
+      "req_id": "REQ-10",
+      "state": "PASSED",
+      "attempts": 1,
+      "red_first_ok": true,
+      "note": "",
+      "test_rewrites": 0,
+      "test_plan_files": [
+        "backend/tests/req10.filterByCategory.test.js"
+      ],
+      "test_plan_baselines": {
+        "backend/tests/req10.filterByCategory.test.js": {
+          "path": "backend/tests/req10.filterByCategory.test.js",
+          "sha256": "4a80f5ea44578f8e7421c176b25d6aa8bf614ae570c705a97852793f6f101e14",
+          "assertions": 3,
+          "test_cases": 3
+        }
+      },
+      "unauthorized_files": [
+        "backend/tests/services/itemService.filter.test.js"
+      ],
+      "weakening_violations": [],
+      "started_at": "23:57:10",
+      "gate_finished_at": "00:03:28"
+    },
+    {
+      "req_id": "REQ-4",
+      "state": "FAILED",
+      "attempts": 1,
+      "red_first_ok": true,
+      "note": "实现失败: 连接异常（RemoteDisconnected）: Remote end closed connection without response",
+      "test_rewrites": 0,
+      "test_plan_files": [
+        "backend/tests/req4.low-stock.test.js"
+      ],
+      "test_plan_baselines": {
+        "backend/tests/req4.low-stock.test.js": {
+          "path": "backend/tests/req4.low-stock.test.js",
+          "sha256": "76bf5f0e097ddad44cb04ad2316d946c5e6ba6dc1f34c90b58e42de3f1eb5dc9",
+          "assertions": 3,
+          "test_cases": 3
+        }
+      },
+      "unauthorized_files": [
+        "backend/tests/lowStockService.test.js"
+      ],
+      "weakening_violations": [],
+      "started_at": "00:03:28",
+      "gate_finished_at": "(实现失败提前返回)"
+    },
+    {
+      "req_id": "REQ-6",
+      "state": "FAILED",
+      "attempts": 2,
+      "red_first_ok": true,
+      "note": "实现失败: 读取超时（>240.0s）",
+      "test_rewrites": 0,
+      "test_plan_files": [
+        "backend/tests/req6.createItem.test.js"
+      ],
+      "test_plan_baselines": {
+        "backend/tests/req6.createItem.test.js": {
+          "path": "backend/tests/req6.createItem.test.js",
+          "sha256": "989b4e3b5b9b42d88dcc31a28b914a55854d68fe4a9f5d1d531c58be28a1128a",
+          "assertions": 7,
+          "test_cases": 3
+        }
+      },
+      "unauthorized_files": [
+        "backend/tests/createItem.test.js"
+      ],
+      "weakening_violations": [],
+      "started_at": "00:13:42",
+      "gate_finished_at": "(实现失败提前返回)"
+    },
+    {
+      "req_id": "REQ-7",
+      "state": "PASSED",
+      "attempts": 1,
+      "red_first_ok": true,
+      "note": "",
+      "test_rewrites": 0,
+      "test_plan_files": [
+        "backend/tests/req7.update-quantity.test.js"
+      ],
+      "test_plan_baselines": {
+        "backend/tests/req7.update-quantity.test.js": {
+          "path": "backend/tests/req7.update-quantity.test.js",
+          "sha256": "9a0720699e4f66007084e99ff22acd7b05c06fb4a74397dfe6e01c7ba13c58bb",
+          "assertions": 8,
+          "test_cases": 3
+        }
+      },
+      "unauthorized_files": [
+        "backend/tests/services/updateQuantity.test.js"
+      ],
+      "weakening_violations": [],
+      "started_at": "00:35:15",
+      "gate_finished_at": "00:49:47"
+    },
+    {
+      "req_id": "REQ-11",
+      "state": "FAILED",
+      "attempts": 0,
+      "red_first_ok": null,
+      "note": "测试生成失败: 网络错误: _ssl.c:1011: The handshake operation timed out",
+      "test_rewrites": 0,
+      "test_plan_files": [],
+      "test_plan_baselines": {},
+      "unauthorized_files": [
+        "backend/tests/movements.test.js"
+      ],
+      "weakening_violations": [],
+      "started_at": "00:49:47",
+      "gate_finished_at": "(实现失败提前返回)"
+    },
+    {
+      "req_id": "REQ-12",
+      "state": "FAILED",
+      "attempts": 3,
+      "red_first_ok": true,
+      "note": "测试未通过: FAIL",
+      "test_rewrites": 0,
+      "test_plan_files": [
+        "backend/tests/req12.report.test.js"
+      ],
+      "test_plan_baselines": {
+        "backend/tests/req12.report.test.js": {
+          "path": "backend/tests/req12.report.test.js",
+          "sha256": "007d9a269765ae331a4e264471e25523557a4948817a100cd322d41b1b2cb040",
+          "assertions": 9,
+          "test_cases": 2
+        }
+      },
+      "unauthorized_files": [
+        "backend/tests/reportService.test.js"
+      ],
+      "weakening_violations": [],
+      "started_at": "07:38:03",
+      "gate_finished_at": "07:46:05"
+    }
+  ],
+  "cost": {
+    "calls": 61,
+    "prompt_tokens": 55121,
+    "completion_tokens": 247557,
+    "total_tokens": 302678,
+    "reasoning_tokens": 228619,
+    "gateway_retries": 18,
+    "json_retries": 0
+  },
+  "artifacts": [
+    ".arc/factory-report.json",
+    ".arc/runner-events.jsonl",
+    ".arc/traceability/"
+  ]
+}

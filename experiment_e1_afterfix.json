@@ -1,0 +1,103 @@
+{
+  "trials": [
+    {
+      "arm": "E1",
+      "rep": 0,
+      "status": "PASSED",
+      "rewrites": 2,
+      "upstream_called": true,
+      "regression": true,
+      "blocked_test_writes": 0,
+      "last_impl": "const { summarizeItems: summarizeUpstream } = require('./summary');\n\nfunction buildReport(items, movements, summarizeItems) {\n  // Always aggregate with the upstream implementation so report assembly\n  // cannot be overridden by an injected callback.\n  const summary = summarizeUpstream(items);\n  return { summary, movements };\n}\n\nmodule.exports = { buildReport };\n",
+      "first_failure": "FAIL (0/1)",
+      "tokens": 10800,
+      "calls": 2,
+      "note": "",
+      "error": ""
+    },
+    {
+      "arm": "E1",
+      "rep": 1,
+      "status": "PASSED",
+      "rewrites": 2,
+      "upstream_called": true,
+      "regression": true,
+      "blocked_test_writes": 0,
+      "last_impl": "const { summarizeItems: summarizeFromSummary } = require('./summary');\n\nfunction buildReport(items, movements, summarizeItems) {\n  // 保留第三个形参以满足既有签名，但实现固定使用上游汇总实现。\n  void summarizeItems;\n\n  const summary = summarizeFromSummary(items);\n\n  return {\n    summary,\n    movements,\n  };\n}\n\nmodule.exports = { buildReport };\n",
+      "first_failure": "FAIL (0/1)",
+      "tokens": 13282,
+      "calls": 2,
+      "note": "",
+      "error": ""
+    },
+    {
+      "arm": "E1",
+      "rep": 2,
+      "status": "PASSED",
+      "rewrites": 2,
+      "upstream_called": true,
+      "regression": true,
+      "blocked_test_writes": 0,
+      "last_impl": "'use strict';\n\nconst summaryService = require('./summary');\n\nfunction buildReport(items, movements, summarizeItems) {\n  const summary = summaryService.summarizeItems(items);\n  return {\n    summary,\n    movements,\n  };\n}\n\nmodule.exports = { buildReport };\n",
+      "first_failure": "FAIL (0/1)",
+      "tokens": 11387,
+      "calls": 2,
+      "note": "",
+      "error": ""
+    }
+  ],
+  "summary": {
+    "control": {
+      "max_repairs": 1,
+      "only_impl": false,
+      "trials": 0,
+      "passed_rate": "0/0",
+      "upstream_called_rate": "0/0",
+      "tests_broken_rate": "0/0",
+      "token_total": 0,
+      "token_per_trial": 0,
+      "rewrites_total": 0,
+      "statuses": []
+    },
+    "E1": {
+      "max_repairs": 3,
+      "only_impl": false,
+      "trials": 3,
+      "passed_rate": "3/3",
+      "upstream_called_rate": "3/3",
+      "tests_broken_rate": "3/3",
+      "token_total": 35469,
+      "token_per_trial": 11823,
+      "rewrites_total": 6,
+      "statuses": [
+        "PASSED",
+        "PASSED",
+        "PASSED"
+      ]
+    },
+    "E2": {
+      "max_repairs": 5,
+      "only_impl": false,
+      "trials": 0,
+      "passed_rate": "0/0",
+      "upstream_called_rate": "0/0",
+      "tests_broken_rate": "0/0",
+      "token_total": 0,
+      "token_per_trial": 0,
+      "rewrites_total": 0,
+      "statuses": []
+    },
+    "E3": {
+      "max_repairs": 3,
+      "only_impl": true,
+      "trials": 0,
+      "passed_rate": "0/0",
+      "upstream_called_rate": "0/0",
+      "tests_broken_rate": "0/0",
+      "token_total": 0,
+      "token_per_trial": 0,
+      "rewrites_total": 0,
+      "statuses": []
+    }
+  }
+}

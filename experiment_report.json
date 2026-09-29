@@ -1,0 +1,75 @@
+{
+  "locations_read": {
+    "test_generation": "factory/generator.py:50 (Generator Protocol.write_tests), :163 (StubGenerator.write_tests), :371 (LLMGenerator.write_tests) -> 落盘 factory/loop.py:398 apply_generated_files(self.output_dir, test_files) -> 写入原语 factory/workspace.py:71 (仅做目录穿越检查，无条件写；无任何白名单)",
+    "test_rewrite": "factory/loop.py:420-461 (while self._is_weak(...) 重写循环；:450 重写结果再过白名单；:460 重新跑测试) + 反馈构造 factory/loop.py:83 _weak_test_feedback + factory/generator.py:371 write_tests(weak_feedback=...)",
+    "path_handling": "改前：factory/loop.py:51-69 _test_paths() 把 plan.tests[].file_path 与所有新写的 backend/tests/** 合并成运行集合（:57-61 即漏洞源头）；无白名单。factory/loop.py:314 _guard_implementation_files 只在实现阶段拦测试文件写入。改后：factory/loop.py:241 _enforce_test_whitelist + :216 _run_paths，运行集合仅取计划内路径",
+    "red_gate": "factory/loop.py:416 red = self.runner.run(test_paths)；改前判定在 :463 一带仅看 TestOutcome.passed（整组退出码，来自 factory/testrunner.py 的 exit_code==0 and failed==0）。改后为 :160 _is_weak()，整组通过 OR 任一文件 import 审计不过（C）"
+  },
+  "test_plan_schema_written": true,
+  "schema_file": "schemas/test_plan.schema.yaml",
+  "A_implemented": {
+    "whitelist_enforced": true,
+    "enforced_at": "factory/loop.py:241 _enforce_test_whitelist（写测试 + 重写两处调用，:396 / :450）；运行集合改由 :216 _run_paths 从计划派生",
+    "plan_source": "factory/generator.py:46 plan_tests（Protocol）/ :127 桩 / :344 LLM；计划门禁 factory/loop.py:_make_test_plan（校验不过则带反馈重试，耗尽即阻断）",
+    "unauthorized_rejected": true,
+    "UNAUTHORIZED_TEST_FILE_recorded": true,
+    "recorded_to": "RequirementResult.unauthorized_files -> .arc/factory-report.json",
+    "new_escape_paths_monitored": ["content_edit", "file_split", "assertion_deletion"],
+    "escape_path_monitoring": {
+      "file_split": "新增路径被 _enforce_test_whitelist 判 UNAUTHORIZED_TEST_FILE 拒绝",
+      "assertion_deletion": "factory/loop.py:_enforce_no_weakening——对本来已引用实现的文件，拒绝断言数/用例数下降，记 ASSERTION_DELETION",
+      "content_edit": "同上；仅当文件原本有意义时才保护（空转文件的断言无价值，删掉正是所需）",
+      "baseline": "factory/testplan.py:record_baseline/check_baseline（哈希 + 断言数 + 用例数），落盘于 RequirementResult.test_plan_baselines"
+    }
+  },
+  "C_implemented": {
+    "function_name": "audit_imports",
+    "module": "factory/testaudit.py",
+    "dynamic_import_handled": true,
+    "dynamic_import_verdict": "DYNAMIC_IMPORT（非字面量 import() 无法静态解析，判 WEAK_TEST）",
+    "path_alias_handled": true,
+    "path_alias_verdict": "配置命中则解析；未配置或解析失败判 ALIAS_UNRESOLVED（WEAK_TEST）。规则由 FACTORY_IMPORT_ALIASES 注入",
+    "e2e_exempt": true,
+    "e2e_condition": "仅当该文件声明类型全为 e2e 时豁免（E2E_EXEMPT）",
+    "fixture_exempt": true,
+    "fixture_condition": "helper/fixture/setup 文件不审计（HELPER_EXEMPT）；但若全部文件都是 helper 则整体不通过",
+    "other_verdicts": ["IMPORTS_IMPLEMENTATION", "NO_IMPLEMENTATION_IMPORT", "MISSING_FILE"],
+    "wired_into_gate": "factory/loop.py:160 _is_weak —— 整组通过 OR 存在 weak 文件即判 WEAK_TEST"
+  },
+  "experiment_rerun": {
+    "design": "三组对照，同一套配对设计（诱导空转起点、写作计划声明路径、三组共用同一份 design+plan+seed）。每个 trial 都在全新工作区里驱动**真实的 TddLoop**，不是脚本复刻门禁逻辑",
+    "model": "deepseek-v4-pro",
+    "reps_per_arm": 8,
+    "requirements": 4,
+    "control_strict_pass": "0/8",
+    "A_alone_strict_pass": "7/8",
+    "A_plus_C_strict_pass": "7/8",
+    "control_silent_escape": "8/8",
+    "A_alone_silent_escape": "0/8",
+    "A_plus_C_silent_escape": "0/8",
+    "new_files_rejected": "control=0, A=7, A_plus_C=7（A 组每个成功 trial 恰好拒绝 1 个计划外文件）",
+    "rewrite_rounds_before": "8（control，8 个 trial 各 1 轮）",
+    "rewrite_rounds_after": "15（A 与 A+C 各 15 轮）——**上升，不是下降**，见报告第 5 节",
+    "two_failures_are_network_induced": {
+      "A/REQ-3/rep2": "拒绝新增=0 且 重写=1：重写调用被网关断连（Remote end closed connection），记录到日志",
+      "A_plus_C/REQ-4/rep1": "拒绝新增=0 且 重写=1：单次 trial 耗时 882s，网关超时"
+    },
+    "raw_result_file": "experiment_gates_result.json"
+  },
+  "files_changed": [
+    "schemas/test_plan.schema.yaml（新增，A 的契约前提）",
+    "factory/testplan.py（新增：计划结构/规范化/校验/基线）",
+    "factory/testaudit.py（重写：audit_imports + 5 类判定 + 边界处理；保留 audit_tests 兼容旧实验脚本）",
+    "factory/generator.py（新增 plan_tests 到 Protocol/桩/LLM；写测试与实现的提示词未变）",
+    "factory/loop.py（新增计划阶段、_enforce_test_whitelist、_run_paths、_enforce_no_weakening、_is_weak 改逐文件；移除 _test_paths；反馈闭环带上被拒项）",
+    "factory/config.py（新增 enforce_test_whitelist / audit_in_red_gate / max_test_rewrites / weak_feedback_mode / implementation_root / import_aliases / backend_dir / model_timeout_s；max_tokens 默认 1500）",
+    "factory/models.py（RequirementResult 增加 test_rewrites / test_plan_files / test_plan_baselines / unauthorized_files / weakening_violations，并进报告）",
+    "factory/llm.py（标准库 HTTP 回退后端 + 服务端差异降级 + 自适应 max_tokens）",
+    "factory/testrunner.py（ANSI 清洗 + 结构化失败反馈 + npm 缓存重定向）",
+    "tools/experiment_gates.py（新增：三组对照实验）",
+    "tools/experiment_weak_feedback.py / tools/reanalyze_experiment.py（前一轮实验，保留）",
+    "EXPERIMENT2.md（新增：本轮实验报告）",
+    "FACTORY.md（更新门禁说明与开关）",
+    "requirements_probe/requirements.yaml（新增：4 需求探针集）"
+  ]
+}

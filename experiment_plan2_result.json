@@ -1,0 +1,154 @@
+{
+  "trials": [
+    {
+      "form": "mock_api",
+      "arm": "control",
+      "status": "PASSED",
+      "verdicts": [],
+      "violation_count": 0,
+      "bypass_warnings": 0,
+      "rewrote": false,
+      "upstream_called_after": false,
+      "test_passed_after": true,
+      "note": "",
+      "error": ""
+    },
+    {
+      "form": "mock_api",
+      "arm": "A",
+      "status": "FAILED",
+      "verdicts": [
+        "UNVERIFIED_DEPENDENCY"
+      ],
+      "violation_count": 1,
+      "bypass_warnings": 0,
+      "rewrote": false,
+      "upstream_called_after": false,
+      "test_passed_after": true,
+      "note": "测试通过但依赖未被真实验证（REQ-3=UNVERIFIED_DEPENDENCY）：重写 1 次仍未满足依赖使用要求",
+      "error": ""
+    },
+    {
+      "form": "mock_api",
+      "arm": "A+B",
+      "status": "FAILED",
+      "verdicts": [
+        "DEPENDENCY_NOT_USED",
+        "UNVERIFIED_DEPENDENCY"
+      ],
+      "violation_count": 2,
+      "bypass_warnings": 1,
+      "rewrote": false,
+      "upstream_called_after": false,
+      "test_passed_after": true,
+      "note": "测试通过但依赖未被真实验证（REQ-3=DEPENDENCY_NOT_USED; REQ-3=UNVERIFIED_DEPENDENCY）：重写 1 次仍未满足依赖使用要求",
+      "error": ""
+    },
+    {
+      "form": "param_injection",
+      "arm": "control",
+      "status": "PASSED",
+      "verdicts": [],
+      "violation_count": 0,
+      "bypass_warnings": 0,
+      "rewrote": false,
+      "upstream_called_after": false,
+      "test_passed_after": true,
+      "note": "",
+      "error": ""
+    },
+    {
+      "form": "param_injection",
+      "arm": "A",
+      "status": "PASSED",
+      "verdicts": [],
+      "violation_count": 0,
+      "bypass_warnings": 0,
+      "rewrote": false,
+      "upstream_called_after": false,
+      "test_passed_after": true,
+      "note": "",
+      "error": ""
+    },
+    {
+      "form": "param_injection",
+      "arm": "A+B",
+      "status": "FAILED",
+      "verdicts": [
+        "DEPENDENCY_NOT_USED"
+      ],
+      "violation_count": 1,
+      "bypass_warnings": 1,
+      "rewrote": false,
+      "upstream_called_after": false,
+      "test_passed_after": true,
+      "note": "测试通过但依赖未被真实验证（REQ-3=DEPENDENCY_NOT_USED）：重写 1 次仍未满足依赖使用要求",
+      "error": ""
+    },
+    {
+      "form": "nominal_require",
+      "arm": "control",
+      "status": "PASSED",
+      "verdicts": [],
+      "violation_count": 0,
+      "bypass_warnings": 0,
+      "rewrote": false,
+      "upstream_called_after": true,
+      "test_passed_after": true,
+      "note": "",
+      "error": ""
+    },
+    {
+      "form": "nominal_require",
+      "arm": "A",
+      "status": "PASSED",
+      "verdicts": [],
+      "violation_count": 0,
+      "bypass_warnings": 0,
+      "rewrote": false,
+      "upstream_called_after": true,
+      "test_passed_after": true,
+      "note": "",
+      "error": ""
+    },
+    {
+      "form": "nominal_require",
+      "arm": "A+B",
+      "status": "PASSED",
+      "verdicts": [],
+      "violation_count": 0,
+      "bypass_warnings": 1,
+      "rewrote": false,
+      "upstream_called_after": true,
+      "test_passed_after": true,
+      "note": "",
+      "error": ""
+    },
+    {
+      "form": "nominal_require",
+      "arm": "A+B+feedback",
+      "status": "PASSED",
+      "verdicts": [],
+      "violation_count": 0,
+      "bypass_warnings": 1,
+      "rewrote": false,
+      "upstream_called_after": true,
+      "test_passed_after": true,
+      "note": "",
+      "error": ""
+    },
+    {
+      "form": "nominal_require",
+      "arm": "A+B(escalated)+feedback",
+      "status": "FAILED",
+      "verdicts": [],
+      "violation_count": 0,
+      "bypass_warnings": 1,
+      "rewrote": true,
+      "upstream_called_after": true,
+      "test_passed_after": true,
+      "note": "测试通过但依赖未被真实验证（REQ-3=INJECTION_BYPASS(summarizeItems)）：重写 2 次仍未满足依赖使用要求",
+      "error": ""
+    }
+  ]
+}

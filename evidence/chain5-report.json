@@ -1,0 +1,215 @@
+{
+  "project_name": "库存管理依赖链（5 需求）",
+  "requirements_total": 5,
+  "generator": "llm",
+  "test_dialect": "node",
+  "ok": false,
+  "error": "",
+  "results": [
+    {
+      "req_id": "REQ-1",
+      "state": "FAILED",
+      "attempts": 1,
+      "red_first_ok": true,
+      "note": "实现失败: 连接异常（RemoteDisconnected）: Remote end closed connection without response",
+      "test_rewrites": 0,
+      "write_attempts": 1,
+      "cost": {
+        "calls": 3,
+        "prompt_tokens": 2647,
+        "completion_tokens": 6741,
+        "total_tokens": 9388,
+        "reasoning_tokens": 5906,
+        "gateway_retries": 2,
+        "adaptation_retries": 0,
+        "json_retries": 0,
+        "retries_succeeded": 0,
+        "retries_exhausted": 2,
+        "prompt_chars": 7269,
+        "max_prompt_chars": 2441
+      },
+      "test_plan_files": [
+        "backend/tests/req1.listItems.test.js"
+      ],
+      "test_plan_baselines": {
+        "backend/tests/req1.listItems.test.js": {
+          "path": "backend/tests/req1.listItems.test.js",
+          "sha256": "fe2b2bfa07eb3c09e6fbc7a344bc701cccfc8ed6c5fe677749ee4c6b14b14aef",
+          "assertions": 7,
+          "test_cases": 1
+        }
+      },
+      "unauthorized_files": [],
+      "weakening_violations": [],
+      "started_at": "12:43:59",
+      "finished_at": "12:48:50",
+      "duration": "4分51秒"
+    },
+    {
+      "req_id": "REQ-3",
+      "state": "FAILED",
+      "attempts": 0,
+      "red_first_ok": null,
+      "note": "设计失败: 连接异常（RemoteDisconnected）: Remote end closed connection without response",
+      "test_rewrites": 0,
+      "write_attempts": 0,
+      "cost": {
+        "calls": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+        "reasoning_tokens": 0,
+        "gateway_retries": 2,
+        "adaptation_retries": 0,
+        "json_retries": 0,
+        "retries_succeeded": 0,
+        "retries_exhausted": 2,
+        "prompt_chars": 1424,
+        "max_prompt_chars": 0
+      },
+      "test_plan_files": [],
+      "test_plan_baselines": {},
+      "unauthorized_files": [],
+      "weakening_violations": [],
+      "started_at": "12:48:50",
+      "finished_at": "12:51:53",
+      "duration": "3分3秒"
+    },
+    {
+      "req_id": "REQ-7",
+      "state": "PASSED",
+      "attempts": 2,
+      "red_first_ok": true,
+      "note": "",
+      "test_rewrites": 0,
+      "write_attempts": 1,
+      "cost": {
+        "calls": 5,
+        "prompt_tokens": 5496,
+        "completion_tokens": 23471,
+        "total_tokens": 28967,
+        "reasoning_tokens": 21822,
+        "gateway_retries": 2,
+        "adaptation_retries": 0,
+        "json_retries": 0,
+        "retries_succeeded": 2,
+        "retries_exhausted": 0,
+        "prompt_chars": 10939,
+        "max_prompt_chars": 1328
+      },
+      "test_plan_files": [
+        "backend/tests/req7.update-qty.test.js"
+      ],
+      "test_plan_baselines": {
+        "backend/tests/req7.update-qty.test.js": {
+          "path": "backend/tests/req7.update-qty.test.js",
+          "sha256": "5bf1f703d27d87c2f8ea153f29015cc7602e6c229845b7209cc942bf9e4208f4",
+          "assertions": 5,
+          "test_cases": 3
+        }
+      },
+      "unauthorized_files": [],
+      "weakening_violations": [],
+      "started_at": "12:51:53",
+      "finished_at": "13:00:19",
+      "duration": "8分26秒"
+    },
+    {
+      "req_id": "REQ-11",
+      "state": "PASSED",
+      "attempts": 1,
+      "red_first_ok": true,
+      "note": "",
+      "test_rewrites": 0,
+      "write_attempts": 1,
+      "cost": {
+        "calls": 4,
+        "prompt_tokens": 3849,
+        "completion_tokens": 30634,
+        "total_tokens": 34483,
+        "reasoning_tokens": 28489,
+        "gateway_retries": 0,
+        "adaptation_retries": 0,
+        "json_retries": 0,
+        "retries_succeeded": 0,
+        "retries_exhausted": 0,
+        "prompt_chars": 7065,
+        "max_prompt_chars": 0
+      },
+      "test_plan_files": [
+        "backend/tests/req11.movements.test.js"
+      ],
+      "test_plan_baselines": {
+        "backend/tests/req11.movements.test.js": {
+          "path": "backend/tests/req11.movements.test.js",
+          "sha256": "6a1fdfbd599b1d219cf2e4fa0ee22ef87b8aeda3b6408dbb21732f513e592e5e",
+          "assertions": 9,
+          "test_cases": 1
+        }
+      },
+      "unauthorized_files": [],
+      "weakening_violations": [],
+      "started_at": "13:00:19",
+      "finished_at": "13:07:32",
+      "duration": "7分13秒"
+    },
+    {
+      "req_id": "REQ-12",
+      "state": "PASSED",
+      "attempts": 1,
+      "red_first_ok": true,
+      "note": "",
+      "test_rewrites": 0,
+      "write_attempts": 1,
+      "cost": {
+        "calls": 4,
+        "prompt_tokens": 3782,
+        "completion_tokens": 8056,
+        "total_tokens": 11838,
+        "reasoning_tokens": 6895,
+        "gateway_retries": 0,
+        "adaptation_retries": 0,
+        "json_retries": 0,
+        "retries_succeeded": 0,
+        "retries_exhausted": 0,
+        "prompt_chars": 7253,
+        "max_prompt_chars": 0
+      },
+      "test_plan_files": [
+        "backend/tests/req12.report.test.js"
+      ],
+      "test_plan_baselines": {
+        "backend/tests/req12.report.test.js": {
+          "path": "backend/tests/req12.report.test.js",
+          "sha256": "0657fd6006d400028e3838137a0543104681acc5705ee095cc70ddd4b0d43e39",
+          "assertions": 5,
+          "test_cases": 2
+        }
+      },
+      "unauthorized_files": [],
+      "weakening_violations": [],
+      "started_at": "13:07:32",
+      "finished_at": "13:09:34",
+      "duration": "2分2秒"
+    }
+  ],
+  "cost": {
+    "calls": 16,
+    "prompt_tokens": 15774,
+    "completion_tokens": 68902,
+    "total_tokens": 84676,
+    "reasoning_tokens": 63112,
+    "gateway_retries": 6,
+    "adaptation_retries": 0,
+    "json_retries": 0,
+    "retries_succeeded": 2,
+    "retries_exhausted": 4,
+    "prompt_chars": 33950,
+    "max_prompt_chars": 3769
+  },
+  "artifacts": [
+    ".arc/factory-report.json",
+    ".arc/runner-events.jsonl",
+    ".arc/traceability/"
+  ]
+}

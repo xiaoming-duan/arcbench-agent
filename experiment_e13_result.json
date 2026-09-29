@@ -1,0 +1,170 @@
+{
+  "trials": [
+    {
+      "arm": "control",
+      "rep": 0,
+      "status": "FAILED",
+      "rewrites": 1,
+      "upstream_called": true,
+      "regression": true,
+      "blocked_test_writes": 0,
+      "tokens": 15421,
+      "calls": 1,
+      "note": "测试通过但依赖未被真实验证（REQ-3=INJECTION_BYPASS(summarizeItems)）：重写 2 次仍未满足依赖使用要求",
+      "error": ""
+    },
+    {
+      "arm": "control",
+      "rep": 1,
+      "status": "FAILED",
+      "rewrites": 1,
+      "upstream_called": true,
+      "regression": true,
+      "blocked_test_writes": 0,
+      "tokens": 7158,
+      "calls": 1,
+      "note": "测试通过但依赖未被真实验证（REQ-3=INJECTION_BYPASS(summarizeItems)）：重写 2 次仍未满足依赖使用要求",
+      "error": ""
+    },
+    {
+      "arm": "E1",
+      "rep": 0,
+      "status": "FAILED",
+      "rewrites": 3,
+      "upstream_called": true,
+      "regression": true,
+      "blocked_test_writes": 0,
+      "tokens": 42433,
+      "calls": 3,
+      "note": "测试通过但依赖未被真实验证（REQ-3=INJECTION_BYPASS(summarizeItems)）：重写 4 次仍未满足依赖使用要求",
+      "error": ""
+    },
+    {
+      "arm": "E1",
+      "rep": 1,
+      "status": "FAILED",
+      "rewrites": 3,
+      "upstream_called": false,
+      "regression": true,
+      "blocked_test_writes": 0,
+      "tokens": 39339,
+      "calls": 3,
+      "note": "测试通过但依赖未被真实验证（REQ-3=DEPENDENCY_NOT_USED）：重写 4 次仍未满足依赖使用要求",
+      "error": ""
+    },
+    {
+      "arm": "E2",
+      "rep": 0,
+      "status": "FAILED",
+      "rewrites": 5,
+      "upstream_called": false,
+      "regression": true,
+      "blocked_test_writes": 0,
+      "tokens": 38549,
+      "calls": 5,
+      "note": "测试通过但依赖未被真实验证（REQ-3=DEPENDENCY_NOT_USED）：重写 6 次仍未满足依赖使用要求",
+      "error": ""
+    },
+    {
+      "arm": "E2",
+      "rep": 1,
+      "status": "FAILED",
+      "rewrites": 5,
+      "upstream_called": true,
+      "regression": true,
+      "blocked_test_writes": 0,
+      "tokens": 73025,
+      "calls": 5,
+      "note": "测试未通过: FAIL (0/1)",
+      "error": ""
+    },
+    {
+      "arm": "E3",
+      "rep": 0,
+      "status": "FAILED",
+      "rewrites": 3,
+      "upstream_called": false,
+      "regression": true,
+      "blocked_test_writes": 0,
+      "tokens": 36862,
+      "calls": 3,
+      "note": "测试通过但依赖未被真实验证（REQ-3=DEPENDENCY_NOT_USED）：重写 4 次仍未满足依赖使用要求",
+      "error": ""
+    },
+    {
+      "arm": "E3",
+      "rep": 1,
+      "status": "FAILED",
+      "rewrites": 3,
+      "upstream_called": true,
+      "regression": true,
+      "blocked_test_writes": 0,
+      "tokens": 41880,
+      "calls": 3,
+      "note": "测试通过但依赖未被真实验证（REQ-3=INJECTION_BYPASS(summarizeItems)）：重写 4 次仍未满足依赖使用要求",
+      "error": ""
+    }
+  ],
+  "summary": {
+    "control": {
+      "max_repairs": 1,
+      "only_impl": false,
+      "trials": 2,
+      "passed_rate": "0/2",
+      "upstream_called_rate": "2/2",
+      "tests_broken_rate": "2/2",
+      "token_total": 22579,
+      "token_per_trial": 11289,
+      "rewrites_total": 2,
+      "statuses": [
+        "FAILED",
+        "FAILED"
+      ]
+    },
+    "E1": {
+      "max_repairs": 3,
+      "only_impl": false,
+      "trials": 2,
+      "passed_rate": "0/2",
+      "upstream_called_rate": "1/2",
+      "tests_broken_rate": "2/2",
+      "token_total": 81772,
+      "token_per_trial": 40886,
+      "rewrites_total": 6,
+      "statuses": [
+        "FAILED",
+        "FAILED"
+      ]
+    },
+    "E2": {
+      "max_repairs": 5,
+      "only_impl": false,
+      "trials": 2,
+      "passed_rate": "0/2",
+      "upstream_called_rate": "1/2",
+      "tests_broken_rate": "2/2",
+      "token_total": 111574,
+      "token_per_trial": 55787,
+      "rewrites_total": 10,
+      "statuses": [
+        "FAILED",
+        "FAILED"
+      ]
+    },
+    "E3": {
+      "max_repairs": 3,
+      "only_impl": true,
+      "trials": 2,
+      "passed_rate": "0/2",
+      "upstream_called_rate": "1/2",
+      "tests_broken_rate": "2/2",
+      "token_total": 78742,
+      "token_per_trial": 39371,
+      "rewrites_total": 6,
+      "statuses": [
+        "FAILED",
+        "FAILED"
+      ]
+    }
+  }
+}

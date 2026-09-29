@@ -1,0 +1,416 @@
+# =============================================================================
+# LLM 探针需求集 —— 扩展版（12 需求，含依赖 DAG）
+# -----------------------------------------------------------------------------
+# 用途：
+#   1. 测量「空转测试（WEAK_TEST）」与门禁逃逸路径的发生率
+#   2. 为多模块串行 + 任务 DAG 提供输入（下一轮）
+#
+# ★ 本轮只做扩展，不跑完整流程。
+#
+# 依赖 DAG（3 个根，最长链 4 层，含菱形依赖）：
+#
+#   REQ-1 ─┬─> REQ-2
+#          ├─> REQ-3 ─┬─> REQ-4
+#          │          └──────────┐
+#          ├─> REQ-8               │
+#          ├─> REQ-6 <── REQ-5     │
+#          ├─> REQ-7 <── REQ-5 ─┐  │
+#          │                    └─> REQ-11 ─┐
+#          └─> REQ-10 <── REQ-9             │
+#                                    REQ-12 <┘
+#
+#   根节点：REQ-1 / REQ-5 / REQ-9（可并行起步）
+#   关键路径：REQ-1 -> REQ-7 -> REQ-11 -> REQ-12（4 层）
+#   菱形：REQ-1 -> {REQ-3, REQ-7} -> REQ-11 -> REQ-12
+#
+# 全部由 LLM 生成（**不提供 fixtures/**，桩模式无法使用本目录）
+# 用法：python3 main.py requirements_probe --output-dir out-probe --generator llm
+# =============================================================================
+schema_version: "1.0"
+
+project:
+  id: inventory-probe
+  name: 库存管理探针集（扩展版）
+
+requirements:
+  # ---------------------------------------------------------------- 根节点
+  - id: REQ-1
+    name: 库存条目数据源
+    description: 提供库存条目的只读列表，是所有查询与统计的基础。
+    depends_on: []
+    acceptance:
+      - listItems() 返回非空数组
+      - 每个条目含 id / sku / name / quantity / category
+      - quantity 为非负整数
+    scenarios:
+      - id: REQ-1-SCN-1
+        name: 列出全部条目
+        steps:
+          - keyword: GIVEN
+            content: 库存中有若干条目
+          - keyword: WHEN
+            content: 调用 listItems()
+          - keyword: THEN
+            content: 返回非空且字段完整的数组
+    interfaces:
+      - id: REQ-1.SVC.Items
+        type: db
+        content: "listItems(): Item[]"
+        file_path: backend/src/services/items.js
+    tests:
+      - id: REQ-1.TEST.list
+        type: unit
+        scenario_id: REQ-1-SCN-1
+        interface_ids: [REQ-1.SVC.Items]
+        file_path: backend/tests/req1.list.test.js
+        intent: listItems() 返回非空数组，条目字段完整且 quantity 为非负整数
+
+  - id: REQ-5
+    name: 条目入库校验
+    description: 校验待入库条目，返回违规描述列表（空数组表示合法）。
+    depends_on: []
+    acceptance:
+      - sku 必填且形如 SKU-数字
+      - name 必填且非空白
+      - quantity 必须是非负整数
+      - 合法输入返回空数组
+    scenarios:
+      - id: REQ-5-SCN-1
+        name: 非法条目
+        steps:
+          - keyword: GIVEN
+            content: sku 格式错误、quantity 为负的条目
+          - keyword: WHEN
+            content: 调用 validateItem(item)
+          - keyword: THEN
+            content: 返回包含全部违规项的错误数组
+      - id: REQ-5-SCN-2
+        name: 合法条目
+        steps:
+          - keyword: GIVEN
+            content: 字段全部合法的条目
+          - keyword: WHEN
+            content: 调用 validateItem(item)
+          - keyword: THEN
+            content: 返回空数组
+    interfaces:
+      - id: REQ-5.SVC.Validate
+        type: db
+        content: "validateItem(item): string[]"
+        file_path: backend/src/services/validation.js
+    tests:
+      - id: REQ-5.TEST.validate
+        type: unit
+        scenario_id: REQ-5-SCN-1
+        interface_ids: [REQ-5.SVC.Validate]
+        file_path: backend/tests/req5.validate.test.js
+        intent: 非法条目的每种违规都被检出，合法条目返回空数组
+
+  - id: REQ-9
+    name: 分类字典
+    description: 提供条目分类的枚举与合法性判断。
+    depends_on: []
+    acceptance:
+      - listCategories() 返回去重后的分类名数组
+      - isValidCategory(name) 对未知分类返回 false
+    scenarios:
+      - id: REQ-9-SCN-1
+        name: 查询分类
+        steps:
+          - keyword: GIVEN
+            content: 系统内置若干分类
+          - keyword: WHEN
+            content: 调用 listCategories()
+          - keyword: THEN
+            content: 返回非空且无重复的分类数组
+    interfaces:
+      - id: REQ-9.SVC.Categories
+        type: db
+        content: "listCategories(): string[]"
+        file_path: backend/src/services/categories.js
+    tests:
+      - id: REQ-9.TEST.categories
+        type: unit
+        scenario_id: REQ-9-SCN-1
+        interface_ids: [REQ-9.SVC.Categories]
+        file_path: backend/tests/req9.categories.test.js
+        intent: listCategories() 返回去重且非空的分类数组，isValidCategory 能识别未知值
+
+  # ---------------------------------------------------------------- 第二层
+  - id: REQ-2
+    name: 按 SKU 查询条目
+    description: 根据 SKU 精确查找一个条目，未找到返回 null，比较不区分大小写。
+    depends_on: [REQ-1]
+    acceptance:
+      - findItemBySku('SKU-1001') 返回对应条目
+      - 不存在的 SKU 返回 null
+      - SKU 比较不区分大小写
+    scenarios:
+      - id: REQ-2-SCN-1
+        name: 命中与未命中
+        steps:
+          - keyword: GIVEN
+            content: 存在 SKU-1001，不存在 SKU-9999
+          - keyword: WHEN
+            content: 分别调用 findItemBySku
+          - keyword: THEN
+            content: 前者返回条目，后者返回 null
+    interfaces:
+      - id: REQ-2.SVC.FindBySku
+        type: db
+        content: "findItemBySku(sku): Item | null（大小写不敏感）"
+        file_path: backend/src/services/items.js
+    tests:
+      - id: REQ-2.TEST.find
+        type: unit
+        scenario_id: REQ-2-SCN-1
+        interface_ids: [REQ-2.SVC.FindBySku]
+        file_path: backend/tests/req2.find.test.js
+        intent: 命中返回条目、未命中返回 null、且大小写不敏感
+
+  - id: REQ-3
+    name: 库存汇总统计
+    description: 基于条目列表计算总数、总数量与低库存条目数，阈值可配置。
+    depends_on: [REQ-1]
+    acceptance:
+      - summarizeItems() 返回 total / totalQuantity / lowStock
+      - 支持自定义低库存阈值
+      - 空列表返回全零
+    scenarios:
+      - id: REQ-3-SCN-1
+        name: 汇总当前库存
+        steps:
+          - keyword: GIVEN
+            content: 库存有 3 个条目，数量 12 / 4 / 27
+          - keyword: WHEN
+            content: 调用 summarizeItems()
+          - keyword: THEN
+            content: 返回 total=3、totalQuantity=43、lowStock=1
+    interfaces:
+      - id: REQ-3.SVC.Summary
+        type: db
+        content: "summarizeItems(threshold?): {total,totalQuantity,lowStock}"
+        file_path: backend/src/services/summary.js
+    tests:
+      - id: REQ-3.TEST.summary
+        type: unit
+        scenario_id: REQ-3-SCN-1
+        interface_ids: [REQ-3.SVC.Summary]
+        file_path: backend/tests/req3.summary.test.js
+        intent: 默认与自定义阈值下的汇总都正确，空列表返回全零
+
+  - id: REQ-8
+    name: 删除条目
+    description: 按 SKU 删除条目，返回是否删除成功。
+    depends_on: [REQ-1]
+    acceptance:
+      - 删除存在的 SKU 返回 true 且列表中不再包含它
+      - 删除不存在的 SKU 返回 false
+    scenarios:
+      - id: REQ-8-SCN-1
+        name: 删除条目
+        steps:
+          - keyword: GIVEN
+            content: 存在 SKU-1002
+          - keyword: WHEN
+            content: 调用 deleteItem('SKU-1002')
+          - keyword: THEN
+            content: 返回 true 且 findItemBySku 查不到它
+    interfaces:
+      - id: REQ-8.SVC.Delete
+        type: db
+        content: "deleteItem(sku): boolean"
+        file_path: backend/src/services/items.js
+    tests:
+      - id: REQ-8.TEST.delete
+        type: unit
+        scenario_id: REQ-8-SCN-1
+        interface_ids: [REQ-8.SVC.Delete]
+        file_path: backend/tests/req8.delete.test.js
+        intent: 删除存在的条目返回 true 且不可再查到，删除不存在的返回 false
+
+  - id: REQ-10
+    name: 按分类筛选条目
+    description: 返回指定分类下的条目列表，未知分类返回空数组。
+    depends_on: [REQ-1, REQ-9]
+    acceptance:
+      - 已知分类返回该分类下的条目
+      - 未知分类返回空数组
+    scenarios:
+      - id: REQ-10-SCN-1
+        name: 筛选已知分类
+        steps:
+          - keyword: GIVEN
+            content: 库存中有多个分类的条目
+          - keyword: WHEN
+            content: 调用 filterByCategory('电子')
+          - keyword: THEN
+            content: 只返回该分类的条目
+    interfaces:
+      - id: REQ-10.SVC.Filter
+        type: db
+        content: "filterByCategory(category): Item[]"
+        file_path: backend/src/services/categories.js
+    tests:
+      - id: REQ-10.TEST.filter
+        type: unit
+        scenario_id: REQ-10-SCN-1
+        interface_ids: [REQ-10.SVC.Filter]
+        file_path: backend/tests/req10.filter.test.js
+        intent: 已知分类只返回该分类条目，未知分类返回空数组
+
+  # ---------------------------------------------------------------- 第三层
+  - id: REQ-4
+    name: 低库存预警列表
+    description: 基于汇总阈值返回需要补货的条目。
+    depends_on: [REQ-1, REQ-3]
+    acceptance:
+      - 返回全部低于阈值的条目
+      - 无低库存时返回空数组
+    scenarios:
+      - id: REQ-4-SCN-1
+        name: 生成预警列表
+        steps:
+          - keyword: GIVEN
+            content: 库存中有数量为 4 的条目
+          - keyword: WHEN
+            content: 调用 listLowStock(10)
+          - keyword: THEN
+            content: 返回包含该条目的数组
+    interfaces:
+      - id: REQ-4.SVC.LowStock
+        type: db
+        content: "listLowStock(threshold?): Item[]"
+        file_path: backend/src/services/alerts.js
+    tests:
+      - id: REQ-4.TEST.low-stock
+        type: unit
+        scenario_id: REQ-4-SCN-1
+        interface_ids: [REQ-4.SVC.LowStock]
+        file_path: backend/tests/req4.low-stock.test.js
+        intent: 只返回低于阈值的条目，无低库存时返回空数组
+
+  - id: REQ-6
+    name: 新增条目
+    description: 校验通过后新增条目，SKU 重复时拒绝。
+    depends_on: [REQ-1, REQ-5]
+    acceptance:
+      - 合法且 SKU 不重复时新增成功并返回该条目
+      - SKU 重复或校验不通过时抛错或返回 null
+    scenarios:
+      - id: REQ-6-SCN-1
+        name: 新增合法条目
+        steps:
+          - keyword: GIVEN
+            content: 一个合法且 SKU 不存在的条目
+          - keyword: WHEN
+            content: 调用 createItem(item)
+          - keyword: THEN
+            content: 新增成功且 listItems() 包含它
+    interfaces:
+      - id: REQ-6.SVC.Create
+        type: db
+        content: "createItem(item): Item"
+        file_path: backend/src/services/items.js
+    tests:
+      - id: REQ-6.TEST.create
+        type: unit
+        scenario_id: REQ-6-SCN-1
+        interface_ids: [REQ-6.SVC.Create]
+        file_path: backend/tests/req6.create.test.js
+        intent: 合法条目可新增且能被查到，重复 SKU 与非法条目被拒绝
+
+  - id: REQ-7
+    name: 更新条目数量
+    description: 按 SKU 更新数量，返回更新后的条目。
+    depends_on: [REQ-1, REQ-5]
+    acceptance:
+      - 存在的 SKU 更新成功并返回新数量
+      - 负数数量被拒绝
+      - 不存在的 SKU 返回 null
+    scenarios:
+      - id: REQ-7-SCN-1
+        name: 更新数量
+        steps:
+          - keyword: GIVEN
+            content: 存在 SKU-1001，当前数量 12
+          - keyword: WHEN
+            content: 调用 updateQuantity('SKU-1001', 20)
+          - keyword: THEN
+            content: 返回条目且 quantity 为 20
+    interfaces:
+      - id: REQ-7.SVC.UpdateQty
+        type: db
+        content: "updateQuantity(sku, quantity): Item | null"
+        file_path: backend/src/services/items.js
+    tests:
+      - id: REQ-7.TEST.update-qty
+        type: unit
+        scenario_id: REQ-7-SCN-1
+        interface_ids: [REQ-7.SVC.UpdateQty]
+        file_path: backend/tests/req7.update-qty.test.js
+        intent: 正常更新返回新数量，负数被拒，不存在的 SKU 返回 null
+
+  # ---------------------------------------------------------------- 第四层
+  - id: REQ-11
+    name: 库存变动流水
+    description: 记录每次数量变动，支持按 SKU 查询流水。
+    depends_on: [REQ-1, REQ-7]
+    acceptance:
+      - 每次 updateQuantity 产生一条流水
+      - listMovements(sku) 按时间顺序返回该 SKU 的流水
+      - 无流水时返回空数组
+    scenarios:
+      - id: REQ-11-SCN-1
+        name: 变动后查询流水
+        steps:
+          - keyword: GIVEN
+            content: 条目 SKU-1001 完成一次数量更新
+          - keyword: WHEN
+            content: 调用 listMovements('SKU-1001')
+          - keyword: THEN
+            content: 返回至少一条含 from/to 的流水记录
+    interfaces:
+      - id: REQ-11.SVC.Movements
+        type: db
+        content: "listMovements(sku?): Movement[]"
+        file_path: backend/src/services/movements.js
+    tests:
+      - id: REQ-11.TEST.movements
+        type: unit
+        scenario_id: REQ-11-SCN-1
+        interface_ids: [REQ-11.SVC.Movements]
+        file_path: backend/tests/req11.movements.test.js
+        intent: 更新数量后产生流水且可查询，无流水时返回空数组
+
+  # ---------------------------------------------------------------- 汇聚层
+  - id: REQ-12
+    name: 库存周转报表
+    description: 综合汇总与流水，产出一个可直接渲染的报表对象。
+    depends_on: [REQ-3, REQ-11]
+    acceptance:
+      - buildReport() 返回 summary 与 movements 两部分
+      - summary 与 summarizeItems() 一致
+      - 无数据时返回结构完整但内容为空的对象
+    scenarios:
+      - id: REQ-12-SCN-1
+        name: 生成报表
+        steps:
+          - keyword: GIVEN
+            content: 库存有若干条目且存在变动流水
+          - keyword: WHEN
+            content: 调用 buildReport()
+          - keyword: THEN
+            content: 返回含 summary.total 与 movements 数组的对象
+    interfaces:
+      - id: REQ-12.SVC.Report
+        type: db
+        content: "buildReport(): {summary, movements}"
+        file_path: backend/src/services/report.js
+    tests:
+      - id: REQ-12.TEST.report
+        type: unit
+        scenario_id: REQ-12-SCN-1
+        interface_ids: [REQ-12.SVC.Report]
+        file_path: backend/tests/req12.report.test.js
+        intent: 报表结构完整，summary 与汇总模块一致，无数据时依然结构完整

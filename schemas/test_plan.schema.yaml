@@ -1,0 +1,132 @@
+# test_plan.yaml —— 测试计划契约（schema）
+#
+# 这是 A（测试路径白名单）的前提：在**测试生成阶段之前**先产出一份测试计划，
+# 后续的"允许写哪些测试文件"由它决定，而不是由模型的输出决定。
+#
+# 文件位置：<output_dir>/.arc/test_plan.yaml（每需求一段，或整项目一个文件）
+# 生成者：generator.plan_tests()（LLM 或桩）
+# 消费者：TddLoop 的写测试阶段 / RED 门禁 / import 审计（C）
+$schema: "https://json-schema.org/draft/2020-12/schema"
+title: ARC-Bench Test Plan
+type: object
+additionalProperties: false
+required: [schema_version, test_plan]
+
+properties:
+  schema_version:
+    type: string
+    const: "1.0"
+
+  test_plan:
+    type: array
+    minItems: 1
+    description: 每个待实现需求一段
+    items:
+      type: object
+      additionalProperties: false
+      required: [requirement, test_files]
+      properties:
+        requirement:
+          type: string
+          description: 需求 ID，必须与需求树中的 req_id 一致
+          pattern: "^[A-Za-z0-9._-]+$"
+
+        scenarios:
+          type: array
+          description: 本需求要覆盖的验收场景 ID 列表（应覆盖需求声明的全部场景）
+          items:
+            type: string
+
+        test_files:
+          type: array
+          minItems: 1
+          description: |
+            计划内的测试文件 —— **这是白名单**。
+            测试生成/重写阶段只允许写这些路径；多出来的文件一律拒绝，
+            并记录 UNAUTHORIZED_TEST_FILE。
+          items:
+            type: object
+            additionalProperties: false
+            required: [path, type]
+            properties:
+              path:
+                type: string
+                description: |
+                  相对**工程根（output_dir）**的路径，必须落在 backend/tests/ 下，
+                  且以 .test.js / .spec.js 等测试后缀结尾。
+                  为方便书写，若未以 "backend/" 开头，会被规范化为 backend/<path>。
+                examples: ["backend/tests/req1.register.test.js"]
+                pattern: "(^|/)backend/tests/.+\\.(test|spec)\\.[jt]sx?$"
+
+              covers:
+                type: array
+                description: 该文件覆盖的场景 ID，必须是本需求 scenarios 的子集
+                items:
+                  type: string
+
+              type:
+                type: string
+                enum: [unit, integration, e2e]
+                description: |
+                  unit / integration —— 必须 import 实现模块，否则 import 审计判 NO_IMPLEMENTATION_IMPORT。
+                  e2e               —— 允许不 import 实现（走真实进程/HTTP），需显式声明才豁免。
+
+        notes:
+          type: string
+          description: 可选说明
+
+# ---------------------------------------------------------------------------
+# 校验规则（不止是结构校验）
+# ---------------------------------------------------------------------------
+x-validation-rules:
+  - id: non_empty
+    rule: test_files 至少一个
+  - id: path_under_test_dir
+    rule: 每个 path 必须位于 backend/tests/ 下（防止把测试写到 src/ 或根目录）
+  - id: path_is_test_file
+    rule: 每个 path 必须匹配测试文件后缀
+  - id: no_duplicate_path
+    rule: 同一需求内 path 不得重复
+  - id: scenarios_covered
+    rule: 需求声明的每个 scenario 至少被一个 test_file 的 covers 覆盖
+  - id: covers_subset
+    rule: covers 必须是本需求 scenarios 的子集，不得引用不存在的场景
+  - id: e2e_only_exempt
+    rule: 仅当某文件 type=e2e 时才豁免 import 要求；mixed 类型不豁免
+
+# ---------------------------------------------------------------------------
+# 门禁联动（重要）
+# ---------------------------------------------------------------------------
+x-gates:
+  plan_gate:
+    description: |
+      计划本身也走门禁。若结构校验或 x-validation-rules 不通过，
+      回退到设计阶段重新产出计划；重试耗尽则该需求 FAILED。
+  red_gate:
+    description: |
+      计划内**每个**文件生成后必须失败（逐文件 RED），且必须是"有意义地失败"：
+        - 整组通过                => WEAK_TEST
+        - 某文件未 import 实现     => WEAK_TEST（C）
+      任一成立即回退到写测试阶段重写。
+  whitelist_gate:
+    description: |
+      写测试/重写阶段只允许写计划内路径：
+        - 计划外的新测试文件      => UNAUTHORIZED_TEST_FILE（拒绝写入）
+        - 删除已有断言 / 测试用例 => ASSERTION_DELETION（拒绝写入）
+
+# ---------------------------------------------------------------------------
+# 示例
+# ---------------------------------------------------------------------------
+x-example:
+  schema_version: "1.0"
+  test_plan:
+    - requirement: REQ-1
+      scenarios: [REQ-1-SCN-1, REQ-1-SCN-2]
+      test_files:
+        - path: backend/tests/req1.register.test.js
+          covers: [REQ-1-SCN-1]
+          type: unit
+        - path: backend/tests/req1.validation.test.js
+          covers: [REQ-1-SCN-2]
+          type: unit
+      notes: 邮箱格式校验与重复注册分别覆盖

@@ -1,0 +1,183 @@
+{
+  "d1_baseline": {
+    "defect": "http.client.RemoteDisconnected 不是 urllib.error.URLError 的子类（MRO: RemoteDisconnected -> ConnectionResetError -> ConnectionError -> OSError），穿透了全部 except 分支——既不重试也不计入 gateway_retries",
+    "gateway_retries_before_fix": "1–2（3 根需求运行两次：2 与 1）。注意：这是**被 D1 压低后**的读数，不是真实重试次数——RemoteDisconnected 根本没被计数。原始日志已被清理，数据来自当时的运行报告，无法从磁盘独立复核。",
+    "gateway_retries_after_fix": "6（3 根重跑）/ 18（12 需求）/ 6（3 需求子集）",
+    "per_requirement_normalized": {
+      "before": "0.67 与 0.33 次/需求",
+      "after": "2.0 次/需求（3 根重跑）、1.5 次/需求（12 需求）、2.0 次/需求（3 子集）"
+    },
+    "deterministic_ab": {
+      "method": "同一故障注入（每次 urlopen 都抛 RemoteDisconnected），不花模型调用",
+      "pre_fix_behaviour": "urlopen 调用 1 次、gateway_retries=0（异常直接穿透）",
+      "post_fix_behaviour": "urlopen 调用 3 次、gateway_retries=2（重试真的发生并计数）",
+      "conclusion": "修复前后差异是机制性的，不是统计噪声"
+    },
+    "retry_success_rate": "4/6 = 67%（3 需求子集实测；retries_succeeded=4 / retries_exhausted=2）",
+    "retry_success_rate_formula": "retries_succeeded / (retries_succeeded + retries_exhausted)",
+    "gateway_genuinely_unstable": "是，但**没有到重试在烧钱的程度**。67% ≥ 50% 阈值 → 重试有效，D1 修复的价值成立。网关确实会断连，但超过三分之二的重试能救回来。",
+    "revision_of_earlier_attribution": {
+      "previous_claim": "12 需求运行中「环境失败 3 次」并据此算出「排除环境后 77.8%」",
+      "revision": "该归因需要重审：修复前这些失败确实**没有**被重试过，所以「3 次环境失败」是「3 次未被重试的环境失败」。修复后同样的故障有 67% 概率被救回，因此当时的 77.8% 是**低估**。",
+      "cost_side": "修复的代价是更多 token 与更长墙钟——这是修复的代价，不是 bug。12 需求那次 18 次重试即为实证。"
+    },
+    "counters_added": [
+      "retries_succeeded / retries_exhausted（区分重试后成功与耗尽）",
+      "adaptation_retries（协议适配重试，与网络层 gateway_retries 分开，避免污染成功率口径）",
+      "CallStats.snapshot() / delta()（按需求切分成本）"
+    ],
+    "attribution_bug_found_and_fixed": "初版把 retries_exhausted 归集写在循环末尾，而最终失败是在循环内直接 raise —— 导致 exhausted 恒为 0（测试用例 B 捕获）。改为 try/finally 统一归集。"
+  },
+  "d3_assertion": {
+    "location": "tools/test_gates.py（新增，21 项断言，不调用模型，用假生成器 + 真实 TddLoop）",
+    "assertion_present": true,
+    "d3_specific_assertions": [
+      "T1a 初次写测试被拒后确实重试（write_tests 调用 2 次）",
+      "T1b 重试时回传了拒绝理由，且含 UNAUTHORIZED_TEST_FILE",
+      "T1c 两次调用都收到白名单",
+      "T1d 计划内文件已生成，未因缺失而阻断",
+      "T1e 计划外文件未落盘",
+      "T1f 被拒路径记入 unauthorized_files",
+      "T2a/T2b/T2c 始终写不对时阻断，理由含尝试次数，重试次数 = max_test_rewrites+1"
+    ],
+    "d4_regression_assertions": [
+      "T3a feedback 是 str（D4 的类型错误不再出现）",
+      "T3b feedback 含被拒文件路径",
+      "T3c feedback 含计划内路径清单",
+      "T3d 未抛异常"
+    ],
+    "other_coverage": [
+      "T4 重写路径同样带白名单",
+      "T5 弱化守卫双信号（有意义/无意义）与拒绝行为",
+      "T6 运行集合受白名单约束，对照臂可还原"
+    ],
+    "run_result": "21/21 通过",
+    "defect_found_by_these_assertions": {
+      "what": "measure_source 只认 `assert.` / `expect(`，**不认别名断言**（`const a = require('node:assert'); a.equal(x, 1)`）",
+      "impact": "断言计数恒为 0 → 弱化守卫的 ASSERTION_DELETION 检测**此前实际是失效的**；模型恰好惯用别名断言，所以守卫从未真正生效过",
+      "evidence": "T5c 初次运行失败（kept==[] 但 weakening_violations 为空）",
+      "fix": "改为同时按断言方法名计数（equal/strictEqual/toBe/toEqual/... 共 38 个），覆盖别名、chai、jest/vitest 风格",
+      "verified": "别名断言计数 2、expect().toBe 计数 4；T5c 现在正确产出 ASSERTION_DELETION"
+    }
+  },
+  "pre_run": {
+    "gateway_health_3x": "3/3 pass（约 2–3s/次）",
+    "tool": "tools/pre_run_check.py",
+    "topology_of_subset": ["REQ-1", "REQ-7", "REQ-12"],
+    "dangling_dependencies": {
+      "REQ-7": ["REQ-5"],
+      "REQ-12": ["REQ-3", "REQ-11"]
+    },
+    "tool_bug_found_and_fixed": "pre_run_check 遇到集合外依赖时 KeyError 崩溃（pos[x] / ancestors(d) 各一处）。已改为**明确报告悬空依赖**并继续，而不是崩掉——工具本身不能成为新的静默失败源。",
+    "caveat": "子集只含 3 个需求，REQ-7 缺少 REQ-5、REQ-12 缺少 REQ-3/REQ-11。因此本轮**无法验证「依赖累积」**：REQ-12 若失败，无法区分是依赖缺失还是实现能力不足。"
+  },
+  "subset_run": {
+    "REQ-1": {
+      "first_round_rejected": false,
+      "write_attempts": 1,
+      "rewrite_rounds": 0,
+      "token": 13045,
+      "gateway_retries": 0,
+      "status": "PASSED"
+    },
+    "REQ-7": {
+      "executed_once": true,
+      "first_round_rejected": false,
+      "write_attempts": 1,
+      "rewrite_rounds": 0,
+      "token": 19681,
+      "gateway_retries": 4,
+      "status": "PASSED"
+    },
+    "REQ-12": {
+      "first_round_rejected": false,
+      "write_attempts": 0,
+      "rewrite_rounds": 0,
+      "token": 0,
+      "gateway_retries": 2,
+      "status": "FAILED",
+      "failure_stage": "设计阶段",
+      "failure_cause": "连接异常（RemoteDisconnected）—— 重试耗尽后放弃",
+      "attribution": "环境",
+      "note": "REQ-12 在写任何代码之前就失败了，因此**本轮无法判断它是否存在实现层面的问题**，「实现失败的回退」仍无依据"
+    },
+    "first_round_reject_rate": "0/3 = 0%（修复前为 12/12 = 100%）",
+    "gateway_retries": "6（成功 4 / 耗尽 2，成功率 67%）",
+    "total_token": "32726（prompt 7211 + completion 25515，其中推理 23085 = 71%）",
+    "wall_clock": "20 分 11 秒（07:51:43 → 08:11:54，3 个需求）",
+    "per_requirement_token": "已完成的两个需求：16363/需求（REQ-1 13045 + REQ-7 19681）",
+    "comparison_with_12_run": {
+      "first_round_reject_rate": "12/12 (100%) -> 0/3 (0%)   ✅ D2 修复生效",
+      "per_requirement_token": "25223 -> 16363  ≈ -35%",
+      "gateway_retries_per_requirement": "1.5 -> 2.0（上升，符合预期：修复后这类失败才真正被重试）",
+      "rewrite_rounds": "0 -> 0（**没有变化**）",
+      "note_on_rewrite_rounds": "用户的预期「单需求重写轮次下降」基于一个误解：D2 造成的额外调用发生在**写测试阶段**（白名单拒绝重试），不在 WEAK_TEST 重写轮次里。因此 test_rewrites 一直是 0，看不到变化。已新增 write_attempts 字段把这类重试显式记下来，否则它会被完全掩盖。"
+    },
+    "observation_metrics_vs_expectation": {
+      "首轮白名单拒绝率": "0/3，符合预期（12/12 → 0）",
+      "gateway_retries": "6（成功率 67%），属于「正常，不是 0 也不是 18」",
+      "单需求重写轮次": "0/0 —— 未下降，因为该指标与 D2 无关（见上）",
+      "总 token": "每需求 -35%，符合预期（下降）",
+      "墙钟": "20 分 11 秒 / 3 需求 = 6.7 分/需求，优于 12 需求运行（其墙钟含会话中断，不可直接比）"
+    },
+    "single_requirement_failure_isolation": "已验证：REQ-12 失败后流水线正常收尾并产出报告"
+  },
+  "defects_found_and_fixed_this_round": [
+    {
+      "id": "D5",
+      "severity": "高",
+      "what": "measure_source 不识别别名断言，导致断言计数恒为 0，弱化守卫（ASSERTION_DELETION）实际失效",
+      "found_by": "tools/test_gates.py 的 T5c 断言（不是肉眼）",
+      "impact": "上一轮宣称「已实现弱化守卫」实际上对模型的实际写法无效；模型惯用 const a=require('node:assert'); a.equal(...)",
+      "fix": "按断言方法名计数（38 个方法），覆盖别名 / chai / jest / vitest 风格",
+      "verified": "T5c 正确产出 ASSERTION_DELETION；别名断言计数从 0 -> 2"
+    },
+    {
+      "id": "D6",
+      "severity": "中",
+      "what": "retries_exhausted 的归集写在 _post_chat 循环末尾，而最终失败是在循环内直接 raise，导致 exhausted 恒为 0",
+      "found_by": "自建的计数器测试用例 B",
+      "fix": "改为 try/finally 统一归集，覆盖所有退出路径",
+      "verified": "用例 B 现在得到 exhausted=2、rate=0.0"
+    },
+    {
+      "id": "D7",
+      "severity": "中",
+      "what": "pre_run_check 遇到集合外依赖时 KeyError 崩溃（两处：拓扑校验与菱形检测）",
+      "found_by": "跑子集时直接触发",
+      "fix": "显式报告悬空依赖并继续；深度/祖先/菱形计算均过滤集合外节点",
+      "verified": "子集跑前检查通过，并打印悬空依赖与影响说明"
+    },
+    {
+      "id": "D8",
+      "severity": "低",
+      "what": "协议适配重试（temperature/response_format/max_tokens/推理占满预算）与网络重试混在同一个 gateway_retries 里，污染重试成功率口径",
+      "fix": "拆出 adaptation_retries，gateway_retries 只记网络层",
+      "verified": "子集运行 adaptation_retries=0、gateway_retries=6，口径清晰"
+    },
+    {
+      "id": "D9",
+      "severity": "低",
+      "what": "写测试阶段的重试次数无处可查（只看 test_rewrites 会把它完全掩盖）",
+      "fix": "新增 RequirementResult.write_attempts 并进入报告",
+      "verified": "桩运行 write_attempts=1"
+    }
+  ],
+  "next_step_recommendation": {
+    "d2_fix_confirmed": "是（首轮白名单拒绝率 12/12 -> 0/3）",
+    "req12_verdict": "未判定——它失败在设计阶段（环境），根本没进到实现，无法据此决定是否做「实现失败的回退」",
+    "suggested": "重跑 REQ-12（单独或子集），拿到一次**非环境失败**的结果后再判断。若它仍失败在实现阶段，再做实现失败的回退。",
+    "multi_module_dag": "路径一致性已验证（0/3 拒绝），DAG 的前置条件已满足；但仍等用户确认后再动。"
+  },
+  "files_changed": [
+    "factory/llm.py（retries_succeeded/retries_exhausted、adaptation_retries、snapshot/delta、try-finally 归集）",
+    "factory/models.py（RequirementResult.cost 与 write_attempts；schema 同步声明）",
+    "factory/pipeline.py（按需求切分成本快照）",
+    "factory/testplan.py（measure_source 支持别名断言）",
+    "factory/loop.py（记录 write_attempts）",
+    "tools/test_gates.py（新增：21 项门禁行为断言）",
+    "tools/pre_run_check.py（悬空依赖处理）",
+    "requirements_probe_subset3/requirements.yaml（新增：REQ-1/7/12 子集）",
+    "evidence/subset3-run.log / evidence/subset3-report.json（本轮取证）"
+  ]
+}

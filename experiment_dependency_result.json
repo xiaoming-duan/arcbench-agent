@@ -1,0 +1,41 @@
+{
+  "trials": [
+    {
+      "arm": "control",
+      "status": "PASSED",
+      "verdicts": [],
+      "violation_count": 0,
+      "rewrite_called": false,
+      "upstream_called_after_rewrite": false,
+      "impl_snippet": "'use strict';\nfunction buildReport(items = [], movements = [], summarizeItems) {\n  const summary = typeof summarizeItems === 'function' ? summarizeItems(items) : {};\n  return { summary, movements };\n}\nmodule.exports = { buildReport };\n",
+      "note": "",
+      "error": ""
+    },
+    {
+      "arm": "B",
+      "status": "FAILED",
+      "verdicts": [
+        "DEPENDENCY_NOT_USED"
+      ],
+      "violation_count": 1,
+      "rewrite_called": false,
+      "upstream_called_after_rewrite": false,
+      "impl_snippet": "'use strict';\nfunction buildReport(items = [], movements = [], summarizeItems) {\n  const summary = typeof summarizeItems === 'function' ? summarizeItems(items) : {};\n  return { summary, movements };\n}\nmodule.exports = { buildReport };\n",
+      "note": "测试通过但依赖未真实使用（REQ-3=DEPENDENCY_NOT_USED）：重写 1 次仍未调用上游导出",
+      "error": ""
+    },
+    {
+      "arm": "B_feedback",
+      "status": "FAILED",
+      "verdicts": [
+        "DEPENDENCY_NOT_USED"
+      ],
+      "violation_count": 1,
+      "rewrite_called": true,
+      "upstream_called_after_rewrite": true,
+      "impl_snippet": "'use strict';\n\nconst { summarizeItems: upstreamSummarizeItems } = require('./summary');\n\nfunction buildReport(items, movements, summarizeItems) {\n  const safeItems = Array.isArray(items) ? items : [];\n  const safeMovements = Array.isArray(movements) ? movements : [];\n\n  let summary;\n\n  if (typeof summarizeItems === 'function') {\n    // Exercise the real REQ-3 dependency. The injected callback rema",
+      "note": "测试未通过: FAIL (0/1)",
+      "error": ""
+    }
+  ]
+}

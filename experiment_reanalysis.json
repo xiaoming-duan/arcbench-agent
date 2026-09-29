@@ -1,0 +1,221 @@
+{
+  "rows": [
+    {
+      "trial": "REQ-1-basic-r1",
+      "req": "REQ-1",
+      "variant": "basic",
+      "rep": "r1",
+      "seed_exists": true,
+      "seed_red": false,
+      "seed_imports_impl": false,
+      "test_files": [
+        "items.list.test.js",
+        "req1.list.test.js"
+      ]
+    },
+    {
+      "trial": "REQ-1-basic-r2",
+      "req": "REQ-1",
+      "variant": "basic",
+      "rep": "r2",
+      "seed_exists": true,
+      "seed_red": false,
+      "seed_imports_impl": false,
+      "test_files": [
+        "items.list.test.js",
+        "req1.list.test.js"
+      ]
+    },
+    {
+      "trial": "REQ-1-import_aware-r1",
+      "req": "REQ-1",
+      "variant": "import_aware",
+      "rep": "r1",
+      "seed_exists": true,
+      "seed_red": false,
+      "seed_imports_impl": false,
+      "test_files": [
+        "items.list.test.js",
+        "req1.list.test.js"
+      ]
+    },
+    {
+      "trial": "REQ-1-import_aware-r2",
+      "req": "REQ-1",
+      "variant": "import_aware",
+      "rep": "r2",
+      "seed_exists": true,
+      "seed_red": false,
+      "seed_imports_impl": false,
+      "test_files": [
+        "items.list.test.js"
+      ]
+    },
+    {
+      "trial": "REQ-2-basic-r1",
+      "req": "REQ-2",
+      "variant": "basic",
+      "rep": "r1",
+      "seed_exists": true,
+      "seed_red": false,
+      "seed_imports_impl": false,
+      "test_files": [
+        "find-by-sku.test.js",
+        "req2.find-by-sku.test.js"
+      ]
+    },
+    {
+      "trial": "REQ-2-basic-r2",
+      "req": "REQ-2",
+      "variant": "basic",
+      "rep": "r2",
+      "seed_exists": true,
+      "seed_red": false,
+      "seed_imports_impl": false,
+      "test_files": [
+        "find-by-sku.test.js",
+        "req2.find-by-sku.test.js"
+      ]
+    },
+    {
+      "trial": "REQ-2-import_aware-r1",
+      "req": "REQ-2",
+      "variant": "import_aware",
+      "rep": "r1",
+      "seed_exists": true,
+      "seed_red": false,
+      "seed_imports_impl": false,
+      "test_files": [
+        "find-by-sku.test.js",
+        "req2.find-by-sku.test.js"
+      ]
+    },
+    {
+      "trial": "REQ-2-import_aware-r2",
+      "req": "REQ-2",
+      "variant": "import_aware",
+      "rep": "r2",
+      "seed_exists": true,
+      "seed_red": false,
+      "seed_imports_impl": false,
+      "test_files": [
+        "find-by-sku.test.js",
+        "req2.find-by-sku.test.js"
+      ]
+    },
+    {
+      "trial": "REQ-3-basic-r1",
+      "req": "REQ-3",
+      "variant": "basic",
+      "rep": "r1",
+      "seed_exists": true,
+      "seed_red": false,
+      "seed_imports_impl": false,
+      "test_files": [
+        "req3.summary.test.js",
+        "summarize-items.test.js"
+      ]
+    },
+    {
+      "trial": "REQ-3-basic-r2",
+      "req": "REQ-3",
+      "variant": "basic",
+      "rep": "r2",
+      "seed_exists": true,
+      "seed_red": false,
+      "seed_imports_impl": false,
+      "test_files": [
+        "req3.summary.test.js",
+        "summarize-items.test.js"
+      ]
+    },
+    {
+      "trial": "REQ-3-import_aware-r1",
+      "req": "REQ-3",
+      "variant": "import_aware",
+      "rep": "r1",
+      "seed_exists": true,
+      "seed_red": false,
+      "seed_imports_impl": false,
+      "test_files": [
+        "req3.summary.test.js",
+        "summarize-items.test.js"
+      ]
+    },
+    {
+      "trial": "REQ-3-import_aware-r2",
+      "req": "REQ-3",
+      "variant": "import_aware",
+      "rep": "r2",
+      "seed_exists": true,
+      "seed_red": false,
+      "seed_imports_impl": false,
+      "test_files": [
+        "req3.summary.test.js",
+        "summarize-items.test.js"
+      ]
+    },
+    {
+      "trial": "REQ-4-basic-r1",
+      "req": "REQ-4",
+      "variant": "basic",
+      "rep": "r1",
+      "seed_exists": true,
+      "seed_red": false,
+      "seed_imports_impl": false,
+      "test_files": [
+        "req4.validate.test.js",
+        "validateItem.test.js"
+      ]
+    },
+    {
+      "trial": "REQ-4-basic-r2",
+      "req": "REQ-4",
+      "variant": "basic",
+      "rep": "r2",
+      "seed_exists": true,
+      "seed_red": false,
+      "seed_imports_impl": false,
+      "test_files": [
+        "req4.validate.test.js",
+        "validateItem.test.js"
+      ]
+    },
+    {
+      "trial": "REQ-4-import_aware-r1",
+      "req": "REQ-4",
+      "variant": "import_aware",
+      "rep": "r1",
+      "seed_exists": true,
+      "seed_red": false,
+      "seed_imports_impl": false,
+      "test_files": [
+        "req4.validate.test.js",
+        "validateItem.test.js"
+      ]
+    },
+    {
+      "trial": "REQ-4-import_aware-r2",
+      "req": "REQ-4",
+      "variant": "import_aware",
+      "rep": "r2",
+      "seed_exists": true,
+      "seed_red": false,
+      "seed_imports_impl": false,
+      "test_files": [
+        "req4.validate.test.js",
+        "validateItem.test.js"
+      ]
+    }
+  ],
+  "summary": {
+    "basic": {
+      "strict": "0/8",
+      "n": 8
+    },
+    "import_aware": {
+      "strict": "0/8",
+      "n": 8
+    }
+  }
+}

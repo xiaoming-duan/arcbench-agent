@@ -1,0 +1,297 @@
+{
+  "findings": [
+    {
+      "dimension": "A 目录结构",
+      "item": "文档第9.1 节 vs 实际文件",
+      "verdict": "符合",
+      "severity": "—",
+      "detail": "文档声明 14 个文件 / 实际 14 个；文档缺失 0 / 文档多余 0",
+      "evidence": "文档未记录: 无；文档写了但不存在: 无"
+    },
+    {
+      "dimension": "B 平台契约",
+      "item": "第11.1 CLI 契约 vs main.py argparse",
+      "verdict": "符合",
+      "severity": "—",
+      "detail": "文档声明 9 个选项 / 实现 9 个；文档缺失 0 / 文档多余 0",
+      "evidence": "实现有而文档未写: 无；文档写了而无实现: 无"
+    },
+    {
+      "dimension": "B 平台契约",
+      "item": "凭据经环境变量注入（文档已声明）",
+      "verdict": "符合",
+      "severity": "—",
+      "detail": "文档已声明: ['OPENAI_API_KEY', 'OPENAI_BASE_URL', 'MODEL']",
+      "evidence": "第 13.1 章要求凭据不落盘"
+    },
+    {
+      "dimension": "C 内部接口",
+      "item": "第11.2 映射表覆盖实现入口",
+      "verdict": "符合",
+      "severity": "—",
+      "detail": "18/18 个实现入口在映射表中出现",
+      "evidence": "未记录: 无"
+    },
+    {
+      "dimension": "C 内部接口",
+      "item": "第11.2 标注功能缺口",
+      "verdict": "符合",
+      "severity": "—",
+      "detail": "映射表中以 **缺口** 标注的接口 3 个",
+      "evidence": "缺口必须显式标注，否则读者会以为已实现"
+    },
+    {
+      "dimension": "D 层归属",
+      "item": "factory/pipeline.py",
+      "verdict": "符合",
+      "severity": "—",
+      "detail": "控制面 —— 编排器 / 领域执行引擎（端到端编排）",
+      "evidence": ""
+    },
+    {
+      "dimension": "D 层归属",
+      "item": "factory/loop.py",
+      "verdict": "符合",
+      "severity": "—",
+      "detail": "控制面 + 正确面 —— TDD 修复循环 + 质量门禁（RED/WEAK_TEST/依赖门禁）",
+      "evidence": ""
+    },
+    {
+      "dimension": "D 层归属",
+      "item": "factory/generator.py",
+      "verdict": "符合",
+      "severity": "—",
+      "detail": "控制面 —— 智能体池（设计 / 计划 / 写测试 / 实现四种角色）",
+      "evidence": ""
+    },
+    {
+      "dimension": "D 层归属",
+      "item": "factory/llm.py",
+      "verdict": "符合",
+      "severity": "—",
+      "detail": "横向 —— 模型路由层 + 成本记录",
+      "evidence": ""
+    },
+    {
+      "dimension": "D 层归属",
+      "item": "factory/config.py",
+      "verdict": "符合",
+      "severity": "—",
+      "detail": "横向 —— 模型路由层、预算策略",
+      "evidence": ""
+    },
+    {
+      "dimension": "D 层归属",
+      "item": "factory/adapter.py",
+      "verdict": "符合",
+      "severity": "—",
+      "detail": "数据面 —— 需求模型仓库（解析与建模）+ 拓扑排序",
+      "evidence": ""
+    },
+    {
+      "dimension": "D 层归属",
+      "item": "factory/models.py",
+      "verdict": "符合",
+      "severity": "—",
+      "detail": "数据面 —— 统一对象模型",
+      "evidence": ""
+    },
+    {
+      "dimension": "D 层归属",
+      "item": "factory/store.py",
+      "verdict": "符合",
+      "severity": "—",
+      "detail": "数据面 —— 追溯矩阵、审计日志、检查点（Git 提交）",
+      "evidence": ""
+    },
+    {
+      "dimension": "D 层归属",
+      "item": "factory/workspace.py",
+      "verdict": "符合",
+      "severity": "—",
+      "detail": "控制面 + 正确面 —— 工作区隔离、制品落盘",
+      "evidence": ""
+    },
+    {
+      "dimension": "D 层归属",
+      "item": "factory/testplan.py",
+      "verdict": "符合",
+      "severity": "—",
+      "detail": "正确面 —— 测试计划与基线守卫",
+      "evidence": ""
+    },
+    {
+      "dimension": "D 层归属",
+      "item": "factory/testaudit.py",
+      "verdict": "符合",
+      "severity": "—",
+      "detail": "正确面 —— 验证执行器（import 审计 / 依赖使用 / mock / 注入旁路）",
+      "evidence": ""
+    },
+    {
+      "dimension": "D 层归属",
+      "item": "factory/testrunner.py",
+      "verdict": "符合",
+      "severity": "—",
+      "detail": "正确面 —— 验证执行器（vitest / node:test 运行）",
+      "evidence": ""
+    },
+    {
+      "dimension": "D 层归属",
+      "item": "factory/__init__.py",
+      "verdict": "符合",
+      "severity": "—",
+      "detail": "— —— 包声明",
+      "evidence": ""
+    },
+    {
+      "dimension": "E 数据面",
+      "item": "traceability/requirements.json",
+      "verdict": "符合",
+      "severity": "—",
+      "detail": "需求模型仓库 —— 2 行",
+      "evidence": ""
+    },
+    {
+      "dimension": "E 数据面",
+      "item": "traceability/interfaces.json",
+      "verdict": "符合",
+      "severity": "—",
+      "detail": "统一对象模型（接口） —— 4 行",
+      "evidence": ""
+    },
+    {
+      "dimension": "E 数据面",
+      "item": "traceability/tests.json",
+      "verdict": "符合",
+      "severity": "—",
+      "detail": "统一对象模型（测试） —— 2 行",
+      "evidence": ""
+    },
+    {
+      "dimension": "E 数据面",
+      "item": "traceability/scenarios.json",
+      "verdict": "符合",
+      "severity": "—",
+      "detail": "统一对象模型（场景） —— 2 行",
+      "evidence": ""
+    },
+    {
+      "dimension": "E 数据面",
+      "item": "traceability/node_states.json",
+      "verdict": "符合",
+      "severity": "—",
+      "detail": "统一对象模型（节点状态） —— 2 行",
+      "evidence": ""
+    },
+    {
+      "dimension": "E 数据面",
+      "item": "traceability/call_edges.json",
+      "verdict": "符合",
+      "severity": "—",
+      "detail": "追溯矩阵（调用边） —— 1 行",
+      "evidence": ""
+    },
+    {
+      "dimension": "E 数据面",
+      "item": "traceability/node_contracts.json",
+      "verdict": "符合",
+      "severity": "—",
+      "detail": "追溯矩阵（节点契约） —— 2 行",
+      "evidence": ""
+    },
+    {
+      "dimension": "E 数据面",
+      "item": "runner-events.jsonl",
+      "verdict": "符合",
+      "severity": "—",
+      "detail": "审计日志（append-only）",
+      "evidence": ""
+    },
+    {
+      "dimension": "E 数据面",
+      "item": "factory-report.json",
+      "verdict": "符合",
+      "severity": "—",
+      "detail": "制品仓库（运行报告）",
+      "evidence": ""
+    },
+    {
+      "dimension": "E 数据面",
+      "item": "test_plan.yaml",
+      "verdict": "符合",
+      "severity": "—",
+      "detail": "制品仓库（测试计划）",
+      "evidence": ""
+    },
+    {
+      "dimension": "E 数据面",
+      "item": "追溯闭环 req→iface→test→code",
+      "verdict": "符合",
+      "severity": "中",
+      "detail": "requirements=2 tests=2 call_edges=1",
+      "evidence": "第 5.3 章要求全链路可追溯"
+    },
+    {
+      "dimension": "F 非功能",
+      "item": "13.1 绝不硬编码密钥",
+      "verdict": "符合",
+      "severity": "—",
+      "detail": "源码中未发现硬编码密钥 ",
+      "evidence": ""
+    },
+    {
+      "dimension": "F 非功能",
+      "item": "13.4 本地优先（不依赖外部服务）",
+      "verdict": "符合",
+      "severity": "—",
+      "detail": "状态全部落本地磁盘（.arc/、Git）；无数据库/队列依赖",
+      "evidence": "唯一外部依赖是模型 API，属契约要求"
+    },
+    {
+      "dimension": "F 非功能",
+      "item": "13.4 Git 检查点（每 Step 一个 commit）",
+      "verdict": "符合",
+      "severity": "—",
+      "detail": "FactoryStore 通过 runtime 写入 Git 提交",
+      "evidence": ""
+    },
+    {
+      "dimension": "F 非功能",
+      "item": "10 模型凭据经环境变量注入",
+      "verdict": "符合",
+      "severity": "—",
+      "detail": "OPENAI_API_KEY / OPENAI_BASE_URL / MODEL 来自环境",
+      "evidence": ""
+    },
+    {
+      "dimension": "G 文档一致性",
+      "item": "架构文档是否描述实际模块",
+      "verdict": "符合",
+      "severity": "—",
+      "detail": "0/12 个实际模块在架构文档中**零提及**: 无",
+      "evidence": "按 `X.py` / `factory/X` 精确匹配（裸子串会误判，见 test_audit_architecture.py 断言⑥）"
+    },
+    {
+      "dimension": "H 孤儿文件",
+      "item": "tools/ 分类",
+      "verdict": "符合",
+      "severity": "—",
+      "detail": "22 个工具：check_all 调度 10 / 独立入口 11 / 真孤儿 0",
+      "evidence": "独立入口（可手动运行，非孤儿）: ['anchored_edit.py', 'bench_models.py', 'classify_models.py', 'closure.py', 'experiment_dependency.py', 'experiment_e13.py', 'experiment_gates.py', 'experiment_plan2.py', 'experiment_weak_feedback.py', 'pre_run_check.py', 'reanalyze_experiment.py']"
+    },
+    {
+      "dimension": "H 孤儿文件",
+      "item": "根目录 .py",
+      "verdict": "偏差",
+      "severity": "低",
+      "detail": "根目录 Python 文件: ['.pack_v1.py', '.pack_v2.py', 'main.py']；隐藏文件: ['.pack_v1.py', '.pack_v2.py']",
+      "evidence": "隐藏的 .pack_*.py 来自**并发工作流**（打包脚本），非本工作流产物；已由 ARCHITECTURE_AUDIT.md 记录，不计入本工作流待办"
+    }
+  ],
+  "counts": {
+    "符合": 35,
+    "偏差": 1
+  },
+  "high_severity": []
+}

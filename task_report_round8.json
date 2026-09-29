@@ -1,0 +1,108 @@
+{
+  "pre_run": {
+    "gateway_health_5x": "5/5 pass（12.8s / 3.0s / 199.9s / 130.5s / 81.7s，模型 deepseek-v4-pro）",
+    "gateway_latency_note": "延迟方差极大：同一简单调用 3.0s ~ 199.9s，后者已逼近 240s 超时线。健康检查通过不代表稳定。",
+    "topological_order_printed": ["REQ-1", "REQ-3", "REQ-7", "REQ-11", "REQ-12"],
+    "req3_before_req12": true,
+    "longest_chain": "4 层，末端 REQ-12",
+    "diamonds": ["REQ-11 <- [REQ-1, REQ-7]", "REQ-12 <- [REQ-3, REQ-11]"],
+    "fields_recordable": {
+      "write_attempts": true,
+      "test_rewrites": true,
+      "weakening_violations": true,
+      "unauthorized_files": true,
+      "cost": true,
+      "note": "既验证了 dataclass 属性，也验证了 schema 声明与 to_dict 输出三层都存在"
+    },
+    "new_instrumentation_added": "prompt_chars / max_prompt_chars（CallStats），用于验证「长 prompt 更易断连」假设",
+    "closure_caveat": "⚠️ **5 元素集合不是完整闭包**：REQ-7 依赖 REQ-5，而 REQ-5 不在集合内。REQ-12 的直接输入（REQ-3、REQ-11）在集合内，但 REQ-7 → REQ-11 这一环建立在缺失的 REQ-5 之上。跑前检查已自动报告该悬空依赖。"
+  },
+  "run": {
+    "REQ-1": {"status": "FAILED", "write_attempts": 1, "rewrite_rounds": 0, "token": 9388, "duration": "4分51秒", "gateway_retries": 2, "prompt_chars": 7269, "fail_stage": "implementation", "attribution": "环境（RemoteDisconnected 重试耗尽）"},
+    "REQ-7": {"status": "PASSED", "write_attempts": 1, "rewrite_rounds": 0, "token": 28967, "duration": "8分26秒", "gateway_retries": 2, "prompt_chars": 10939, "executed_once": true},
+    "REQ-11": {"status": "PASSED", "write_attempts": 1, "rewrite_rounds": 0, "token": 34483, "duration": "7分13秒", "gateway_retries": 0, "prompt_chars": 7065},
+    "REQ-3": {"status": "FAILED", "write_attempts": 0, "rewrite_rounds": 0, "token": 0, "duration": "3分03秒", "gateway_retries": 2, "prompt_chars": 1424, "fail_stage": "design", "attribution": "环境（RemoteDisconnected 重试耗尽）"},
+    "REQ-12": {
+      "status": "PASSED",
+      "write_attempts": 1,
+      "rewrite_rounds": 0,
+      "token": 11838,
+      "duration": "2分02秒",
+      "gateway_retries": 0,
+      "prompt_length": "7253 字符 / 4 次调用 ≈ 1813 字符/次（**不长**）",
+      "fail_stage": "none"
+    },
+    "gateway_retries": "6（成功 2 / 耗尽 4，成功率 **33%** —— 低于 50% 阈值，该时间窗口网关确实差）",
+    "total_token": "84676（prompt 15774 + completion 68902，其中推理 63112 = 74.5%）",
+    "wall_clock": "25 分 51 秒（12:43:43 → 13:09:34）",
+    "all_requirements_executed_once": "是（5 个需求各执行 1 次，无重复）",
+    "pass_rate": "3/5（60%）"
+  },
+  "three_new_observations": {
+    "observation_1_D3_gate": {
+      "weakening_violations_nonzero": "否 —— 全 5 个需求均为 0",
+      "any_violation": false,
+      "manual_spot_check_needed": true,
+      "manual_spot_check_done": "是。对 4 个真实生成的测试文件逐一比对 measure_source 计数与人工识别的断言方法调用：req1 7=7、req11 9=9、req12 5=5、req7 5=5，**完全一致**",
+      "spot_check_verdict": "measure_source 在这些文件上**无盲点**，计数真实可信",
+      "conclusion": "weakening_violations=0 属于「模型确实没有削弱测试」（好），不是「检测器失效」（坏）",
+      "caveat": "抽查样本仅 4 个文件、均使用标准 node:assert；不排除其他写法（自定义断言 helper、sinon）仍有盲点"
+    },
+    "observation_2_D1_retry": {
+      "REQ12_gateway_retries": 0,
+      "retry_effective": "REQ-12 本次**没有触发任何重试**，无法据此评价长 prompt 策略",
+      "global_retry_success_rate": "2/6 = 33%（低于 50%）",
+      "long_prompt_hypothesis": "**不成立**。REQ-12 的平均 prompt 仅 ~1813 字符/次，属最短之列；上次它在设计阶段失败更可能是瞬时窗口问题，而非 prompt 长度",
+      "new_evidence": "本次 REQ-3 的 prompt 仅 1424 字符（全场最短）却也因 RemoteDisconnected 失败 —— 进一步说明与 prompt 长度无关，是网关时间窗口问题"
+    },
+    "observation_3_D2_cross_dependency": {
+      "write_attempts_all_one": "是 —— 5 个需求全部 write_attempts=1",
+      "first_round_reject_count": 0,
+      "any_design_plan_conflict": false,
+      "conclusion": "D2 修复在**跨依赖**场景下依然成立（上次只在 3 个需求上验证过），路径一致性没有因依赖顺序而退化"
+    }
+  },
+  "critical_finding_beyond_the_three": {
+    "finding": "REQ-12 PASSED，但它的声明依赖 **REQ-3 从未被实现**",
+    "evidence": [
+      "REQ-3 状态 FAILED（设计阶段，0 token，0 文件产出）",
+      "backend/src/services/summary.js 与 backend/tests/req3.summary.test.js 均不存在",
+      "REQ-12 实现 report.js 无任何 require，buildReport(items, movements, summarizeItems) 通过参数注入取依赖",
+      "REQ-12 的测试注入了一个**假的** summarizeItems（const summarizeItems = () => expectedSummary）"
+    ],
+    "implication": [
+      "REQ-12 PASSED **不能**作为「依赖累积成立」的证据 —— 它在依赖完全缺失的情况下通过了",
+      "`depends_on` 只被适配层用于拓扑排序，**没有任何机制校验下游是否真的使用了上游模块**",
+      "这构成一类新的空转：测试通过了 RED 门禁与 import 审计（确实 import 了 report.js），但**注入假依赖**，集成路径从未被验证"
+    ],
+    "affected_conclusions": [
+      "本轮无法回答「依赖累积是否有实现层面的问题」—— 该问题在本轮被模型的解耦策略规避掉了",
+      "多模块 DAG 的前置条件（依赖累积已验证）**并未满足**"
+    ],
+    "possible_fixes": [
+      "需求规格里显式要求跨模块 import（例如「REQ-12 必须 import REQ-3 的 summarizeItems」），并写入验收标准",
+      "在 import 审计中增加「声明依赖是否被真实引用」的检查：下游需求必须 import 上游接口声明的 file_path",
+      "端到端测试（e2e）覆盖跨模块路径，而不是每个模块各自 unit 测试"
+    ]
+  },
+  "decision_tree_position": {
+    "position": "3/5 PASSED，落在「≤3/5」分支",
+    "failures": "REQ-1（实现阶段）与 REQ-3（设计阶段）**都是环境失败**，非逻辑失败",
+    "gateway_retries": "成功率 33%（高失败）",
+    "tree_says": "「gateway_retries 高 → 重跑，先排除环境」",
+    "recommendation": "重跑本 5 需求集合以排除环境因素；但重跑**不能**回答依赖累积问题（见 critical_finding）—— 那需要先修「依赖未被真实引用」这一点"
+  },
+  "check_all_output": {
+    "assertions_passed": "63/63（verify_changes 24 + test_gates 21 + test_measures 18）",
+    "expected": 63,
+    "all_pass": true,
+    "when_run": "紧接 5 需求运行结束之后"
+  },
+  "gate_output": "check_all.py 63/63 全过；gate 三项回归在改动后均已复测通过",
+  "files_changed": [
+    "factory/llm.py（prompt_chars / max_prompt_chars 埋点）",
+    "tools/pre_run_check.py（health-count 参数、字段可记录性检查、悬空依赖报告）",
+    "requirements_probe_chain5/requirements.yaml（新增：5 需求依赖链）",
+    "evidence/chain5-run.log / chain5-report.json / chain5-test-plan.yaml（本轮取证）"
+  ]
+}

@@ -1,0 +1,89 @@
+# =============================================================================
+# 合成样例需求（MVP 用）
+# -----------------------------------------------------------------------------
+# ⚠️ 这是**推断格式**，不是 ARC-Bench 官方 schema（平台未随模板提供样例）。
+#    它只被 factory/adapter.py 的 _adapt() 消费。
+#    真实格式到位后：只需改 _adapt()，本文件与下游代码都不用动。
+#
+# 字段命名刻意贴近 ARC-Bench traceability 的 payload 结构，降低适配成本。
+# =============================================================================
+schema_version: "1.0"
+
+project:
+  id: inventory-demo
+  name: 库存管理示例
+
+requirements:
+  # ---------------------------------------------------------------------------
+  - id: REQ-1
+    name: 库存条目列表服务
+    description: 提供库存条目的数据源与只读列表接口，供前端与汇总模块消费。
+    depends_on: []
+    acceptance:
+      - listItems() 返回非空数组
+      - 每个条目包含 id / sku / name / quantity 四个字段
+      - quantity 为非负整数
+      - GET /api/items 返回 200 且 body.data 为条目数组
+    scenarios:
+      - id: REQ-1-SCN-1
+        name: 列出全部库存条目
+        steps:
+          - keyword: GIVEN
+            content: 库存中存在若干条目
+          - keyword: WHEN
+            content: 调用 listItems()
+          - keyword: THEN
+            content: 返回非空数组且字段完整
+    interfaces:
+      - id: REQ-1.API.Items
+        type: api
+        content: "GET /api/items -> 200 {code:200, data:[{id,sku,name,quantity}]}"
+        file_path: backend/src/routes/items.js
+      - id: REQ-1.SVC.Items
+        type: db
+        content: "listItems(): Item[] —— 只读库存条目数据源"
+        file_path: backend/src/services/items.js
+    tests:
+      - id: REQ-1.TEST.items-list
+        type: unit
+        scenario_id: REQ-1-SCN-1
+        interface_ids: [REQ-1.SVC.Items]
+        file_path: backend/tests/req1.items.test.js
+        intent: listItems() 返回非空数组，且每个条目字段完整、quantity 为非负整数
+
+  # ---------------------------------------------------------------------------
+  - id: REQ-2
+    name: 库存汇总统计
+    description: 基于条目列表计算总数、总数量与低库存条目数。
+    depends_on: [REQ-1]
+    acceptance:
+      - summarizeItems() 返回 total / totalQuantity / lowStock
+      - total 等于条目数
+      - totalQuantity 等于各条目 quantity 之和
+      - lowStock 统计 quantity 低于阈值的条目数
+    scenarios:
+      - id: REQ-2-SCN-1
+        name: 汇总当前库存
+        steps:
+          - keyword: GIVEN
+            content: 库存中有 3 个条目，数量分别为 12 / 4 / 27
+          - keyword: WHEN
+            content: 调用 summarizeItems()
+          - keyword: THEN
+            content: 返回 total=3, totalQuantity=43, lowStock=1
+    interfaces:
+      - id: REQ-2.API.Summary
+        type: api
+        content: "GET /api/inventory/summary -> 200 {code:200, data:{total,totalQuantity,lowStock}}"
+        file_path: backend/src/routes/inventory-summary.js
+      - id: REQ-2.SVC.Summary
+        type: db
+        content: "summarizeItems(): {total,totalQuantity,lowStock}"
+        file_path: backend/src/services/summary.js
+    tests:
+      - id: REQ-2.TEST.items-summary
+        type: unit
+        scenario_id: REQ-2-SCN-1
+        interface_ids: [REQ-2.SVC.Summary]
+        file_path: backend/tests/req2.summary.test.js
+        intent: summarizeItems() 基于 REQ-1 的条目列表正确汇总 total/totalQuantity/lowStock
