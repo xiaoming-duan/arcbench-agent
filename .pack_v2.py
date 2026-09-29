@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
-"""重新打包 v2 提交包（zip 格式）。
+"""打包 v2 提交包（按目录打包 + 排除清单，Python 实现）。
 
-清单来源：v1 发布包的 129 文件清单（.v1manifest.txt）——它保证
-  * main.py 与 requirements.txt 位于 zip 根目录（平台入口契约）
-  * 不含 out-*/、dist/、.npm-cache/、__pycache__/、*.log、scratch 目录
-内容来源：当前工作区（含本轮平台契约修复）。
+为什么不用 `zip -r ... -x`：本环境没有 zip CLI，用 zipfile 实现同样的语义。
+为什么改成「按目录打包」而不是之前的清单式：清单式会**漏文件**——已经发生过两次，
+`tools/check_all.py` 引用了新增的测试脚本，而脚本不在清单里，包自带的校验入口
+一解压就报缺文件。按目录打包 + 排除清单可以彻底避免这一类漏配。
+
+排除项（与提交包契约一致）：
+  backups/  .workstreams/  dist/  out*/  .arc/  .verify-*  .probe-*  .zipcheck*
+  *.log  __pycache__/  *.pyc  .npm-cache/  node_modules/  .env  .git/
+关键：**排除 .git/** ——版本控制是本地基础设施，不进提交包。
 """
 from __future__ import annotations
 
@@ -13,31 +18,62 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-MANIFEST = ROOT / ".v1manifest.txt"
 OUT = ROOT / "dist" / "arcbench-agent-v2.zip"
+
+EXCLUDED_DIRS = {"backups", ".workstreams", "dist", ".arc", ".npm-cache",
+                 "__pycache__", "node_modules", ".git", ".cache"}
+EXCLUDED_PREFIXES = (".verify-", ".probe-", ".zipcheck", ".zipv", ".bkcheck")
+EXCLUDED_SUFFIXES = (".log", ".pyc", ".pyo")
+
+
+def is_excluded(rel: str) -> bool:
+    parts = rel.split("/")
+    if any(p in EXCLUDED_DIRS for p in parts):
+        return True
+    if any(p.startswith(EXCLUDED_PREFIXES) for p in parts):
+        return True
+    # out-v2 / out-probe 这类运行输出目录（仅限顶层）
+    if parts[0].startswith("out") and len(parts) > 1:
+        return True
+    if rel.endswith(EXCLUDED_SUFFIXES):
+        return True
+    if parts[-1] == ".env":
+        return True
+    return False
 
 
 def main() -> int:
-    names = [ln.strip() for ln in MANIFEST.read_text(encoding="utf-8").splitlines() if ln.strip()]
-
-    missing = [n for n in names if not (ROOT / n).is_file()]
-    if missing:
-        print("清单中的文件在工作区缺失：", file=sys.stderr)
-        for n in missing:
-            print(f"  - {n}", file=sys.stderr)
-        return 1
+    files: list[Path] = []
+    skipped = 0
+    for p in sorted(ROOT.rglob("*")):
+        if not p.is_file():
+            continue
+        rel = p.relative_to(ROOT).as_posix()
+        if rel == "dist/arcbench-agent-v2.zip":      # 不要把包自己装进去
+            skipped += 1
+            continue
+        if is_excluded(rel):
+            skipped += 1
+            continue
+        files.append(p)
 
     OUT.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(OUT, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
-        for name in names:
-            src = ROOT / name
-            info = zipfile.ZipInfo.from_file(src, arcname=name)
+        for p in files:
+            rel = p.relative_to(ROOT).as_posix()
+            info = zipfile.ZipInfo.from_file(p, arcname=rel)
             info.compress_type = zipfile.ZIP_DEFLATED
-            info.external_attr = (src.stat().st_mode & 0xFFFF) << 16
-            zf.writestr(info, src.read_bytes())
+            info.external_attr = (p.stat().st_mode & 0xFFFF) << 16
+            zf.writestr(info, p.read_bytes())
 
+    names = zf_name_list = None
+    with zipfile.ZipFile(OUT) as zf:
+        names = zf.namelist()
     print(f"✅ 已生成 {OUT.relative_to(ROOT)}")
-    print(f"   文件数：{len(names)}    大小：{OUT.stat().st_size:,} 字节")
+    print(f"   纳入 {len(names)} 个文件 / 排除 {skipped} 个    体积 {OUT.stat().st_size:,} 字节")
+    print(f"   main.py 在根         : {'main.py' in names}")
+    print(f"   requirements.txt 在根: {'requirements.txt' in names}")
+    print(f"   含 .git/ 条目         : {any(n.startswith('.git/') for n in names)}")
     return 0
 
 

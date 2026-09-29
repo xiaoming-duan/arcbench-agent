@@ -954,7 +954,7 @@ def t31_code_version_anchor() -> None:
     import tempfile
 
     from factory.models import RUN_REPORT_FIELDS, RunReport, validate_run_report
-    from factory.version import UNKNOWN, describe, git_state
+    from factory.version import UNKNOWN, describe, git_state, should_warn
 
     check("T31a code_version 已进入 RunReport 字段契约",
           "code_version" in RUN_REPORT_FIELDS)
@@ -971,6 +971,8 @@ def t31_code_version_anchor() -> None:
               st["head"] == UNKNOWN and st["dirty_count"] == -1
               and st["trustworthy"] is False, str(st))
         check("T31e 描述文本明说不可信", "不可信" in describe(st), describe(st))
+        check("T31e2 取不到 git 属环境常态 -> 不按 WARNING 刷屏（但仍不可信）",
+              should_warn(st) is False and st["trustworthy"] is False, str(st))
     finally:
         shutil.rmtree(norepo, ignore_errors=True)
 
@@ -998,6 +1000,8 @@ def t31_code_version_anchor() -> None:
               dirty["dirty_count"] == 1 and dirty["trustworthy"] is False
               and dirty["dirty_files"], str(dirty))
         check("T31i 脏时描述点名『测量基础可疑』", "可疑" in describe(dirty), describe(dirty))
+        check("T31j 脏工作区才按 WARNING 报（异常 vs 环境常态要分开）",
+              should_warn(dirty) is True and should_warn(clean) is False)
     finally:
         shutil.rmtree(repo, ignore_errors=True)
 

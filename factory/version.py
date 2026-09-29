@@ -95,12 +95,23 @@ def describe(state: dict[str, Any]) -> str:
     return f"代码版本: {head}（**{dirty} 个未提交改动 —— 本次测量基础可疑**）"
 
 
+def should_warn(state: dict[str, Any]) -> bool:
+    """只有「明确有未提交改动」才值得 WARNING。
+
+    「取不到 git 信息」在平台上属于**常态**（提交包解压后没有 .git），
+    如果也按 WARNING 记，每次运行都会刷一条，把真正的异常淹掉。
+    所以它按 INFO 记录——但 `trustworthy` 仍然是 False：
+    「不知道干不干净」不等于「干净」。
+    """
+    return state.get("dirty_count", -1) > 0
+
+
 def log_state(state: dict[str, Any], *, label: str = "版本") -> None:
-    """记录版本状态；不可信时用 WARNING 让它无法被忽略。"""
+    """记录版本状态。异常（脏工作区）用 WARNING，环境常态用 INFO。"""
     text = describe(state)
-    if state.get("trustworthy"):
-        logger.info("[%s] %s", label, text)
+    if should_warn(state):
+        logger.warning("[%s] %s", label, text)
+        for item in state.get("dirty_files") or []:
+            logger.warning("[%s]   未提交: %s", label, item)
         return
-    logger.warning("[%s] %s", label, text)
-    for item in state.get("dirty_files") or []:
-        logger.warning("[%s]   未提交: %s", label, item)
+    logger.info("[%s] %s", label, text)
