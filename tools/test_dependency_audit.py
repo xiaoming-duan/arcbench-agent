@@ -350,9 +350,9 @@ def main() -> int:
     decl = CrossModuleCall(upstream="REQ-7", symbol="updateQuantity",
                            signature="updateQuantity(sku, quantity, from, to)")
     for label, body, want in [
-        ("4 参数", "const {updateQuantity}=require('./up');\nupdateQuantity(1,2,3,4);\\n", "DEPENDENCY_USED"),
-        ("3 参数", "const {updateQuantity}=require('./up');\nupdateQuantity(1,2,3);\\n", DEP_CONTRACT_MISMATCH),
-        ("5 参数", "const {updateQuantity}=require('./up');\nupdateQuantity(1,2,3,4,5);\\n", DEP_CONTRACT_MISMATCH),
+        ("4 参数", "const {updateQuantity}=require('./up');\nupdateQuantity(1,2,3,4);\n", "DEPENDENCY_USED"),
+        ("3 参数", "const {updateQuantity}=require('./up');\nupdateQuantity(1,2,3);\n", DEP_CONTRACT_MISMATCH),
+        ("5 参数", "const {updateQuantity}=require('./up');\nupdateQuantity(1,2,3,4,5);\n", DEP_CONTRACT_MISMATCH),
         ("0 import", "const x=[];\nmodule.exports={x};\n", "DEPENDENCY_NOT_USED"),
     ]:
         (cws / "backend/src/down.js").write_text(body, encoding="utf-8")
@@ -362,7 +362,7 @@ def main() -> int:
             upstream_files=["backend/src/up.js"], declared_calls=(decl,)).verdict
         check(f"C5 声明 4 参数 / 实际 {label} -> {want}", got == want, f"实际 {got}")
     (cws / "backend/src/down.js").write_text(
-        "const {updateQuantity}=require('./up');\nupdateQuantity(1,2,3);\\n", encoding="utf-8")
+        "const {updateQuantity}=require('./up');\nupdateQuantity(1,2,3);\n", encoding="utf-8")
     got = audit_dependency_usage(
         cws, downstream="REQ-11", upstream="REQ-7",
         downstream_files=["backend/src/down.js"],
