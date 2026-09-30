@@ -1,136 +1,124 @@
 {
+  "headline": "第 4 次**未能执行** —— API 配额耗尽（外部阻碍）；有效样本仍为 3 次（2/3 全链通过）。REQ-5 用例数分析**证实过度生成假说**。",
+
   "read_locations": {
-    "contract_mismatch_gate": "`factory/testaudit.py`：verdict `DEP_CONTRACT_MISMATCH`(:390)，纳入 `DEP_VIOLATIONS`(:395)；触发点在 `audit_dependency_usage` 内 `if declared_calls:` 段(:700-708) —— 位于既有「是否 import / 是否调用导出」判定**之后**；理由回传在 `describe_dependencies`(:796) 输出 `- [CONTRACT_MISMATCH] <下游> 依赖 <上游>：<detail>` + 上游实现文件 + 导出清单 + **修正指令**",
-    "test_dir": "`tests/`（此前只有 `test_dag.py`）；pytest 9.0.3 可用",
-    "three_pitfalls_status": {
-      "to_requirement_payload 塞内部字段": "**已修** —— 0 处；`models.py:151` 留有说明注释「工厂内部的契约概念，不属于平台追溯 schema」",
-      "dataclass 重复": "**已修** —— 正则扫描 0 处重复装饰器",
-      "fixture 转义过度": "**本轮补齐** —— 读时仍有 4 处行尾 `\\\\n` 残留（无害但会误导读者），已修为 `\\n`"
-    },
-    "architecture_doc": "`软件工厂-项目架构文档.md`（1480 行）。本次新增 **11.3 跨模块调用契约：双向设计〔v1.2 新增〕**；文档版本 v1.1 → **v1.2**"
-  },
-
-  "synthetic_test": {
-    "file": "tests/test_contract_mismatch.py（25 项断言，纯函数，不依赖网关）",
-    "wrong_signatures_tested": ["fewer_args", "extra_args", "zero_args"],
-    "CONTRACT_MISMATCH_triggered": "**是** —— 少参（2 参）/ 多参（4 参）/ 零参 三种形态全部被判 `CONTRACT_MISMATCH`；正确调用（3 参）判 `DEPENDENCY_USED` 无误报；未声明契约时不做校验",
-    "reason_includes": ["declared", "actual", "fix_instruction"],
-    "reason_sample": "声明签名 `foo(a, b, c)`（3 个参数），但 backend/src/down.js 里按 **2 个参数**调用 `foo`",
-    "gate_verified": "**是** —— 门禁在合成用例下能正确拦截、理由完整",
-
-    "KNOWN_LIMITATION": {
-      "what": "**同个数的参数顺序错检不出**",
-      "evidence": "`foo(b, a, c)`（3 参）与 `foo(a, b, c)`（3 参）静态同形 → 均判 `DEPENDENCY_USED`",
-      "why_unfixable_statically": "按名字比对不成立 —— 调用方使用自己作用域里的变量名，`foo(quantity, sku)` 未必是错的。**按个数比对是唯一可靠的静态判据**",
-      "how_handled": "把该局限**钉进断言**（断言⑦）：将来若改为能检出，那条会失败并提醒更新架构文档 11.3 节",
-      "impact": "用户任务里列的三种错误形态中，`foo(b, a, c)`（顺序错）**不在门禁的覆盖范围内** —— 必须如实声明"
-    },
-
-    "meta_assertion_added": {
-      "what": "对**测试夹具本身**的断言：fixture 必须含真实换行、调用独占一行、import 与调用不同行",
-      "why": "第三次同类教训（T36 自伤 → fixture 转义 → 本次）：断言/夹具本身也要被验证。fixture 把换行写成字面 `\\n` 会让整段变成一行，`_bindings_in_line` 排除同行内容，于是门禁看到「只 import 未调用」→ 报 `DEPENDENCY_NOT_USED` 而非预期的 `CONTRACT_MISMATCH` —— **看起来像被测对象有 bug，实际是夹具写坏了**",
-      "count": "9 条元断言（每种错误形态 3 条 × 3 种形态）"
-    },
-
-    "self_inflicted_issue_fixed": "元断言的 detail 参数无论通过与否都会打印 —— 初版写「未找到独立行 …」，通过时也照样打印，看起来像失败。已改为中性文字（`独立行 = …`）"
-  },
-
-  "run_2": {
-    "guard_used": true,
-    "isolation_verified": "✅ 冻结副本逐文件未变",
-    "result": "**2 通过 / 1 失败 / 3 上游失败跳过**（尝试 3 个）—— **未全链通过**",
-    "REQ-7_attempts": "0（UPSTREAM_FAILED —— 未进入 TDD 循环）",
-    "REQ-12_attempts": "0（UPSTREAM_FAILED）",
-    "dependency_violations": "最终报告 0 条；日志中门禁触发 1 次（DEPENDENCY_NOT_USED 出现 3 次）",
-    "CONTRACT_MISMATCH": "0 次",
-    "gateway_retries": 0,
-    "total_token": 84388,
-    "calls": 18,
-    "failure_mode": {
-      "node": "REQ-5（根需求，无上游依赖）",
-      "note": "测试未通过: FAIL (2/6)",
-      "attempts": 4,
-      "dependency_violations": 0,
-      "regressions": 0,
-      "diagnosis": "**纯实现能力失败** —— 模型这次写了一个 **6 用例**的测试（此前轮次更少），4 轮实现修复内只满足 2 个。不是门禁问题、不是依赖问题、不是环境问题",
-      "cascade": "REQ-5 是 REQ-7 的上游 → REQ-7 跳过 → REQ-11 跳过 → REQ-12 跳过。**一个根节点失败干掉整条链**"
-    }
-  },
-
-  "run_3": {
-    "guard_used": true,
-    "isolation_verified": "✅ 冻结副本逐文件未变",
-    "result": "**6 通过 / 0 失败 / 0 跳过**（尝试 6 个）—— **全链通过**",
-    "REQ-7_attempts": 2,
-    "REQ-12_attempts": 3,
-    "dependency_violations": "最终报告 0 条",
-    "CONTRACT_MISMATCH": "**1 次 —— 真实运行中首次触发**",
-    "gateway_retries": 0,
-    "total_token": 144336,
-    "calls": 29,
-    "contract_mismatch_evidence": {
-      "log_line": "02:08:25 WARNING [依赖门禁] REQ-11 测试通过，但依赖未被真实验证: REQ-1=CONTRACT_MISMATCH; REQ-7=DEPENDENCY_NOT_USED",
-      "which_contract": "REQ-11 → REQ-1 的 `listItems(filter)`（声明 1 参数）；模型的调用形状与声明不符",
-      "outcome": "门禁阻断 → 模型重写 → REQ-11 于 02:10:06 PASSED",
-      "significance": "**这是『从未被触发过的门禁』第一次在真实运行中登场并生效** —— 合成用例的验证得到实战确认"
-    }
-  },
-
-  "variance": {
-    "per_requirement_attempts": {
-      "REQ-1":  "1 / 1 / 1  → 1-1（稳定）",
-      "REQ-5":  "1 / 4(FAIL) / 1 → 1-4（**方差最大，且是 run2 的失败点**）",
-      "REQ-3":  "2 / 4 / 2 → 2-4",
-      "REQ-7":  "4 / 跳过 / 2 → 2-4",
-      "REQ-11": "2 / 跳过 / 2 → 2-2（稳定）",
-      "REQ-12": "4 / 跳过 / 3 → 3-4"
-    },
-    "REQ-7_range": "2-4 轮（含 1 次跳过）",
-    "REQ-12_range": "3-4 轮（含 1 次跳过）",
-    "gateway_stable": "**是** —— 三次运行 `gateway_retries` 均为 **0**，环境本轮不是变量",
-    "dependency_violations_stable": "**是** —— 最终报告三次均为 0 条；过程拦截次数 6 / 1 / 4",
-    "token_variance": "147,716 / 84,388 / 144,336 —— 两次全链通过的在 144k–148k（差 2.3%），run2 因早停只有 84k",
-    "calls_variance": "32 / 18 / 29"
-  },
-
-  "three_pitfalls": {
-    "to_requirement_payload": "已修（0 处；留说明注释）",
-    "dataclass_duplicate": "已修（0 处重复）",
-    "fixture_over_escape": "本轮补齐（4 处行尾残留 → 0 处）",
-    "meta_assertion_added": true,
-    "meta_assertion_detail": "`tests/test_contract_mismatch.py` 内 9 条元断言：fixture 必须含真实换行、调用独占一行、import 与调用不同行 —— 断言/夹具本身也要被验证"
-  },
-
-  "architecture_doc_updated": {
-    "contract_is_bidirectional": true,
-    "location": "软件工厂-项目架构文档.md 第 11.3 节「跨模块调用契约：双向设计〔v1.2 新增〕」",
-    "content": "记录「只做下游声明，契约在结构上无法满足」的实测证据、推导而非新增字段的理由、注入点、门禁判据、**已知局限（按个数比对，顺序错检不出）**、以及门禁未在首次全链运行中触发的验证状态",
-    "doc_version": "v1.1 → v1.2；总行数 1428 → 1480"
-  },
-
-  "check_all": {
-    "assertions_passed": "296/296（9 类）",
-    "all_pass": true,
-    "delta": "较上轮 +25（新增契约合成验证套件）"
-  },
-
-  "v4_package": {
-    "filename": "**未打包**",
-    "tag": "n/a",
-    "sample_size": 3,
-    "why_not_packaged": "要求「3/3 通过 → 打包 v4；1 次失败 → 分析失败模式，不急于打包」。实际 **2/3**（run1 ✅ / run2 ❌ / run3 ✅），落在「1 次失败」分支 —— 按要求**不打包**，先分析失败模式。",
-    "analysis_conclusion": "失败是**实现能力方差**，不是结构缺陷：REQ-5（根节点）在 run2 里写了 6 用例的测试、4 轮内只满足 2 个。同一次配置下 run1/run3 全链通过。三次运行的环境指标（网关重试 0）完全稳定，说明方差来源是**模型侧**，不是基础设施。",
-    "structural_observation": "**REQ-5 是单点故障**：它是 REQ-7 的上游，REQ-7 又是 REQ-11 的上游、REQ-11 是 REQ-12 的上游。REQ-5 一失败，整条 4 节点链全部跳过（占总需求 2/3）。这解释了为什么『6 个需求的闭包』对单个根节点的失败如此敏感。",
-    "recommendation": [
-      "补跑 1 次把样本量推到 4，看 3/4 还是 2/4 —— 单次失败的归因需要更多样本",
-      "或接受「依赖累积已验证（样本量 3，2/3 全链通过）」的诚实表述，并在 v4 标注中写明方差范围",
-      "提高 max_repairs 对 REQ-5 这类根节点的收益可能高于对深层节点 —— 因为根节点的失败代价是整条链"
+    "run2_req5_test_file": ".workstreams/var-a/out-var2/backend/tests/req5.validateItem.test.js",
+    "architecture_doc": "软件工厂-项目架构文档.md（原 1480 行，现 1539 行）；第 17 章《过程发现：门禁的度量与修订》在第 1277 行",
+    "assertion_7": "tests/test_contract_mismatch.py:164（本轮已补全四要素：局限 / 原因 / 影响 / 提醒）",
+    "req5_usage_count_history": [
+      {"run": "run1", "file": "req5.validateItem.test.js", "usecases": 2, "expects": 6, "result": "PASSED(1 轮)"},
+      {"run": "run2", "file": "req5.validateItem.test.js", "usecases": 6, "expects": 7, "result": "FAILED(4 轮)"},
+      {"run": "run3", "file": "req5.validateItem.test.js", "usecases": 2, "expects": 6, "result": "PASSED(1 轮)"},
+      {"run": "run4", "file": "（无）", "usecases": null, "result": "未进入 TDD 循环"}
     ]
   },
 
+  "run_4": {
+    "guard_used": true,
+    "isolation_verified": "✅ 冻结副本逐文件未变 + ✅ 运行期间工作区无改动（隔离机制本身正常）",
+    "executed": false,
+    "abort_reason": "**模型配额/余额耗尽** —— HTTP 429 `insufficient_quota`: 'Free quota exhausted and balance too low, please recharge compute credits.'",
+    "abort_behavior": "工厂**优雅处理**：识别为致命错误 → 停止本轮剩余需求 → 报告 `0 通过 / 0 失败 / 尝试 0 个` + `error` 指向配额 → 退出。**未崩溃、未产出部分报告、未误报通过**（这正是前几轮修出来的行为）",
+    "duration": "5 秒（02:39:16 → 02:39:21）",
+    "quota_probe": "直接探测 5 次 → **0/5 可用**，全部 ModelQuotaExhaustedError",
+    "REQ-5_status": "n/a（未进入 TDD 循环）",
+    "REQ-5_attempts": 0,
+    "REQ-7_attempts": 0,
+    "REQ-11_attempts": 0,
+    "REQ-12_attempts": 0,
+    "dependency_violations": "n/a",
+    "CONTRACT_MISMATCH": "n/a",
+    "gateway_retries": 0,
+    "total_token": 0,
+    "full_chain_result": "**无效样本** —— 不纳入统计",
+    "evidence": ".run-var4.log"
+  },
+
+  "four_run_summary": {
+    "results": ["run1: 6/6 通过（有效）", "run2: 2/6 通过（有效，REQ-5 失败）", "run3: 6/6 通过（有效）", "run4: 无效（配额耗尽，未执行）"],
+    "valid_samples": 3,
+    "pass_rate": "**2/3 全链通过**（有效样本内）",
+    "gateway_stable": true,
+    "gateway_retries": "run1/2/3 均为 **0** —— 环境三轮完全稳定",
+    "per_requirement_attempts": {
+      "REQ-1":  "1 / 1 / 1",
+      "REQ-5":  "1 / 4(FAIL) / 1",
+      "REQ-3":  "2 / 4 / 2",
+      "REQ-7":  "4 / 跳过 / 2",
+      "REQ-11": "2 / 跳过 / 2",
+      "REQ-12": "4 / 跳过 / 3"
+    },
+    "REQ-5_attempts_range": "1–4（含 1 次失败）",
+    "REQ-7_attempts_range": "2–4（另 1 次跳过）",
+    "REQ-12_attempts_range": "3–4（另 1 次跳过）",
+    "token_variance": "147,716 / 84,388 / 144,336；两次全链通过的在 144k–148k（差 2.3%），run2 因早停 84k"
+  },
+
+  "req5_test_analysis": {
+    "run1_usecase_count": 2,
+    "run2_usecase_count": 6,
+    "run3_usecase_count": 2,
+    "run4_usecase_count": "n/a",
+    "over_generation_hypothesis": "**证实** —— run2 的 REQ-5 测试是 **6 个用例**，而两次通过的运行都是 **2 个**（3 倍差距）。按任务给出的判据『run2 确实是 6 用例，run1/3 是 3–4』属于『测试生成过度』一栏；实际差距比该栏预设的更大",
+    "varianced_from_test_or_impl": "**测试侧是主变量**。证据链：① 用例数 2→6 是 run2 独有的差异；② run2 的 REQ-5 依赖违规 0、回归 0，即门禁层面无异常；③ 环境指标（网关重试）三轮均为 0。因此 run2 的失败更可能源于『测试要求被放宽到 6 个场景，实现难度随之抬升』，而非『模型这次实现能力差』",
+    "root_vs_deep_observation": "任务提出的假设（根节点测试生成容易过度：无上游约束 → 倾向写更多场景；深层节点有上游契约 → 围绕集成写、更聚焦）在本样本中**得到一致但不充分的证据**：REQ-5 是根节点且出现了 6 用例；深层节点（REQ-11）三轮尝试次数稳定在 2。**样本量不足以确证**，需专门实验",
+    "caveat": "单次观测（n=1 的失败样本）。不能排除『6 用例那次恰好也是实现较弱的一次』。区分二者需要固定用例数的对照实验。"
+  },
+
+  "architecture_doc_update": {
+    "section_added": "验证纪律",
+    "location": "软件工厂-项目架构文档.md 第 **19 章**《验证纪律〔v1.3 新增〕》（原第 17 章《过程发现：门禁的度量与修订》之后）",
+    "doc_version": "v1.2 → **v1.3**；1480 → 1539 行",
+    "subsections": ["19.1 三次同类教训（表格：T36 自伤 / fixture 转义 / 元断言误导输出 + 共同结构图）", "19.2 落地的做法（6 项，含元断言、断言只匹配代码行、中性 detail、已知局限钉进断言、未触发门禁须合成验证、报告完整性检查）", "19.3 一条推论：门禁本身也是被测对象（正向/反向/关闭路径三类用例）", "19.4 与第 17 章的关系（门禁对不对 vs 判断门禁对不对的方式对不对）"],
+    "three_lessons_recorded": true,
+    "core_statement": "任何用于验证的代码（断言、fixture、门禁、度量函数）本身必须被独立验证。验证器自身失效，会伪装成「被测对象有 bug」。这不是一次修复，是一个系统性问题。",
+    "notable": "第 1 条教训被特别标注为**最危险**：它让**正确的修复看起来是坏的** —— 若无独立复核，可能把正确的修复回滚掉"
+  },
+
+  "contract_mismatch_limitation": {
+    "assertion_location": "tests/test_contract_mismatch.py:164 断言⑦（本轮补全为四要素注释块）",
+    "limitation_documented": true,
+    "limited_case": "同个数的**参数顺序错**（`foo(b, a, c)` vs `foo(a, b, c)`）→ 静态同形，均判 DEPENDENCY_USED",
+    "reason": "**静态分析的固有限制**：按参数**个数**比对是唯一可靠判据；按名字比对不成立（调用方使用自己作用域里的变量名，`foo(quantity, sku)` 未必是错的）",
+    "impact": "实际有限 —— 即使顺序写错，模型通常能通过**测试反馈**发现（下游测试断言的正是副作用的可观察后果）。是「已知局限」，不是「未发现的 bug」",
+    "reminder": "将来若改为能检出（如引入类型标注解析），**本条断言会失败** —— 那正是提醒：同步更新架构文档 11.3 节的「已知局限」段",
+    "detection_logic_unchanged": true
+  },
+
+  "incidental_finding": {
+    "what": "**check_all 起初是红的，但不是我的改动** —— 并发工作流新增的 `t37_quota_exhaustion_is_terminal_and_fails_fast` 自身有 bug",
+    "error": "`NameError: name '_Path' is not defined`",
+    "cause": "`_Path` 只在 `t30` 的作用域内局部导入（test_gates.py:716），T37 在 :1463 直接引用却未在自己的作用域导入",
+    "their_test_is_valid": "T37 的内容是对的且有价值 —— 它记录了一个真实缺陷：**429 同时意味着「限流（瞬时，可重试）」与「配额耗尽（终局，重试纯烧时间）」**，而上一轮的瞬时判据里恰好含 '429'，导致配额耗尽被当成可重试，一次运行白跑「网关重试 11 次」",
+    "convergence": "两条工作流**同时**撞上 429 配额问题：我这轮 run4 因此中止，他们在 T37 里固化了区分逻辑",
+    "fix_applied": "补一行作用域内 `from pathlib import Path as _Path`（沿用该文件 t30 的既有风格）。**最小改动，未触碰其判定逻辑**",
+    "attribution": "该 bug 与其修复均属并发工作流的代码；本工作流代为补上以使共享门禁恢复绿色"
+  },
+
+  "check_all": {
+    "assertions_passed": "**309/309（9 类）**",
+    "all_pass": true,
+    "delta": "较上轮 +13（并发方新增的 T37 系列 12 条 + 本轮无新增）",
+    "note": "修复 T37 的 `_Path` 前为 1 类失败（172 项中 1 项），修复后全绿"
+  },
+
+  "next_decision": {
+    "variance_vs_structural": "**倾向方差**，但证据不足以定论。理由：① REQ-5 只在 3 次中的 1 次失败（1/3）；② 该次失败伴随一个可解释的差异（用例数 2→6）；③ 环境三轮稳定（网关重试均 0）。按任务判据『4 次里 REQ-5 失败 1 次 → 方差问题』，但**第 4 次未能执行**，所以严格说仍是 1/3 而非 1/4",
+    "candidate_actions": ["root_budget_increase", "test_usecase_limit"],
+    "action_assessment": {
+      "test_usecase_limit": "**证据更强**。run2 的失败伴随 2→6 用例跳变，而通过运行均为 2；限制根节点用例数（3–4）直接针对观测到的差异源，且比加实现预算**更省 token**（减少要满足的需求，而不是增加尝试次数）",
+      "root_budget_increase": "**证据较弱**。REQ-5 在 2/3 有效样本中 1 轮即通过 —— 说明常规情况下预算充裕；仅 1 次需要更多轮。加预算只在那 1 次可能有帮助，且会推高所有运行的成本"
+    },
+    "ready_for_independent_experiment": false,
+    "why_not_ready": "① 配额耗尽，**当前无法获得新样本** —— 任何配置实验都跑不了；② 有效样本 3 次，且失败样本 n=1，不足以支撑对失败模式的因果判断。**先恢复配额，再补 1–2 次基线样本，然后才做配置实验**",
+    "blocking_condition": "模型配额/余额耗尽（HTTP 429 insufficient_quota），5/5 探测失败。需充值后才能继续跑 closure6"
+  },
+
   "not_done": {
-    "v4_packaging": "按要求未打包（2/3 落在『不急于打包』分支）",
-    "manual_fix": "未手动改实现或测试",
-    "dag_gaps": "未碰"
+    "run_4": "**未能执行** —— 外部配额阻碍，非跳过",
+    "config_changes": "未改（按要求）",
+    "root_budget_increase": "未做（按要求，且样本未稳定）",
+    "test_usecase_limit": "未做（按要求，先确认观察）",
+    "contract_mismatch_detection_logic": "未改（按要求，仅补全注释与文档）"
   }
 }
