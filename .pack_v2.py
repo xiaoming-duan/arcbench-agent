@@ -21,7 +21,9 @@ ROOT = Path(__file__).resolve().parent
 OUT = ROOT / "dist" / "arcbench-agent-v2.zip"
 
 EXCLUDED_DIRS = {"backups", ".workstreams", "dist", ".arc", ".npm-cache",
-                 "__pycache__", "node_modules", ".git", ".cache"}
+                 "__pycache__", "node_modules", ".git", ".cache",
+                 # 运行期日志目录（与 .arc/ out*/ *.log 同类：运行产物，可重建）
+                 "logs"}
 EXCLUDED_PREFIXES = (".verify-", ".probe-", ".zipcheck", ".zipv", ".bkcheck")
 EXCLUDED_SUFFIXES = (".log", ".pyc", ".pyo")
 
