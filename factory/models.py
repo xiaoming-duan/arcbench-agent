@@ -61,6 +61,59 @@ class TestSpec:
 
 
 @dataclass(frozen=True)
+class CrossModuleCall:
+    """下游对上游的一次**声明式跨模块调用契约**。
+
+    为什么需要它：单模块测试无法暴露「同名不同语义」。
+    实测（REQ-11）：下游测试要求 `updateQuantity(sku, quantity, from, to)`，
+    而上游 REQ-7 实现的是 `updateQuantity(sku, from, to)`（语义为区间变更）。
+    两个需求的单模块测试各自通过，矛盾只在集成点出现 ——
+    而模型看到「你没 import 上游」时，**无法推断出正确的参数语义**。
+
+    声明后：签名同时注入下游（要这么调）与上游（要这么提供），
+    门禁再按声明比对实际调用，不一致判 CONTRACT_MISMATCH。
+    """
+
+    upstream: str
+    symbol: str
+    signature: str = ""
+    semantics: str = ""
+    side_effects: tuple[str, ...] = ()
+
+    @property
+    def declared_arity(self) -> int | None:
+        """从签名文本解析形参个数，如 `f(a, b, c)` -> 3。解析不出返回 None。"""
+        import re as _re
+        m = _re.search(r"\(([^)]*)\)", self.signature or "")
+        if not m:
+            return None
+        body = m.group(1).strip()
+        if not body:
+            return 0
+        # 顶层逗号计数（忽略嵌套括号与默认值里的逗号）
+        depth = 0
+        count = 1
+        for ch in body:
+            if ch in "([{":
+                depth += 1
+            elif ch in ")]}":
+                depth -= 1
+            elif ch == "," and depth == 0:
+                count += 1
+        return count
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "upstream": self.upstream,
+            "symbol": self.symbol,
+            "signature": self.signature,
+            "semantics": self.semantics,
+            "side_effects": list(self.side_effects),
+            "declared_arity": self.declared_arity,
+        }
+
+
+@dataclass(frozen=True)
 class Requirement:
     """规范化需求节点。"""
 
@@ -70,6 +123,11 @@ class Requirement:
     parent_id: str | None = None
     children_ids: tuple[str, ...] = ()
     dependencies: tuple[str, ...] = ()
+    # 本需求**声明**要调用上游的契约（可选；未声明时全链路行为不变）
+    cross_module_calls: tuple[CrossModuleCall, ...] = ()
+    # 由适配层从全量需求集**推导**：别人声明要调用我的哪些符号。
+    # 不是 YAML 字段 —— 让契约天然双向，无需上游重复声明。
+    incoming_contracts: tuple[CrossModuleCall, ...] = ()
     visual_reference: tuple[str, ...] = ()
     acceptance: tuple[str, ...] = ()
     scenarios: tuple[ScenarioSpec, ...] = ()
@@ -89,6 +147,11 @@ class Requirement:
             "parent_id": self.parent_id,
             "children_ids": list(self.children_ids),
             "dependencies": list(self.dependencies),
+            # 注意：**不要**把 cross_module_calls 塞进这个 payload ——
+            # 它是工厂内部的契约概念，不属于平台追溯 schema。
+            # 实测：加进去会抛
+            # `TypeError: TraceabilityStore.upsert_requirement() got an unexpected
+            #  keyword argument 'cross_module_calls'`，整轮运行直接失败。
         }
 
 

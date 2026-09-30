@@ -1,105 +1,122 @@
 {
   "read_locations": {
-    "if_outcome_passed_block": "factory/loop.py:1156 `if outcome.passed:`（实现循环内、runner.run 之后）。原先 dep_audit / mock_audit / bypass_audit 三个审计调用全部在这个分支**之内**",
-    "_audit_dependencies_call": "factory/loop.py:1163 `dep_audit = self._audit_dependencies(requirement)`（原位置，在 if 内）；循环前 :1109-1111 初始化为空的 `DependencyAudit()/MockAudit()/InjectionAudit()` —— 所以测试不过时它们**永远是空的**",
-    "combined_ok_logic": "factory/loop.py:1253-1269。`dep_ok_raw = dep_audit.ok or not enforce_dependency_usage` → 同理 mock/bypass → `dep_ok = dep_ok and mock_ok and bypass_ok`（**已是 and 链，非嵌套 if，不短路**）→ 存入 `result.gate_audits` → `if outcome.passed and dep_ok:` 最终判定",
-    "gate_log_output": "factory/loop.py:1186 附近 `logger.warning(\"[依赖门禁] %s 测试通过，但依赖未被真实验证: %s\", ...)`，格式为 `upstream=VERDICT`（如 `REQ-7=DEPENDENCY_NOT_USED`）—— **该行已存在**，但同样在 if 内，测试不过时不打印"
+    "yaml_schema": "需求 YAML 字段：`id / name / description / depends_on / acceptance / scenarios / interfaces / tests`（`requirements_probe_closure6/requirements.yaml`）。**无** `cross_module_calls`。`schemas/` 下只有 `test_plan.schema.yaml`，**没有** requirements 的 schema 文件",
+    "adapt_function": "`factory/adapter.py`：别名表 `_FIELD_ALIASES`（顶部）；`_adapt()` 在 :318-327 构造 `Requirement(...)`，`dependencies=_as_str_list(_pick(node, \"dependencies\"))`；`Requirement` dataclass 在 `factory/models.py`，原 11 个字段",
+    "test_prompt_location": "`factory/generator.py`：`_PLAN_SYSTEM`(:240) 与 `_FILES_SYSTEM`(:250)；实际组装在 `LLMGenerator.plan_tests()`(:378+) 与 `write_tests()`，两者都调用 **`_requirement_brief()`**",
+    "impl_prompt_location": "`factory/generator.py`：`LLMGenerator.implement()`(:419+) 同样调用 **`_requirement_brief()`**；`_DESIGN_SYSTEM`(:226) 亦然",
+    "key_insight": "**`_requirement_brief()` 是四个 prompt 的唯一共用注入点** —— 改一处即四处生效，无需分别改三个 system prompt",
+    "audit_dependency_usage": "`factory/testaudit.py:527`。既有逻辑：`extract_specifiers` → `_resolve_specifier` → `_same_file` 判定是否 import 上游；`_bindings_in_line` 取绑定；namespace 分支在 `for ns in namespaces` 处用 `ns.member` 正则判是否调用导出",
+    "verdict_enum": "已有 9 个：`DEP_USED / DEP_NOT_USED / DEP_FAKE / DEP_UPSTREAM_MISSING / DEP_SKIPPED_INDIRECT / DEP_UNCERTAIN / UNVERIFIED_DEPENDENCY / MOCK_DECLARED_OK / INJECTION_BYPASS`。**`CONTRACT_MISMATCH` 不存在（0 处）** —— 新增"
   },
 
-  "gate_position_fix": {
-    "before": "dep_audit / mock_audit / bypass_audit 三个调用在 `if outcome.passed:` 之内",
-    "after": "三个调用移到 `if outcome.passed:` **之前**，无条件运行；break/continue 的重试决策仍留在 if 内",
-    "line_changed": "factory/loop.py:1156 附近（原 if 分支起点前插入三个审计调用；原位置的三行删除）",
-    "lines_delta": "+32 / -3（含 14 行说明注释）",
-    "rationale": "测试不过 → 依赖永不检查；而「测试过不去」恰恰最可能有依赖问题（跨模块集成断裂时，下游测试正是因为接不上上游而失败）。门禁位于测试门禁的下游，等于在最需要它的场景下自动关闭",
-    "extra_added": "新增 `[依赖门禁·归因]` 日志行：测试**未通过**时也把同期依赖审计结果打出来，否则失败归因不可见",
-    "not_changed": "检测逻辑一行未动（audit_dependency_usage / audit_mocked_dependencies / audit_injection_bypass 的实现均未修改）"
+  "yaml_field_added": {
+    "field_name": "cross_module_calls",
+    "optional": true,
+    "schema_doc_updated": "无独立 requirements schema 文件；字段形状写进了 `CrossModuleCall` 的 docstring 与 `_parse_cross_module_calls` 的注释",
+    "shape": "list of {upstream, symbol, signature, semantics, side_effects[]}；`upstream`/`symbol` 缺一即跳过该条",
+    "aliases": "cross_module_calls / cross_module / upstream_calls / external_calls",
+    "undeclared_behaviour": "返回空元组；解析层、prompt 层、门禁层全部短路 —— **与改动前逐位一致**"
   },
 
-  "combined_ok_check": {
-    "current_impl": "`dep_ok = dep_ok and mock_ok and bypass_ok`（三个 ok 已各自算好，再由 and 链合并）",
-    "is_short_circuit": "**否** —— 三个门禁结果都会被求值并参与合并，不存在因前一个为假而跳过后续求值的情况",
-    "changed": "**未改**。读到的实现已经是 and 链，符合要求，无需改动",
-    "note_on_final_if": "最终判定 `if outcome.passed and dep_ok:` 中的 `and` 会短路，但这**不丢信息**：测试不过时需求本就走 else 分支判 FAILED，而违规记录（:1245-1247）在循环外无条件执行，仍会完整写入报告",
-    "verified_by": "T36e 断言：检查 `dep_ok and mock_ok and bypass_ok` 存在于最终判定之前"
+  "parser_extended": {
+    "reads_field": true,
+    "stores_in_requirement": true,
+    "empty_when_undeclared": true,
+    "new_dataclass": "`factory/models.py:CrossModuleCall`（frozen dataclass，含 `declared_arity` 属性 —— 从签名文本解析形参个数，处理嵌套括号与默认值里的逗号）",
+    "new_requirement_fields": ["cross_module_calls（声明，来自 YAML）", "incoming_contracts（**推导**，非 YAML 字段）"],
+    "derivation": "`adapter._derive_incoming_contracts()` —— 扫描全量需求的 `cross_module_calls`，反向给上游填 `incoming_contracts`",
+    "why_derivation_needed": "**只让下游声明是不够的**：上游若无此约束，会继续按自己的理解实现。实测证据：修复前 REQ-7 实现的是 `updateQuantity(sku, from, to)`（3 参数、区间语义），而下游声明要求 4 参数 —— 契约在结构上无法满足通过推导而非新增 YAML 字段，上游无需重复声明，契约天然双向一致",
+    "bug_found_and_fixed": "初版把 `cross_module_calls` 塞进了 `Requirement.to_requirement_payload()`，导致 SDK 抛 `TypeError: TraceabilityStore.upsert_requirement() got an unexpected keyword argument 'cross_module_calls'`，**整轮运行直接失败**（T21/T33 端到端断言报红暴露）。契约是工厂内部概念，不属于平台追溯 schema，已移除"
   },
 
-  "gate_log_confirmed": {
-    "DEPENDENCY_NOT_USED_written": true,
-    "existing_line": "`[依赖门禁] REQ-11 测试通过，但依赖未被真实验证: REQ-1=DEPENDENCY_NOT_USED; REQ-7=DEPENDENCY_NOT_USED`",
-    "added_line": "`[依赖门禁·归因] REQ-11 测试未通过，同期依赖审计: REQ-1=DEPENDENCY_NOT_USED; REQ-7=DEPENDENCY_NOT_USED`（本次运行触发 3 次）"
-  },
-
-  "assertion_added": {
-    "name": "t36_dependency_audit_runs_even_when_tests_fail",
-    "numbering_note": "**编号本应为 T26，但 T26 已被并发工作流占用**（`t26_root_container_is_not_designed`），故改为 T36（当前最大编号 T35 之后）",
-    "assertions": [
-      "T36a-c 三个审计调用必须出现在 `if outcome.passed:` **代码行**之前（用 12 空格缩进的代码行匹配，不认注释）",
-      "T36d `result.dependency_violations = [...]` 在循环外无条件执行",
-      "T36e `combined_ok` 非短路（`dep_ok and mock_ok and bypass_ok`）"
-    ],
-    "self_inflicted_bug_found": "初版断言用 `tail.find(\"if outcome.passed:\")` 匹配裸子串，结果**命中了我自己注释里引用的同一串文字**，导致修复已生效却仍报红。改为匹配 `\\n            if outcome.passed:\\n`（代码行）后通过 —— 断言必须认代码，不认注释"
-  },
-
-  "closure6_rerun": {
-    "guard_used": true,
-    "snapshot": ".workstreams/closure6-gatefix（含修复）",
-    "output_dir": "out-gatefix（唯一）",
-    "isolation_verified": "✅ 冻结副本逐文件未变 + ✅ 运行期间工作区无改动",
-    "result": "4 通过 / 1 失败 / 1 跳过（尝试 5 个 = 80%）",
-    "report_completeness": "6/6",
-    "wall_clock": "00:19:57 → 00:53:22 = 33 分 25 秒",
-    "totals": {"calls": 28, "total_tokens": 177153, "reasoning_tokens": 124975,
-               "gateway_retries": 0, "retries_succeeded": 0, "retries_exhausted": 0},
-
-    "REQ-7_status": "PASSED（4 次尝试 / 47,266 token；上一轮为 2 次尝试 / 27,300 token —— 模型侧方差，非配置变化）",
-    "REQ-11_status": "FAILED（4 次尝试 / 1 次测试重写 / 91,348 token）",
-    "REQ-11_verdict": "**DEPENDENCY_NOT_USED（2 条违规）**",
-    "REQ-11_violations_detail": [
-      {"upstream": "REQ-1", "verdict": "DEPENDENCY_NOT_USED", "detail": "下游完全没有 import 上游模块；上游导出: listItems"},
-      {"upstream": "REQ-7", "verdict": "DEPENDENCY_NOT_USED", "detail": "下游完全没有 import 上游模块；上游导出: updateQuantity"}
-    ],
-    "REQ-11_note": "测试通过但依赖未被真实验证（REQ-1=DEPENDENCY_NOT_USED; REQ-7=DEPENDENCY_NOT_USED）：重写 4 次仍未满足依赖使用要求",
-    "REQ_11_blocked_by_dependency_gate": "**是** —— `[依赖门禁] REQ-11 BLOCK -> FAILED`",
-    "REQ-12_entered_tdd": false,
-    "REQ-12_status": "UPSTREAM_FAILED（REQ-11=FAILED）",
-    "dependency_violations": "REQ-11 = 2 条（其余需求 0 条）",
-    "regressions": "REQ-11 记录 2 条 IMPLEMENTATION_REGRESSION（模型重写把测试从 PASSED 改坏，回归检查两次正确回退）",
-    "new_attribution_log_fired": "`[依赖门禁·归因]` 触发 3 次 —— 证明审计在测试未通过时确实运行了",
-
-    "before_after_comparison": {
-      "before_fix": {
-        "dependency_violations": 0,
-        "note": "实现失败（4 次尝试）: 读取超时（>300.0s）",
-        "problem": "0 看起来像「依赖用对了」，实际是「依赖根本没被评估」；失败被误归因为超时"
-      },
-      "after_fix": {
-        "dependency_violations": 2,
-        "note": "测试通过但依赖未被真实验证（REQ-1/REQ-7=DEPENDENCY_NOT_USED）：重写 4 次仍未满足依赖使用要求",
-        "improvement": "失败归因干净且精确 —— 指向跨模块集成断裂，而不是超时"
-      }
+  "prompt_injection": {
+    "test_prompt_updated": true,
+    "impl_prompt_updated": true,
+    "injection_point": "`generator._requirement_brief()` —— 四个 prompt（design / plan_tests / write_tests / implement）的唯一共用注入点",
+    "conditional_on_field": true,
+    "includes_signature": true,
+    "includes_semantics": true,
+    "includes_side_effects": true,
+    "two_directions": {
+      "downstream_block": "「★ 本需求对上游的**跨模块调用契约**（必须真实调用，不得用参数注入绕过）」+ 每条 upstream/symbol/签名/语义/副作用 + 三条实现要求 + 一条测试要求",
+      "upstream_block": "「★ 下游需求依赖本需求，**本需求必须提供**以下符号与签名（实现时以此为准，不要自行改参数个数或语义）」+ 每条 symbol/必须实现的签名/下游期望的语义与副作用"
     }
   },
 
-  "check_all": {
-    "assertions_passed": "262/262（8 类）",
-    "all_pass": true,
-    "delta": "较上一轮 +5（新增 T36a-e 五条断言）"
+  "signature_check": {
+    "core_logic_untouched": true,
+    "added_check": true,
+    "verdict": "CONTRACT_MISMATCH",
+    "implementation": "`testaudit.actual_call_arity()`（顶层逗号计数）+ `testaudit.check_contract_signature()`（比对声明与实际）。两者均为**独立新增函数**；`audit_dependency_usage` 仅在既有「是否 import / 是否调用导出」判定**之后**追加一段 `if declared_calls:` 的比对，未修改任何既有分支的判断条件",
+    "reason_includes": ["declared_signature", "actual_signature", "fix_instruction"],
+    "reason_sample": "声明签名 `updateQuantity(sku, quantity, from, to)`（4 个参数），但 backend/src/services/movementsService.js 里按 **3 个参数**调用 `updateQuantity`",
+    "conditional_on_field": true,
+    "toggle": "`FACTORY_CONTRACT_SIG`（config: `enforce_contract_signature`，默认 True）—— 用于区分「提示词的效果」与「门禁的效果」",
+    "included_in_violations": "是 —— 已加入 `DEP_VIOLATIONS`，会阻断",
+    "assertions": "C1–C6（9 条）：解析 / 推导 / 未声明时为空 / 形状容错 / 4种调用形状（4参→USED、3参→MISMATCH、5参→MISMATCH、0 import→NOT_USED）/ 未声明时不比对",
+    "self_inflicted_bug_found": "断言初版因 heredoc 转义过度，把 `\\n` 写成了字面反斜杠+n，导致 fixture 整段变成一行、`updateQuantity(...)` 与 import 同行而被排除 → 断言误报红。修正转义后全绿。**测试 fixture 的转义错误会产生『被测对象有 bug』的假象**"
   },
 
-  "verdict": {
-    "REQ_11_blocked_by_dependency_gate": "**是**。修复后 REQ-11 被依赖使用门禁正确阻断，并给出两条精确违规（REQ-1 / REQ-7 = DEPENDENCY_NOT_USED），失败归因从误导性的「超时」变为「跨模块未集成」",
-    "fix_effective": "是。三处验证一致：① 新增日志行触发 3 次；② 报告的 dependency_violations 由 0 变 2；③ 失败 note 指向依赖而非超时",
-    "still_failing": "REQ-11 仍 FAILED —— 因为模型在 4 轮内确实没有让实现连接上游。**这是真实的实现层缺陷，不是门禁误判。** 门禁现在把原因说清楚了，但不会替模型修好它。",
-    "next_step": "rerun_or_declare_cross_module_contract",
-    "next_step_detail": "推荐**在需求规格里显式声明跨模块调用契约**（第 2 项）。理由：REQ-7 的 `updateQuantity(sku, from, to)` 与 REQ-11 测试期望的 `updateQuantity(sku, quantity, from)` 是**同名不同语义**，两个需求的单模块测试各自通过却无法暴露它。仅靠门禁回传「你没 import 上游」不足以让模型推断出正确的参数语义。",
-    "supporting_evidence": "本次运行 REQ-11 拿到 `[依赖门禁·归因]` 提示 3 次、`[依赖门禁]` 阻断理由 1 次，仍未修好 —— 说明「回传理由」对这一类是必要但不充分的。"
+  "three_group_comparison": {
+    "control": {
+      "config": "无 cross_module_calls 声明（数据来自上一轮 gatefix 运行）",
+      "REQ_11_status": "FAILED",
+      "verdict": "DEPENDENCY_NOT_USED（REQ-1 / REQ-7 两条）",
+      "rounds_to_pass": "未通过（4 轮耗尽）"
+    },
+    "B_and_B_plus_signature_combined": {
+      "note": "本轮把 B（声明 + 提示词）与 B+签名校验**一起实现并运行**。结果：`CONTRACT_MISMATCH` **触发 0 次** —— 提示词注入已足够，模型拿到签名后一次就写对，门禁没有登场机会。因此未能分离出 B 与 B+校验的独立增量（与上一轮『C 无独立增量』同类结论）。",
+      "REQ_11_status": "**PASSED**",
+      "rounds_to_pass": "2 次尝试（第 1 次被依赖门禁拦下 → 重写 → 第 2 次通过）",
+      "CONTRACT_MISMATCH_triggered": "**否（0 次）**",
+      "why_passed": "签名注入到提示词后，模型**一开始就按 4 参数实现**：REQ-7 的 `updateQuantity(sku, quantity, from, to)`（修复前是 3 参数 `updateQuantity(sku, from, to)`），REQ-11 的实现真实 import 了上游并用正确签名调用，依赖门禁一次通过"
+    }
+  },
+
+  "success_criteria": {
+    "REQ_11_passed_within_4_rounds": "**是** —— 2 次尝试通过",
+    "dependency_violations_empty": "**是** —— REQ-11 = 0 条（全 6 个需求均为 0）"
+  },
+
+  "full_chain_result": {
+    "passed": 6, "total": 6,
+    "report_completeness": "**6/6**（关键 —— 上一轮曾出现 2/6 的部分报告被误判为全链通过）",
+    "ok": true, "upstream_failed": 0,
+    "isolation_verified": "✅ 冻结副本逐文件未变 + ✅ 运行期间工作区无改动",
+    "wall_clock": "01:04:27 → 01:29:23 = 24 分 56 秒",
+    "totals": {"calls": 32, "total_tokens": 147716, "reasoning_tokens": 90672, "gateway_retries": 0},
+    "per_requirement": {
+      "REQ-1":  {"state": "PASSED", "attempts": 1, "tokens": 14009},
+      "REQ-5":  {"state": "PASSED", "attempts": 1, "tokens": 11562},
+      "REQ-3":  {"state": "PASSED", "attempts": 2, "tokens": 19733, "note": "依赖门禁触发 1 次后满足"},
+      "REQ-7":  {"state": "PASSED", "attempts": 4, "tokens": 40675, "note": "**签名已按 incoming_contracts 改为 4 参数**"},
+      "REQ-11": {"state": "PASSED", "attempts": 2, "tokens": 28363, "note": "依赖门禁触发 1 次（REQ-1/REQ-7=NOT_USED）→ 重写 → 通过；**首次通过**"},
+      "REQ-12": {"state": "PASSED", "attempts": 4, "tokens": 33374, "note": "**首次进入 TDD 循环且通过** —— 最深链末端终于有数据"}
+    },
+    "cross_module_integration_evidence": [
+      "src/services/inventoryService.js: `const { updateQuantity: applyQuantityUpdate, movements } = require('./inventory');`",
+      "src/services/inventoryService.js: `const { listItems } = require('./items');` ← 真实引用 REQ-1",
+      "src/services/inventory.js:4 `function updateQuantity(sku, quantity, from, to)` ← 按契约的 4 参数"
+    ]
+  },
+
+  "check_all": {
+    "assertions_passed": "271/271（8 类）",
+    "all_pass": true,
+    "delta": "较上轮 +9（新增 C1–C6 契约断言）"
+  },
+
+  "v3_package": {
+    "filename": "dist/arcbench-agent-v3.zip",
+    "size": "653 KB / 181 文件",
+    "exclusions_verified": "node_modules / .pack_* / out-* / .workstreams / .apidoc 各出现 0 次",
+    "can_claim_dependency_accumulation_verified": "**可以** —— 这是第一份完整（6/6）、干净（隔离已验证）、且全链通过的依赖累积数据。此前所有轮次要么不完整、要么被环境打断、要么只走到中间节点。",
+    "qualification": "单次运行的结果，样本量为 1。建议重复 1–2 次以区分「配置生效」与「本轮运气」（REQ-7 在两次运行中分别是 4 次与 2 次尝试，方差明显）"
   },
 
   "not_done": {
-    "detection_logic": "未改（按要求）",
-    "manual_fix_of_req11": "未做（按要求，不手动改实现或测试冲 REQ-11 通过）",
-    "dag_gaps": "未碰（按要求）",
-    "commit_push": "已提交并推送到 factory-verify 分支"
+    "detection_core_unchanged": "未改 `audit_dependency_usage` 核心逻辑（只在其后追加签名比对段）",
+    "no_manual_fix": "未手动改实现或测试",
+    "dag_gaps": "未碰（悬空依赖 / 环）"
   }
 }

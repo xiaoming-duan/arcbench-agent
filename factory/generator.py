@@ -312,6 +312,48 @@ class LLMGenerator:
         if requirement.tests:
             lines.append("已声明测试:")
             lines.extend(f"  {t.test_id} [{t.type}] {t.intent}" for t in requirement.tests)
+
+        # ---- 跨模块调用契约（可选字段；未声明时本段完全不出现在提示词里）----
+        #
+        # 为什么必须在提示词里：单模块测试无法暴露「同名不同语义」。
+        # 实测 REQ-11：下游测试按 `updateQuantity(sku, quantity, from, to)` 调用，
+        # 而上游 REQ-7 实现的是 `updateQuantity(sku, from, to)`（区间变更语义）。
+        # 模型被告知「你没 import 上游」时，**无法推断出正确的参数语义** ——
+        # 它只知道要调，不知道按什么调。
+        if requirement.cross_module_calls:
+            lines.append("")
+            lines.append("★ 本需求对上游的**跨模块调用契约**（必须真实调用，不得用参数注入绕过）:")
+            for call in requirement.cross_module_calls:
+                head = f"  - {call.upstream} / {call.symbol}"
+                if call.signature:
+                    head += f"  签名: {call.signature}"
+                lines.append(head)
+                if call.semantics:
+                    lines.append(f"    语义: {call.semantics}")
+                if call.side_effects:
+                    lines.append(f"    副作用: {'；'.join(call.side_effects)}")
+            lines.append("  实现要求: ① require 上游模块；② 严格按上面的签名与语义调用；"
+                         "③ 不得保留参数注入旁路。")
+            lines.append("  测试要求: 断言上游被按上述签名调用后的**可观察后果**"
+                         "（如副作用生效），而不是断言一个假的注入实现。")
+
+        # ---- 我被别人依赖的签名（由适配层从全量需求推导，非 YAML 字段）----
+        #
+        # 只约束下游是不够的：上游若无此约束，仍会按自己的理解实现，
+        # 契约在结构上无法满足。这段让上游知道「必须提供什么形状的接口」。
+        if requirement.incoming_contracts:
+            lines.append("")
+            lines.append("★ 下游需求依赖本需求，**本需求必须提供**以下符号与签名"
+                         "（实现时以此为准，不要自行改参数个数或语义）:")
+            for call in requirement.incoming_contracts:
+                head = f"  - 供 {call.symbol}"
+                if call.signature:
+                    head += f"  必须实现为: {call.signature}"
+                lines.append(head)
+                if call.semantics:
+                    lines.append(f"    下游期望的语义: {call.semantics}")
+                if call.side_effects:
+                    lines.append(f"    下游期望的副作用: {'；'.join(call.side_effects)}")
         return "\n".join(lines)
 
     def _files_from_payload(self, payload: dict[str, Any]) -> list[GeneratedFile]:

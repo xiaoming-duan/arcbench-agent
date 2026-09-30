@@ -73,6 +73,10 @@ class FactoryConfig:
     enforce_mock_check: bool = True
     # 方案2-B：是否检测实现层注入旁路（**仅警告，不阻断**）
     warn_injection_bypass: bool = True
+    # 跨模块调用契约的**签名校验**（仅在需求声明了 cross_module_calls 时生效）。
+    # 关闭后仍会注入提示词，但不按声明比对调用形状 —— 用于对照实验区分
+    # 「提示词的效果」与「门禁的效果」。
+    enforce_contract_signature: bool = True
     # 上游失败传播：声明依赖的上游未通过时，下游不进入 TDD 循环
     enforce_upstream_gate: bool = True
     # 重写阶段是否强制「只改实现」：测试文件不可修改（默认 True）。
@@ -120,6 +124,7 @@ class FactoryConfig:
             block_injection_bypass=os.environ.get("FACTORY_BYPASS_BLOCK", "0") in {"1", "true", "True"},
             enforce_impl_only_rewrite=os.environ.get("FACTORY_IMPL_ONLY", "1") not in {"0", "false", "False"},
             enforce_upstream_gate=os.environ.get("FACTORY_UPSTREAM_GATE", "1") not in {"0", "false", "False"},
+            enforce_contract_signature=os.environ.get("FACTORY_CONTRACT_SIG", "1") not in {"0", "false", "False"},
             require_red_first=os.environ.get("FACTORY_REQUIRE_RED_FIRST", "1") not in {"0", "false", "False"},
             install_deps=os.environ.get("FACTORY_INSTALL_DEPS", "auto"),
             install_timeout_s=int(os.environ.get("FACTORY_INSTALL_TIMEOUT", "900")),

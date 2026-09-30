@@ -13,10 +13,12 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Iterable
 
 from .models import (
+    CrossModuleCall,
     InterfaceSpec,
     Requirement,
     RequirementSet,
@@ -37,6 +39,8 @@ _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "parent_id": ("parent_id", "parent", "parentId"),
     "children": ("children_ids", "children", "sub_requirements", "subs"),
     "dependencies": ("dependencies", "depends_on", "depends", "deps", "requires"),
+    # 跨模块调用契约（可选；未声明时全链路行为不变）
+    "cross_module_calls": ("cross_module_calls", "cross_module", "upstream_calls", "external_calls"),
     "visual_reference": ("visual_reference", "visual_references", "images", "screenshots", "references"),
     "acceptance": ("acceptance", "acceptance_criteria", "criteria", "checks"),
     "scenarios": ("scenarios", "cases", "acceptance_scenarios"),
@@ -322,6 +326,7 @@ def _adapt(raw: dict[str, Any] | list[Any], *, source: Path) -> RequirementSet:
                 parent_id=parent_id,
                 children_ids=_as_str_list(_pick(node, "children")),
                 dependencies=_as_str_list(_pick(node, "dependencies")),
+                cross_module_calls=_parse_cross_module_calls(node),
                 visual_reference=_as_str_list(_pick(node, "visual_reference")),
                 acceptance=_as_str_list(_pick(node, "acceptance")),
                 scenarios=scenarios,
@@ -353,12 +358,77 @@ def _adapt(raw: dict[str, Any] | list[Any], *, source: Path) -> RequirementSet:
         schema_version or "(未声明)",
     )
     return RequirementSet(
-        requirements=tuple(ordered),
+        requirements=tuple(_derive_incoming_contracts(list(ordered))),
         source_path=source,
         project_name=project_name,
         schema_version=schema_version,
         raw=raw if isinstance(raw, dict) else {"requirements": raw},
     )
+
+
+def _parse_cross_module_calls(node: Any) -> tuple[CrossModuleCall, ...]:
+    """解析 `cross_module_calls`（**可选字段**）。
+
+    形状：
+      cross_module_calls:
+        - upstream: REQ-7
+          symbol: updateQuantity
+          signature: "updateQuantity(sku, quantity, from, to)"
+          semantics: "更新库存数量并写入一条流水记录"
+          side_effects: ["记录流水到 movements 数组"]
+
+    容错：形状不对的条目**跳过而不是抛错** —— 字段可选，
+    写坏了不该让整轮解析失败。
+    """
+    raw = _pick(node, "cross_module_calls")
+    if not raw:
+        return ()
+    if isinstance(raw, dict):
+        raw = [raw]
+    if not isinstance(raw, (list, tuple)):
+        return ()
+    out: list[CrossModuleCall] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        upstream = str(item.get("upstream") or item.get("depends_on") or "").strip()
+        symbol = str(item.get("symbol") or item.get("function") or "").strip()
+        if not upstream or not symbol:
+            continue
+        effects = item.get("side_effects") or item.get("side_effect") or ()
+        if isinstance(effects, str):
+            effects = [effects]
+        out.append(CrossModuleCall(
+            upstream=upstream,
+            symbol=symbol,
+            signature=str(item.get("signature") or "").strip(),
+            semantics=str(item.get("semantics") or item.get("meaning") or "").strip(),
+            side_effects=tuple(str(x) for x in effects if str(x).strip()),
+        ))
+    return tuple(out)
+
+
+def _derive_incoming_contracts(requirements: list[Requirement]) -> list[Requirement]:
+    """从全量需求集推导每个需求的「被依赖签名」。
+
+    为什么必须做：只让**下游**声明契约是不够的 —— 上游仍会按自己的理解实现。
+    实测（REQ-11 声明要调 `updateQuantity(sku, quantity, from, to)`）：
+    REQ-7 若无此约束，会继续实现 3 参数的 `updateQuantity(sku, from, to)`，
+    契约在结构上无法满足。
+
+    推导而非新增 YAML 字段：上游无需重复声明，契约天然双向一致。
+    """
+    incoming: dict[str, list[CrossModuleCall]] = {}
+    for req in requirements:
+        for call in req.cross_module_calls:
+            incoming.setdefault(call.upstream, []).append(call)
+    if not incoming:
+        return requirements
+    out: list[Requirement] = []
+    for req in requirements:
+        calls = incoming.get(req.req_id)
+        out.append(replace(req, incoming_contracts=tuple(calls)) if calls else req)
+    return out
 
 
 def _topological_order(requirements: list[Requirement]) -> list[Requirement]:

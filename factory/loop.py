@@ -508,6 +508,11 @@ class TddLoop:
             downstream_files=self._impl_files.get(requirement.req_id, []),
             produced_files=self._impl_files,
             indirect_dependencies=indirect,
+            # 跨模块调用契约（可选；未声明时为空元组，门禁行为不变）
+            declared_calls=(
+                requirement.cross_module_calls
+                if self.config.enforce_contract_signature else ()
+            ),
         )
 
     def _audit_mocks(self, requirement: Requirement, allowed_paths: Sequence[str]) -> MockAudit:
