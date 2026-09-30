@@ -189,6 +189,23 @@ def main() -> int:
         sum(1 for item in report.results if item.state == "PASSED"),
         report.requirements_total,
     )
+    # ---- 退出码契约（平台）----
+    # 平台 README 写的是「exit with code 0 **when finished**」，
+    # 不是「全部通过才 0」。需求是否通过**已经通过 SDK 上报**：
+    #   traceability 的节点状态 + runner-events 的 mark_run_completed/failed
+    # —— 平台后端读的就是这两处。退出码只表示「进程有没有正常干完活」。
+    #
+    # 旧行为：未全通过就 return 2。平台把它当硬错误
+    #   "returned non-zero exit status 2"
+    # 结果是我们**正确产出的追溯与事件被一个退出码盖掉**：agent 明明跑完了、
+    # 状态也如实上报了，平台看到的却是"进程失败"。
+    #
+    # 保留 1 表示真正的崩溃（配置构造失败 / pipeline 抛异常），
+    # 由 _entrypoint 兜底并上报 mark_run_failed。
+    #
+    # 本地/CI 想按「有没有全通过」判退出码时，设 FACTORY_STRICT_EXIT=1。
+    if os.environ.get("FACTORY_STRICT_EXIT", "") not in {"1", "true", "True"}:
+        return 0
     return 0 if report.ok else 2
 
 

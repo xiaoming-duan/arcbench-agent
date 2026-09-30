@@ -1076,6 +1076,96 @@ def t32_missing_implementation_is_valid_red() -> None:
     shutil.rmtree(ws, ignore_errors=True)
 
 
+def t33_exit_code_contract() -> None:
+    """平台退出码契约：**完成即 0**（README: "exit with code 0 when finished"）。
+
+    旧行为：未全通过就 `return 2`。平台把它当硬错误
+    （"returned non-zero exit status 2"）——于是 agent 明明跑完了、
+    traceability 与 runner-events 也如实上报了，平台看到的却是「进程失败」。
+    一个退出码把真实产出盖掉，正是「报告与事实不符」这一类缺陷。
+
+    但必须同时守住另一头：**真崩溃仍要非 0**，否则会把崩溃伪装成完成。
+    所以本测试两头都断言。
+    """
+    import subprocess
+
+    env = dict(os.environ)
+    env["PYTHONPATH"] = f"{ROOT}:{ROOT / 'arcbench-agent-runtime' / 'src'}"
+    ws = Path(tempfile.mkdtemp(prefix="exitcode-"))
+    try:
+        # 会跑完但失败的需求集：实现无法满足断言 -> report.ok=False
+        reqs = ws / "reqs"
+        (reqs / "fixtures/REQ-1/tests/backend/tests").mkdir(parents=True)
+        (reqs / "fixtures/REQ-1/impl/backend/src").mkdir(parents=True)
+        (reqs / "requirements.yaml").write_text(
+            "schema_version: \"1.0\"\n"
+            "project: {id: e, name: exit}\n"
+            "requirements:\n"
+            "  - id: REQ-1\n"
+            "    name: 必然失败\n"
+            "    tests:\n"
+            "      - id: REQ-1.TEST.x\n"
+            "        type: unit\n"
+            "        file_path: backend/tests/x.test.js\n"
+            "        intent: 断言实现返回 999（实现返回 1）\n",
+            encoding="utf-8")
+        (reqs / "fixtures/REQ-1/tests/backend/tests/x.test.js").write_text(
+            "const test = require('node:test');\n"
+            "const assert = require('node:assert');\n"
+            "const svc = require('../src/svc.js');\n"
+            "test('x', () => { assert.equal(svc.value(), 999); });\n",
+            encoding="utf-8")
+        (reqs / "fixtures/REQ-1/impl/backend/src/svc.js").write_text(
+            "module.exports = { value: () => 1 };\n", encoding="utf-8")
+
+        def run(req_dir, out, extra=None):
+            e = dict(env)
+            e.update(extra or {})
+            proc = subprocess.run(
+                [sys.executable, str(ROOT / "main.py"), str(req_dir),
+                 "--output-dir", str(out), "--generator", "stub",
+                 "--test-dialect", "node", "--install-deps", "never"],
+                cwd=str(ROOT), env=e, capture_output=True, text=True, timeout=300)
+            return proc.returncode
+
+        out_fail = ws / "out-fail"
+        check("T33a 跑完但失败 -> 默认退出码 0（平台契约：完成即 0）",
+              run(reqs, out_fail) == 0)
+        report = json.loads((out_fail / ".arc/factory-report.json").read_text(encoding="utf-8"))
+        check("T33b 退出码 0 不能掩盖失败：报告里 ok=False 且节点为 FAILED",
+              report.get("ok") is False
+              and {r["req_id"]: r["state"] for r in report["results"]} == {"REQ-1": "FAILED"},
+              str(report.get("ok")))
+        check("T33c FACTORY_STRICT_EXIT=1 时恢复「通过与否」语义（本地/CI 用）",
+              run(reqs, ws / "out-fail-strict", {"FACTORY_STRICT_EXIT": "1"}) == 2)
+
+        check("T33d 全部通过 -> 0（两种模式）",
+              run(ROOT / "requirements_sample", ws / "out-ok") == 0
+              and run(ROOT / "requirements_sample", ws / "out-ok2",
+                      {"FACTORY_STRICT_EXIT": "1"}) == 0)
+
+        # 真崩溃：需求文件本身无法解析 -> pipeline 抛异常 -> 必须非 0
+        # （注意「没有 fixture」并不算崩溃：那会走到「计划门禁未通过」并正常结束，
+        #   退出码应为 0。T33e 初版就错在这里，被断言当场抓住。）
+        crash = ws / "crash"
+        crash.mkdir()
+        (crash / "requirements.yaml").write_text(
+            'schema_version: "1.0"\nrequirements: [this is: not valid yaml\n',
+            encoding="utf-8")
+        out_crash = ws / "out-crash"
+        check("T33e 真崩溃仍非 0（1），不能被伪装成完成",
+              run(crash, out_crash) == 1
+              and run(crash, ws / "out-crash2", {"FACTORY_STRICT_EXIT": "1"}) == 1)
+        events = [json.loads(ln) for ln in
+                  (out_crash / ".arc/runner-events.jsonl").read_text(encoding="utf-8").splitlines()
+                  if ln.strip()]
+        check("T33f 崩溃仍上报 mark_run_failed（后端不会看到静默退出）",
+              "failed" in [e.get("state") for e in events if e.get("type") == "runner_state"],
+              str([e.get("state") for e in events if e.get("type") == "runner_state"]))
+    finally:
+        shutil.rmtree(ws, ignore_errors=True)
+
+
 def t23_uncollectable_test_rolls_back_to_test_stage() -> None:
     """测试文件跑不起来（0 个测试被收集）-> 判 TEST_BROKEN 并回退到写测试阶段，
     而不是把 4 轮实现预算浪费在一个坏掉的测试文件上。
@@ -1342,6 +1432,7 @@ def main() -> int:
         t30_esm_contract_and_static_syntax_check,
         t31_code_version_anchor,
         t32_missing_implementation_is_valid_red,
+        t33_exit_code_contract,
     ):
         try:
             fn()

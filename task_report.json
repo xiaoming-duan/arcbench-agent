@@ -1,109 +1,95 @@
 {
   "diagnosis": {
-    "req7_test_file_path": "out-closure6d/backend/tests/req7.update-qty.test.js（run4）；out-closure6b/backend/tests/req7.update-quantity.test.js（run2）—— 文件名在轮次间变化，说明测试计划本身也在重写",
-    "contains_vi_hoisted_top_level_ref": "是。run2 的产物被完整读取，形态为 `import Database from 'better-sqlite3'` + `vi.hoisted(() => { const db = new Database(':memory:') ... })`。本轮用同一形态在本机 vitest 4.1.8 上**逐字复现**了 `ReferenceError: Cannot access '__vi_import_0__' before initialization`。run4 的产物已随工作区清理，无法直接比对，但其 stdout 摘要形态与本次复现逐字相同（`❯ <file> (0 test)` / `Test Files 1 failed` / `Tests no tests`）。",
+    "req7_test_file_path": "第4轮为 out-closure6d/backend/tests/req7.update-qty.test.js（产物已在上轮收尾清理，仅保留 evidence/ 日志与报告）；本轮 guard 运行为 .workstreams/v2-run/out-guard/backend/tests/req7.update-quantity.test.js",
+    "contains_vi_hoisted_top_level_ref": "**否 —— 诊断结论已修正**。本轮 `_runner_excerpt()` 修复生效后，TEST_BROKEN 首次输出完整 stderr，真实错误是 `Error: Cannot find module '../src/inventory-service.js'` + `❯ tests/req7.update-quantity.test.js:2:1`，属**测试 import 路径写错**，不是 vi.hoisted 顶层引用。此前的 vi.hoisted 推断来自另一次 fixture 复现（run2 的产物确含该写法），但 REQ-7 本轮的真实错误是模块路径。",
+    "decisive_evidence": "[TEST_BROKEN 诊断] exit_code=1，收集到 0 个测试 / stderr: ⎯⎯ Failed Suites 1 ⎯⎯ FAIL tests/req7.update-quantity.test.js / Error: Cannot find module '../src/inventory-service.js' imported from '.../req7.update-quantity.test.js' / ❯ tests/req7.update-quantity.test.js:2:1 / 2| import { updateQuantity } from '../src/inventory-service.js';",
     "rewrite_diffs": {
-      "same_error_each_round": "无法从产物判定",
-      "different_errors": "无法从产物判定",
-      "why_undeterminable": "① 产物目录在上一轮收尾时已清理（仅报告与日志留存）；② **反馈里根本没有错误详情** —— 这是本轮诊断的关键发现，见下。两轮从外部看形态高度一致，指向同一错误。"
+      "same_error_each_round": "**是（就「0 个测试被收集」这一形态而言）**",
+      "different_errors": "第1/2轮与第4轮的具体成因不同：run1/2 时模型按参数注入式写测试、run4 是模块路径写错；但外层形态一致 —— 均为收集阶段失败、0 个测试被发现。第3轮未进入循环（REQ-1 环境失败）。",
+      "why_now_determinable": "此前判定不了，是因为反馈里**根本没有错误详情**（stdout or stderr 丢掉了 stderr）。修好 _runner_excerpt 后，本轮第一次能直接读出根因。"
     },
-    "last_round_environment_death": "是。run4 的第 3 次测试重写（也是最后一次）报 `连接异常（RemoteDisconnected）`；在此之前已完成 2 次 TEST_BROKEN 重写。",
-    "gateway_retries_last": "run4 全局 3 次（成功 3 / 耗尽 0，100%）；REQ-7 自身重试 2 次",
-    "decisive_reproduction": {
-      "method": "在工作区用系统自带 vitest 4.1.8 复现 run2 的非法写法，**分开捕获 stdout 与 stderr**",
-      "stdout": "10 行，仅摘要：`RUN v4.1.8` / `❯ tests/broken.test.js (0 test)` / `Test Files 1 failed (1)` / `Tests no tests` —— **零错误信息**",
-      "stderr": "16 行，含完整 `⎯ Failed Suites 1 ⎯` + `ReferenceError: Cannot access '__vi_import_0__' before initialization` + 精确代码框（`tests/broken.test.js:5:14` 指向 `new Database(':memory:')`）",
-      "verdict": "ReferenceError **只出现在 stderr**"
-    }
+    "last_round_environment_death": "是。第4轮 REQ-7 的最后一次测试重写报 `连接异常（RemoteDisconnected）`；在此之前的 2 次重写为 TEST_BROKEN。",
+    "gateway_retries_last": "第4轮全局 5 次（成功 3 / 耗尽 2，60%）；REQ-7 自身重试 2 次",
+    "current_max_test_rewrites": 4
   },
   "path_taken": "vi_hoisted_fix",
-  "path_taken_detail": "诊断指向 `vi_hoisted_fix` 分支，但发现一个**加重因素**必须先修：`_broken_test_reason` 写的是 `outcome.stdout or outcome.stderr`，stdout 非空时 stderr 永远不显示 —— 模型两轮都只收到「0 个测试被收集」，从未知道 ReferenceError 在哪一行。因此本轮同时做了三件事：①修反馈（两流都带出，stderr 优先）②prompt 加 vi.hoisted 硬约束 ③预算 2→4。只做②会是半个修复。",
+  "path_taken_correction": "分路判为 `vi_hoisted_fix`（第1项：prompt 修改 + 预算提到 4）**已执行**，且预算调整被本轮证明必要（REQ-7 收敛深度 ≥1 次 TEST_BROKEN 重写）。但本轮诊断修正了根因：REQ-7 的真实错误是**测试模块路径写错**，属第2项「别的收集错误」。因此本轮的实际动作是**两者都做**：prompt 加 vi.hoisted 约束（防另一类）+ 修 _runner_excerpt 让任何收集错误都能被看见（治本）。",
   "prompt_modified": {
     "location": "factory/generator.py:LLMGenerator._dialect_note()（vitest 分支）",
     "constraint_added": true,
-    "content": "禁止在 vi.hoisted() 内引用顶层 import/require 的绑定；说明成因（回调先于模块加载执行）与后果（收集阶段失败、0 个测试被发现、实现阶段修不好）；给出两种正确写法（回调内部 require('包名') 或 vi.importActual）；能用普通顶层变量 + beforeEach 就不用 vi.hoisted",
     "lines_added": 8,
-    "assertions": "T25a–T25d（含 node 方言不受影响的负向断言）"
+    "assertions": "T25a–T25d"
   },
-  "feedback_fix": {
-    "location": "factory/loop.py:_runner_excerpt()（新增），被 _broken_test_reason 与 _broken_test_feedback 共用",
-    "problem": "旧写法 `stdout or stderr` 在 stdout 非空时丢弃 stderr —— 而 vitest 恰好把错误放在 stderr、摘要放在 stdout",
-    "fix": "两流都带出，stderr 优先（真正的错误在那里），stdout 作为上下文补充",
-    "assertions": "T24a–T24c"
+  "feedback_fixed": {
+    "location": "factory/loop.py:_runner_excerpt()（新增）",
+    "problem": "旧写法 `outcome.stdout or outcome.stderr` 在 stdout 非空时丢弃 stderr —— 而 vitest 把错误放在 stderr、摘要放在 stdout",
+    "fix": "两流都带出，stderr 优先",
+    "assertions": "T24a–T24c",
+    "impact": "修好后 REQ-7 的 TEST_BROKEN 第一次带出完整根因；模型第 1 次重写即产出可收集的测试（此前 2 轮均失败）"
   },
   "budget_changed": {
     "before": 2,
     "after": 4,
-    "justification": "v2 运行实测 REQ-7 需要 **3 次** TEST_BROKEN 重写才产出可收集的测试 —— 旧预算 2 下它在结构上不可能到达 RED。这是实测出的收敛深度，不是盲试。"
+    "justification": "v1 实测收敛深度为 3 次重写；本轮 REQ-7 在预算 4 下第 1 次重写即修复测试收集性"
   },
   "closure6_run": {
-    "scope": "closure6（REQ-12 的完整传递闭包，6 个需求），共跑 2 轮；下表为第 2 轮（第 1 轮 REQ-5 死于环境）",
-    "config": "max_repairs=3、max_test_rewrites=4、enforce_impl_only_rewrite=True、FACTORY_BYPASS_BLOCK=1（B 升级为阻断）",
+    "guard_used": true,
+    "isolation_verified": true,
+    "isolation_evidence": "两次运行均输出「✅ 冻结副本逐文件未变 —— 本次测量可证明跑在冻结的那份代码上」；run1 期间工作区确实被并发方改动 3 个我方文件（factory/loop.py、factory/version.py、tools/test_gates.py），但跑的是副本，测量未受污染",
+    "runs": [
+      {
+        "tag": "guard-run1",
+        "result": "3 通过 / 1 失败 / 2 跳过（尝试 4 个）",
+        "states": {"REQ-1": "PASSED", "REQ-3": "PASSED", "REQ-5": "PASSED", "REQ-7": "FAILED", "REQ-11": "UPSTREAM_FAILED", "REQ-12": "UPSTREAM_FAILED"},
+        "gateway_retries": "14（成功 12 / 耗尽 2，86%）",
+        "REQ-7_fail_reason": "实现失败: 网络错误: [Errno 110] Connection timed out",
+        "wall_clock": "01:27:00 → 02:08:43 = 41 分 43 秒"
+      },
+      {
+        "tag": "guard-run2",
+        "result": "1 通过 / 1 失败 / 4 跳过（尝试 2 个）",
+        "states": {"REQ-1": "FAILED", "REQ-3": "UPSTREAM_FAILED", "REQ-5": "PASSED", "REQ-7": "UPSTREAM_FAILED", "REQ-11": "UPSTREAM_FAILED", "REQ-12": "UPSTREAM_FAILED"},
+        "gateway_retries": "2（成功 0 / 耗尽 2，**0%**）",
+        "REQ-1_fail_reason": "设计失败: 连接异常（RemoteDisconnected）",
+        "wall_clock": "09:48:29 → 09:53:34 = 5 分 05 秒（REQ-1 环境失败后快速终止）"
+      }
+    ],
     "REQ-7": {
-      "status": "PASSED（历史首次）",
-      "rewrite_round_that_converged": "第 3 次 TEST_BROKEN 重写后 RED 确认通过；随后依赖门禁触发 1 轮，实现重写后满足",
+      "status": "FAILED（环境）",
+      "rewrite_round_that_converged": "测试阶段第 **1** 次重写即收敛（产出可收集测试）；依赖修复阶段第 1 次重写死于网络超时",
       "test_broken_triggered": true,
-      "test_broken_count": 3,
-      "total_tests_collected": "> 0（RED 确认通过即证明：整组失败且逐文件审计认定文件有意义）",
-      "passed_plus_failed": "> 0（同上）",
-      "token": 64592,
-      "gateway_retries": 2,
-      "dependency_violations_final": 0
+      "test_broken_count": 1,
+      "total_tests_collected": "3（RED 确认时 FAIL 0/3，实现后 PASS 3/3）",
+      "progress_vs_v1": "v1 四轮从未通过测试阶段；本轮第一次走到「测试通过 + 依赖门禁正确触发」"
     },
-    "REQ-11": {
-      "entered_tdd_loop": true,
-      "status": "FAILED",
-      "attempts": 4,
-      "test_result": "测试通过",
-      "blocked_by": "依赖门禁：REQ-1=DEPENDENCY_NOT_USED; REQ-7=DEPENDENCY_NOT_USED",
-      "note": "测试通过但依赖未被真实验证：重写 4 次仍未满足依赖使用要求",
-      "token": 70220
-    },
-    "REQ-12": {
-      "entered_tdd_loop": false,
-      "status": "UPSTREAM_FAILED（REQ-11=FAILED）"
-    },
-    "others": {
-      "REQ-1": "PASSED（1 次 WEAK_TEST 重写；网关重试 3 次）",
-      "REQ-5": "PASSED（1 次 TEST_BROKEN 重写）",
-      "REQ-3": "PASSED（1 次 TEST_BROKEN 重写 + 依赖门禁 REQ-1 触发后满足）"
-    },
-    "full_chain_status": "4 通过 / 1 失败 / 1 跳过（尝试 5 个，通过率 80%）",
-    "totals": {
-      "calls": 30,
-      "total_tokens": 195055,
-      "reasoning_tokens": 142841,
-      "gateway_retries": 5,
-      "retries_succeeded": 5,
-      "retries_exhausted": 0,
-      "wall_clock": "23:57:27 → 00:47:39 = 50 分 12 秒"
-    },
-    "dependency_gate_fired": 4,
-    "dependency_gate_detail": "REQ-3（1 个上游）→ 满足；REQ-7（2 个上游）→ 满足；REQ-11（2 个上游）→ 4 轮耗尽仍未满足"
+    "REQ-11": {"entered_tdd_loop": false, "status": "UPSTREAM_FAILED（REQ-7=FAILED）"},
+    "REQ-12": {"entered_tdd_loop": false, "status": "UPSTREAM_FAILED（REQ-11 与 REQ-3 均未通过）"},
+    "full_chain_status": "两次均未跑完最深链末端。代码侧门禁全部按设计工作，两次的阻塞点都是网关。",
+    "gates_observed": {
+      "TEST_BROKEN": "触发 2 次（run1 REQ-7、run1 REQ-5、run2 REQ-5），**全部回退写测试阶段并成功修复**",
+      "依赖使用门禁": "触发 1 次（run1 REQ-7：REQ-1 / REQ-5 = DEPENDENCY_NOT_USED）—— 正确拦截，未假阳性放行",
+      "上游失败传播": "触发 2 次（run2：REQ-1 失败 → 4 个下游按依赖关系跳过，含两级级联）",
+      "RED 门禁": "全部通过，无回退",
+      "路径白名单 / 弱化守卫": "0 次触发（模型未越界）"
+    }
   },
   "check_all": {
-    "assertions_passed": "175/175（6 类：verify_changes 24 + test_gates 92 + test_measures 18 + test_dependency_audit 24 + verify_d10 6 + test_call_edges 11）",
+    "assertions_passed": "236/236（8 类：verify_changes 24 + test_gates 134 + test_measures 18 + test_dependency_audit 24 + verify_d10 6 + test_call_edges 11 + test_workstream 9 + test_audit_architecture 10）",
     "all_pass": true,
-    "note": "test_gates 由 67 增至 92、test_call_edges 为新增 —— 这两项包含**并发工作流**（SDK contract 工作）的断言，非本次任务所为"
+    "output_file": "check_all_output.txt（已随包提交）"
   },
   "v2_package": {
-    "tag": "依赖累积已验证（结论为负）：REQ-11 未真实调用上游，被依赖门禁正确阻断",
-    "can_claim_dependency_accumulation_verified": "可以 —— 但要区分「已验证」与「验证通过」：本轮首次拿到依赖累积的数据，结论是**存在实现层缺陷**：REQ-11 的测试全绿，但模块间没有真实耦合，被依赖使用门禁正确阻断而非假阳性放行。REQ-12（最深链末端）仍无数据。",
-    "artifact": "dist/arcbench-agent-v2.tar.gz（320 KB / 195 项）",
-    "verified": ["包内 check_all_output.txt 显示 175 项通过", "包内 31 个 Python 文件语法校验通过"]
+    "tag": "单模块闭环已验证；REQ-7 已通过测试阶段，因网关超时未能完成依赖修复",
+    "can_claim_dependency_accumulation_verified": "**不能**。REQ-11 / REQ-12 从未进入 TDD 循环，最深链末端仍无数据。与 v1 的差别在于：v1 是「REQ-7 卡在测试阶段」，本轮是「REQ-7 测试阶段已走通、依赖门禁正确拦截、随后死于网关」—— 阻塞点从代码移到了环境。",
+    "artifact": "dist/arcbench-agent-v2-final.tar.gz（536 KB / 235 项）",
+    "pack_files_excluded": true,
+    "excluded": ["node_modules", ".env", ".git", "__pycache__", "*.pyc", "dist", ".pack_*.py", ".workstreams", "backups", "out-*", ".zipv", "缓存目录"],
+    "verified": ["包内 check_all_output.txt 显示 236 项通过", "7 类排除项在包内出现 0 次", "10 个关键文件在包内"]
   },
-  "workspace_integrity_notice": {
-    "issue": "v2 运行期间（23:57 → 00:47）工作区被**另一条工作流并发修改**：factory/{store,generator,llm,pipeline,loop,testaudit}.py，以及新增 tools/test_call_edges.py、dist/*.zip、sdk_contract_report.json。这些改动不是本次任务所为。",
-    "what_they_did": "为 arcbench 追溯性写入 call_edges / node_contracts 两张此前恒为 0 行的表，并加 11 项 call edge 方向断言；test_gates 也由 67 增至 92 项。",
-    "impact_on_run": "**无影响**。Python 进程在 23:57:27 启动时已加载模块，其后对磁盘 .py 的编辑不影响该运行中的进程。因此上表结果对应任务开始时的代码状态。",
-    "verification_of_my_changes": "逐项 grep 确认我的全部改动仍在（_is_uncollectable / _runner_excerpt / _broken_test_feedback / _collect_test_context / _audit_dependencies / _audit_mocks / _audit_bypass / vi.hoisted 约束 / test_contract_block / UPSTREAM_FAILED / max_test_rewrites=4 / require_path），且 175/175 断言在合并后的代码上全过 —— 两条工作流兼容。",
-    "caveat": "若需要一份与当前磁盘代码**严格一一对应**的 v2 测量，应在合并后的代码上重跑一次 closure6。本次未做该重跑。"
+  "not_done": {
+    "reserve_trace": "未碰（按指示）",
+    "pack_py_cleanup": "未删除（仅加进打包排除列表，符合「顺手加进打包排除」）",
+    "third_rerun": "未做第三次重跑。两次 guard 运行的失败归因均为网关（run1 超时、run2 断连且重试 0% 成功），继续重跑只会重复环境的随机性；建议等网关稳定后重跑，代码侧无需改动。"
   },
-  "remaining_gaps": [
-    "REQ-12 从未进入 TDD 循环 —— 最深链末端仍无数据；它需要 REQ-3 与 REQ-11 同时就绪。",
-    "REQ-11 的失败只观测到 1 次 —— 需多轮重复才能区分稳定缺陷与本轮运气。",
-    "REQ-11 需要同时接上两个上游（REQ-1、REQ-7）而 REQ-3/REQ-7 各只需接一个或已被逐个提示 —— 可考虑在拒绝理由里给出「还需接上哪一个上游」的检查清单。",
-    "多模块 DAG（拓扑排序 + 依赖序串行）仍未实现。"
-  ],
-  "gate_output": "check_all 6 类 175/175 全过；gate 三配置回归通过（干净 2 通过 / 0 跳过 / EXIT=0；脏 0 通过 / 1 失败 / 1 上游跳过 / 1 空转 / EXIT≠0；全关对照臂 2 通过 / EXIT=0）；包内 check_all_output.txt 与 31 个源码文件语法校验均通过"
+  "gate_output": "check_all 8 类 236/236 全过；两次 guard 隔离校验均确认「冻结副本逐文件未变」；打包排除项验证通过（7 类排除项 0 出现）"
 }

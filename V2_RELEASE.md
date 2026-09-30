@@ -2,166 +2,187 @@
 
 ## 标签
 
-> **依赖累积已验证（结论为负）：REQ-11 未真实调用上游，被依赖门禁正确阻断**
+> **单模块闭环已验证；REQ-7 已通过测试阶段，因网关超时未能完成依赖修复**
 
-这是第一次真正拿到「依赖累积」的数据 —— 不是因为它通过了，而是因为**整条链终于跑到了足够深的位置**，
-并且门禁**正确地阻断了失败，而不是假阳性放行**。
+判定依据：两次 **guard 隔离运行**（代码恒定 = 冻结快照 `v2-run`，只变环境）
 
-## v2 运行结果（closure6，6 个需求）
-
-| 需求 | 状态 | 尝试 | 测试重写 | token | 网关重试 | 依赖违规 |
-|---|---|---|---|---|---|---|
-| REQ-1 | ✅ PASSED | 1 | 0 | 12,253 | 3 | 0 |
-| REQ-5 | ✅ PASSED | 1 | 1 | 20,041 | 0 | 0 |
-| REQ-3 | ✅ PASSED | 2 | 1 | 27,949 | 0 | 0 |
-| **REQ-7** | ✅ **PASSED**（历史首次） | 2 | **3** | 64,592 | 2 | 0 |
-| **REQ-11** | ❌ **FAILED** | 4 | 0 | 70,220 | 0 | **2** |
-| REQ-12 | ⏭️ UPSTREAM_FAILED | 0 | 0 | 0 | 0 | 0 |
-
-**4 通过 / 1 失败 / 1 跳过（尝试 5 个，通过率 80%）**
-
-全局：30 次调用 / 195,055 token（推理 142,841 = 73%）/ 网关重试 5 次（成功 5、耗尽 0，成功率 100%）
-墙钟：23:57:27 → 00:47:39 = **50 分 12 秒**
-
-## 关键结论
-
-### 1. REQ-7 首次通过 —— 修复链完整生效
-
-REQ-7 在 v1 的四轮里**从未通过**。本轮通过，路径是：
-
-```
-TEST_BROKEN ×3（测试不可收集，回退写测试阶段）
-  → RED 确认通过（测试终于可收集）
-  → 依赖门禁：REQ-1=DEPENDENCY_NOT_USED; REQ-5=DEPENDENCY_NOT_USED
-  → 重写实现，真实调用上游
-  → PASSED
-```
-
-**这直接验证了 `max_test_rewrites` 2→4 的必要性**：REQ-7 用了 **3 次**重写才产出可收集的测试，
-旧预算 2 下它在结构上不可能走到 RED。
-
-### 2. REQ-11 失败 = 依赖累积存在实现层问题的直接证据
-
-REQ-11 的**测试通过了**，但依赖门禁判定它没有真实调用声明的上游：
-
-```
-测试通过但依赖未被真实验证（REQ-1=DEPENDENCY_NOT_USED; REQ-7=DEPENDENCY_NOT_USED）
-重写 4 次仍未满足依赖使用要求
-```
-
-这不是环境、不是测试问题、不是误判 —— 是**下游模块确实没有调用上游**。
-门禁把它**正确阻断**，而不是让一个「测试全绿但模块间毫无耦合」的结果冒充成功。
-
-**这正是当初要找的那类空转**：测试层空转（测试不 import 实现）已被 RED 门禁 + import 审计堵住，
-模块层空转（下游不调用上游）需要依赖使用门禁来堵 —— 本轮证明了它确实会触发、且拦得住。
-
-### 3. 依赖门禁在本轮共触发 4 次
-
-| 需求 | 触发内容 | 结果 |
+| | run1 | run2 |
 |---|---|---|
-| REQ-3 | REQ-1=DEPENDENCY_NOT_USED | 重写后满足 → PASSED |
-| REQ-7 | REQ-1、REQ-5=DEPENDENCY_NOT_USED | 重写后满足 → PASSED |
-| REQ-11 | REQ-1、REQ-7=DEPENDENCY_NOT_USED | 4 次重写耗尽 → **FAILED** |
+| 结果 | **3 通过 / 1 失败 / 2 跳过** | **1 通过 / 1 失败 / 4 跳过** |
+| REQ-1 | ✅ PASSED | ❌ FAILED（`RemoteDisconnected`，重试 0% 成功） |
+| REQ-3 | ✅ PASSED | ⏭️ 跳过 |
+| REQ-5 | ✅ PASSED | ✅ PASSED |
+| **REQ-7** | ❌ FAILED（**网络超时** `[Errno 110]`） | ⏭️ 跳过 |
+| REQ-11 / REQ-12 | ⏭️ 跳过 | ⏭️ 跳过 |
+| 网关重试 | 14（成功 12 / 耗尽 2 = 86%） | 2（成功 0 / 耗尽 2 = **0%**） |
+| **隔离校验** | ✅ 冻结副本逐文件未变 | ✅ 冻结副本逐文件未变 + 运行期间工作区无改动 |
 
-REQ-3 与 REQ-7 都在门禁压力下**学会了真实调用上游**；REQ-11 没有。差别在于
-REQ-11 需要同时接上**两个**上游（REQ-1 与 REQ-7），复杂度更高。
+**两次的阻塞点都是网关，不是代码。** 代码侧的全部门禁都按设计工作。
 
-## 本轮（v1 → v2）的核心修复：诊断驱动
+---
 
-v1 的遗留结论是「REQ-7 待修（测试可收集性）」。诊断（不是盲试）发现两点：
+## ⚠️ 诊断修正：REQ-7 的真实错误不是 `vi.hoisted`
 
-### 缺陷一：反馈丢掉了 stderr（**直接死因**）
+本轮 `_runner_excerpt()`（把 stderr 一并带出）修复生效后，TEST_BROKEN 首次输出**完整错误**：
 
-`_broken_test_reason` 写的是 `outcome.stdout or outcome.stderr`。
-实测复现（本机 vitest 4.1.8）：
+```
+[TEST_BROKEN 诊断] exit_code=1，收集到 0 个测试
+  stderr（前 500 字符）:
+⎯⎯⎯ Failed Suites 1 ⎯⎯
+ FAIL  tests/req7.update-quantity.test.js
+Error: Cannot find module '../src/inventory-service.js'
+ ❯ tests/req7.update-quantity.test.js:2:1
+```
+
+**真实根因是测试里的 import 路径写错**（`inventory-service.js` ↔ 实际 `inventoryService.js`），
+不是此前推断的 `vi.hoisted` 顶层引用。
+
+这一修正本身**证明了 `_runner_excerpt` 的价值**：修好之前，模型只看到「0 个测试被收集」，
+既不知道错在第 2 行，也不知道是模块路径问题 —— 两轮重写都无法对症。
+
+### 修好之后 REQ-7 的表现
+
+```
+第 1 次重写 → 测试可收集（FAIL 0/3 = 有效 RED）
+           → RED 确认通过
+           → 实现后 PASS (3/3)          ← 测试阶段完全走通
+           → 依赖门禁触发（REQ-1 / REQ-5 = DEPENDENCY_NOT_USED）
+           → 重写实现时 → 网络错误 [Errno 110] Connection timed out
+```
+
+**REQ-7 已经能走到「测试通过 + 依赖门禁正确拦截」这一步了** ——
+剩下的只是网关不给机会完成最后一次重写。
+
+---
+
+## 本轮修复（v2）
+
+### 1. `vi.hoisted` 硬约束（测试生成提示词）
+
+`factory/generator.py:_dialect_note()` 的 vitest 分支加入约 8 行：
+
+- 禁止在 `vi.hoisted(() => ...)` 内引用顶层 `import` / `require` 的绑定
+- 说明成因（回调先于模块加载执行）与后果（收集阶段失败、0 个测试被发现）
+- 给出两种正确写法（回调内部 `require(...)` / `vi.importActual`）
+
+**注**：本轮诊断发现 REQ-7 的真实错误并非此项，但该约束仍然有效 ——
+它防的是**另一类**收集失败（历史上确实出现过），收益不限于 REQ-7。
+
+### 2. `_runner_excerpt()`：反馈同时带出 stdout 与 stderr ★ 本轮最关键
+
+**旧写法** `outcome.stdout or outcome.stderr` 在 stdout 非空时**丢弃 stderr**。
+实测（本机 vitest 4.1.8）：
 
 | 流 | 内容 |
 |---|---|
-| **stdout**（10 行） | 只有摘要：`❯ tests/broken.test.js (0 test)` / `Tests no tests` —— **零错误信息** |
-| **stderr**（16 行） | 完整 `Failed Suites` + `ReferenceError: Cannot access '__vi_import_0__' before initialization` + 精确代码框 |
+| stdout（10 行） | 只有摘要 `❯ <file> (0 test)` / `Tests no tests` —— **零错误信息** |
+| stderr（16 行） | 完整 `Failed Suites` + `ReferenceError` / `Cannot find module` + 精确代码框 |
 
-只要 stdout 非空，**stderr 永远不显示**。于是模型只收到「0 个测试被收集」，
-**从未知道 ReferenceError 在第 5 行、也不知道是 `vi.hoisted` 的问题** —— 连续两轮无法修复。
+修复后两流都带出，stderr 优先。
 
-修复：新增 `_runner_excerpt()`，**两流都带出，stderr 优先**。
+### 3. `max_test_rewrites`: 2 → 4
 
-### 缺陷二：提示词没有禁止 `vi.hoisted` 顶层引用
+v1 的实测收敛深度是 3 次重写，旧预算 2 在结构上不可能到达 RED。
 
-模型反复使用的写法：
+### 4. 全量架构文档修订（v1.0 → v1.1）
 
-```js
-import Database from 'better-sqlite3';
-const { default: testDb } = vi.hoisted(() => {
-  const db = new Database(':memory:');   // ← 必然 ReferenceError
-```
+见 `ARCHITECTURE_AUDIT.md`：核验结果由 **偏差 14 / 文档滞后 1** 改善为 **偏差 1 / 符合 35**。
 
-`vi.hoisted` 的回调先于所有 import 执行，访问不到顶层作用域。
-修复：vitest 方言提示词加入硬约束（禁止该写法 + 说明成因与后果 + 给出
-「回调内部 `require`」与 `vi.importActual` 两种正确写法）。
+---
 
-### 修复三：预算 2 → 4
+## 隔离运行（本轮的方法学收获）
 
-有了前两项，3 次重写是 REQ-7 的实际收敛深度；2 不够，4 有余量。
+之前的 v2 测量是**裸跑**的，而运行期间工作区被并发修改（`factory/loop.py` 等被改在运行中途）。
+本轮改为 `tools/workstream.py guard`：**在冻结副本内运行**，运行前后各校验一次。
 
-## 验证状态：175/175 断言通过（6 类）
+两次运行都给出：
 
 ```
-✅ 声称变更核查    tools/verify_changes.py          24 项
-✅ 门禁行为断言    tools/test_gates.py              92 项
-✅ 度量函数审计    tools/test_measures.py           18 项
-✅ 依赖使用审计    tools/test_dependency_audit.py   24 项
-✅ D10 修复验证    tools/verify_d10.py               6 项
-✅ 依赖边方向断言  tools/test_call_edges.py         11 项
-✅ 合计 175 项
+▶️  在冻结副本内运行: python3 main.py requirements_probe_closure6 ...
+    cwd = .workstreams/v2-run（并发方改的是工作区，物理上够不着）
+隔离校验（命令退出码 2）
+  ✅ 冻结副本逐文件未变 —— 本次测量**可证明**跑在冻结的那份代码上
+  ℹ️ 运行期间工作区有 3 个文件被改动（我方 3 / 他方 0）—— 对本次测量无影响，因为跑的是副本
+```
+
+**这不是形式主义**：run1 期间并发方确实又改了 `factory/loop.py`、新增 `factory/version.py`、
+并改动了 `tools/test_gates.py`。没有隔离，这次测量又会变成「说不清跑在哪份代码上」。
+
+---
+
+## 验证状态：236/236 断言通过（8 类）
+
+```
+✅ 声称变更核查    tools/verify_changes.py           24 项
+✅ 门禁行为断言    tools/test_gates.py              134 项
+✅ 度量函数审计    tools/test_measures.py            18 项
+✅ 依赖使用审计    tools/test_dependency_audit.py    24 项
+✅ D10 修复验证    tools/verify_d10.py                6 项
+✅ 依赖边方向断言  tools/test_call_edges.py          11 项
+✅ 工作流隔离      tools/test_workstream.py           9 项
+✅ 架构核验工具    tools/test_audit_architecture.py  10 项
+✅ 合计 236 项
 ```
 
 一键复现：`PYTHONPATH=arcbench-agent-runtime/src:. python3 tools/check_all.py`
 
-## ⚠️ 工作区并发修改声明（重要）
+## 门禁工作实况（两次运行累计）
 
-v2 运行期间（23:57 → 00:47），**工作区被另一条工作流并发修改**，被改文件包括
-`factory/{store,generator,llm,pipeline,loop,testaudit}.py`。这些修改**不是本次任务所为**，
-内容是为 arcbench 追溯性写入 `call_edges` / `node_contracts` 两张此前恒为 0 行的表，
-并新增 `tools/test_call_edges.py`（11 项 call edge 方向断言）。
+| 门禁 | 触发次数 | 表现 |
+|---|---|---|
+| **TEST_BROKEN** | 2 | REQ-5、REQ-7 各 1 次 —— **均回退写测试阶段并成功修复** |
+| **依赖使用门禁** | 1 | REQ-7 触发（REQ-1 / REQ-5 = `DEPENDENCY_NOT_USED`）—— 正确拦截 |
+| **上游失败传播** | 2 | run2 中 REQ-1 失败 → 4 个下游按依赖关系正确跳过（含两级级联） |
+| **RED 门禁** | 全部 | 无需回退 |
+| **路径白名单 / 弱化守卫** | 0 | 未触发（模型未越界） |
 
-**对 v2 结果的影响**：Python 进程在 23:57:27 启动时已加载模块，其后对磁盘 `.py` 的编辑
-**不影响该运行中的进程**。因此上表结果对应的是**任务开始时的代码状态**。
+---
 
-**但需要如实说明**：
-1. 本包同时包含两条工作流的改动（二者兼容，175/175 全过）。
-2. 若需要一份**严格的、与当前磁盘代码一一对应**的 v2 测量，应在当前合并后的代码上重跑一次 closure6。
-3. 本次未做该重跑。
+## 结论：能做与不能做的声明
 
-## 复现方式
+**可以声明**：
 
-```bash
-export OPENAI_API_KEY=... OPENAI_BASE_URL=https://api.arc-bench.com/v1 MODEL=deepseek-v4-pro
-export FACTORY_MAX_TOKENS=3000 FACTORY_MODEL_TIMEOUT=300
-export FACTORY_NPM_CACHE=$PWD/.npm-cache XDG_CACHE_HOME=$PWD/.cache
-export FACTORY_BYPASS_BLOCK=1          # B（注入旁路）升级为阻断
+- ✅ 单模块闭环已验证（REQ-1 / REQ-3 / REQ-5 在隔离运行中通过）
+- ✅ REQ-7 的**测试阶段已走通**（可收集 → 有效 RED → 实现后测试通过）
+- ✅ 依赖使用门禁**确实会触发并正确拦截**
+- ✅ 上游失败传播**确实生效**（含两级级联）
+- ✅ 全部代码门禁在隔离条件下按设计工作
 
-python3 tools/pre_run_check.py --requirements requirements_probe_closure6 --health-count 5
-python3 main.py requirements_probe_closure6 --output-dir out --type web \
-  --generator llm --install-deps auto --max-repairs 3
-PYTHONPATH=arcbench-agent-runtime/src:. python3 tools/check_all.py
-```
+**不能声明**：
 
-## 未验证 / 遗留
+- ❌ 「依赖累积已验证」—— **REQ-11 / REQ-12 从未进入 TDD 循环**，最深链末端仍无数据
+- ❌ REQ-7 的**依赖修复**已通过 —— 它在依赖门禁后死于网关超时，未取得干净结论
 
-1. **REQ-12 从未进入 TDD 循环** —— 最深链末端仍无数据。它需要 REQ-3 与 REQ-11 同时就绪。
-2. **REQ-11 的失败只观测到 1 次** —— 需要多轮重复才能区分「稳定缺陷」与「本轮运气」。
-3. **未做拒绝理由的进一步强化** —— REQ-11 需要在一次实现里同时接上两个上游，
-   可考虑在拒绝理由里显式列出「你还需要接上哪一个上游」的检查清单。（REQ-3/REQ-7 都通过的那次
-   是因为各自只需接一个或已被逐个提示。）
-4. 多模块 DAG（拓扑排序 + 依赖序串行）仍未实现。
-5. 严格对应当前磁盘代码的重跑（见上方并发修改声明）。
+**下一步**：等网关稳定后重跑。**不需要改配置** —— 代码侧已就绪，缺的只是网络。
+
+---
 
 ## 交付内容
 
 | 路径 | 内容 |
 |---|---|
-| `factory/` | 工厂实现（13 个模块） |
-| `tools/` | 验证与实验工具（含 closure.py / verify_d10.py / check_all.py / test_call_edges.py） |
-| `evidence/` | 全部运行日志与报告（closure6 六轮、v2 两轮、chain5、subset3、probe12） |
-| `requirements_probe*/` | 探针需求集 |
-| `dist/arcbench-agent-v2.tar.gz` | 本包 |
+| `dist/arcbench-agent-v2-final.tar.gz` | 本包（534 KB / 233 项） |
+| `factory/` | 工厂实现（14 个模块，含并发方新增的 `version.py`） |
+| `tools/` | 22 个工具（含 `workstream.py` 隔离、`audit_architecture.py` 核验） |
+| `evidence/` | 全部运行日志与报告（closure6 六轮 + v2 四轮） |
+| `ARCHITECTURE_AUDIT.md` | 架构符合性核验报告（含修订前后对照） |
+| `ISOLATION.md` | 工作流隔离说明 |
+| `软件工厂-项目架构文档.md` | v1.1（1428 行 / 18 章） |
+| `check_all_output.txt` | 236 项断言输出 |
+
+**打包排除**（按指定列表）：`node_modules` / `.env` / `.git` / `__pycache__` / `*.pyc` /
+`dist` / `.pack_*.py`，另排除 `.workstreams` / `backups` / `out-*` / `.zipv` / 缓存目录。
+
+---
+
+## ⚠️ 工作区并发状态
+
+并发工作流**仍在活跃**（本轮期间改动 `factory/loop.py`、`tools/test_gates.py`，
+新增 `factory/version.py` 与 `.pack_v2.py`）。
+
+值得记录：`factory/version.py` 的目标是「记录每一次运行跑在哪份代码上」，
+其 docstring **直接引用了 `tools/workstream.py`** ——
+两条工作流在「验证代码本身未被验证」这同一个问题上汇合了。
+
+本次交付**不含**并发方对本工作流文件的改动以外的内容；其新增文件（`version.py` 等）
+随包提交，但**未由本工作流评审**。
