@@ -1,114 +1,99 @@
 {
-  "task": "跟上一个工作流分离一个分支版本，隔离双方的代码",
-  "outcome": "已完成：三分支 + git worktree 物理隔离，且隔离经实证。**过程中发现并修掉一个假突破**（见 §1）",
-
-  "critical_finding_first": {
-    "title": "「closure6 全链通过」是假阳性 —— 实际只有 2/6 个需求跑了",
-    "how_it_happened": [
-      "监控 23:08:30 探测 3/3 → 开跑 closure6（guard 隔离）",
-      "23:15:32 监控判定「🎉 closure6 全链通过 —— 依赖累积终于有干净数据」",
-      "实查报告：requirements_total=6 但 results 只有 2 个（REQ-1、REQ-5）",
-      "运行日志显示 REQ-3 于 23:14:37 启动后进程崩溃，异常处理器写出**部分报告**"
-    ],
-    "crash_root_cause": {
-      "error": "RuntimeError: The following paths are ignored by one of your .gitignore files: .workstreams",
-      "chain": "guard 把运行放在 .workstreams/v2-run/ 下 → 该路径被工作区 .gitignore 忽略 → 工厂 git 层执行 `git add .`（cwd=输出目录）→ git 向上解析到工作区仓库 /home/duanlinghui/dshwork/.git → 报错并抛 RuntimeError",
-      "where": "arcbench-agent-runtime/src/arcbench_agent_runtime/gitops.py:128 `self.run([\"add\", \".\"])`（ensure_repo）与 :154（add_all）"
-    },
-    "why_my_judgement_was_wrong": {
-      "old_rule": "record['all_passed'] = bool(states) and all(v == 'PASSED' for v in states.values())",
-      "flaw": "只检查「报告里出现的是否全通过」，**不检查报告是否完整** —— 2/6 的部分报告恰好是全 PASSED，于是被判为全链通过",
-      "severity": "高 —— 差一点产出「依赖累积已验证」的假结论"
-    },
-    "fixes_applied": [
-      {
-        "id": "G1",
-        "target": "tools/gateway_watch.py",
-        "fix": "all_passed 现在要求 reported == requirements_total，并记录 complete / incomplete_reason",
-        "verified": "用真实的部分报告复算：旧判据 True（假突破）→ 新判据 False（正确拒绝）"
-      },
-      {
-        "id": "G2",
-        "target": "tools/workstream.py",
-        "fix": "guard 为每个快照建立**独立 git 仓库**（git init + 初始提交），切断与工作区仓库的关系；git rev-parse --show-toplevel 停在快照，外层 .gitignore 不再适用",
-        "verified": "最小复现：修复前 `git add .` 报错、修复后无报错（仓库根由 /home/duanlinghui/dshwork 变为快照自身）"
-      }
-    ],
-    "correct_conclusion": "**closure6 至今仍无有效数据。** 唯一一次「全链通过」是假突破；其余轮次均被环境（网关）打断。REQ-11 / REQ-12 仍从未进入 TDD 循环。"
+  "run": {
+    "scope": "closure6（REQ-12 的完整传递闭包，6 个需求）",
+    "isolation": "guard 隔离，输出目录 out-valid1（唯一）",
+    "isolation_verified": "✅ 冻结副本逐文件未变 —— 本次测量可证明跑在冻结的那份代码上",
+    "gateway_health_before": "5/5 成功（18.1s / 9.3s / 14.2s / 11.8s / 18.8s）",
+    "exit_code": 0,
+    "wall_clock": "23:34:06 → 00:09:42 = 35 分 36 秒",
+    "report_completeness": "6/6 —— **第一份完整报告**（此前的崩溃/假阳性问题未再出现）",
+    "crash_free": "guard 的 git 缺陷修复生效：全程无 'The following paths are ignored' 报错"
   },
 
-  "branch_separation": {
-    "retroactive_split_impossible": {
-      "reason": "几乎每个核心文件都已被双方交替修改，且并发方此刻仍在写（23:05–23:14）。hunk 级归属无法在不猜测的前提下还原。",
-      "evidence_sample": {
-        "factory/loop.py": "09-30 23:12（我：TEST_BROKEN/依赖门禁/回归检查；对方：修正 TEST_BROKEN 规则）",
-        "factory/llm.py": "09-30 23:11（我：成本记账字段；对方：SDK 后端补齐）",
-        "factory/pipeline.py": "09-30 23:05（我：UPSTREAM_FAILED；对方：容器节点识别）",
-        "factory/models.py": "09-30 23:05",
-        "main.py": "09-30 22:08",
-        "tools/test_gates.py": "09-30 23:14（双方各自追加断言）"
-      },
-      "chosen_approach": "冻结当前混合态为**共同基线**，两分支从此各自前进 —— 不假装能还原历史，但保证未来不再混"
+  "result": {
+    "passed": 4, "failed": 1, "upstream_failed": 1, "attempted": 5,
+    "pass_rate": "4/5 = 80%",
+    "per_requirement": {
+      "REQ-1":  {"state": "PASSED", "attempts": 1, "test_rewrites": 0, "tokens": 10548, "gw_retries": 0, "dep_violations": 0},
+      "REQ-5":  {"state": "PASSED", "attempts": 1, "test_rewrites": 0, "tokens": 13149, "gw_retries": 0, "dep_violations": 0},
+      "REQ-3":  {"state": "PASSED", "attempts": 2, "test_rewrites": 0, "tokens": 16721, "gw_retries": 0, "dep_violations": 0,
+                 "note": "TEST_BROKEN ×1 → 依赖门禁触发（REQ-1=DEPENDENCY_NOT_USED）→ 重写后满足"},
+      "REQ-7":  {"state": "PASSED", "attempts": 2, "test_rewrites": 0, "tokens": 27300, "gw_retries": 0, "dep_violations": 0,
+                 "note": "**首次干净通过** —— TEST_BROKEN ×1 → 依赖门禁触发（REQ-1/REQ-5=DEPENDENCY_NOT_USED）→ 重写后满足"},
+      "REQ-11": {"state": "FAILED", "attempts": 4, "test_rewrites": 1, "tokens": 62240, "gw_retries": 1, "dep_violations": 0,
+                 "note": "实现失败（4 次尝试）: 读取超时（>300.0s）"},
+      "REQ-12": {"state": "UPSTREAM_FAILED", "attempts": 0, "tokens": 0,
+                 "note": "上游未通过，未进入 TDD 循环（REQ-11=FAILED）"}
     },
-    "structure": {
-      "common_base": "97108a7",
-      "branches": {
-        "main": "集成线（并发方在主树继续提交）",
-        "factory-verify": "本工作流（工厂验证：门禁/审计/度量/DAG 断言/架构核验）",
-        "sdk-contract": "并发工作流（SDK 契约：call_edges/node_contracts/API 文档）"
-      },
-      "all_aligned_at": "97108a7（三分支同基线）"
+    "totals": {"calls": 25, "total_tokens": 129958, "reasoning_tokens": 86767,
+               "gateway_retries": 1, "retries_succeeded": 0, "retries_exhausted": 1},
+    "evidence": ["evidence/valid1-report.json", "evidence/valid1-run.log"]
+  },
+
+  "milestones": [
+    "**REQ-7 首次干净通过** —— v1 四轮从未通过、v2 仅走到「测试通过 + 依赖门禁拦截」，本轮真正 PASSED",
+    "**REQ-11 首次进入 TDD 循环** —— 历史各轮均因上游失败而被跳过",
+    "**第一份完整的 6/6 报告** —— 未再出现崩溃或部分报告",
+    "**零 WEAK_TEST** —— 无空转测试"
+  ],
+
+  "critical_finding": {
+    "title": "依赖累积存在实现层缺陷 —— 且当前依赖门禁**结构上无法检出这一类**",
+    "what_happened": "REQ-11 的测试要求「调用 REQ-7 的 updateQuantity 后，listMovements 能查到流水」，但两个模块从未连接，该期望在结构上不可能满足",
+    "evidence": {
+      "REQ_7_impl": "src/services/inventoryService.js: `async function updateQuantity(sku, from, to)` —— 语义是「区间变更 from→to」，不改流水",
+      "REQ_11_impl": "src/services/movementsService.js: `const movements = []` 模块内内存数组 + `recordMovement({sku,from,to,reason})` + `listMovements(sku)`；**require/import 语句 0 条**，完全不引用 REQ-1 或 REQ-7",
+      "REQ_11_test": "`await updateQuantity('SKU-1001', 10, 5)`（3 参数，期望第 2 个是 quantity）+ `listMovements('SKU-1001')` 应返回含 `from` 字段的记录",
+      "mismatch": "REQ-7 的 updateQuantity 第 2/3 参数是 from/to；REQ-11 的测试按 (sku, quantity, from) 调用 —— **同名函数、不同语义**"
     },
-    "physical_isolation": {
-      "mechanism": "git worktree —— 两个独立工作目录共享一个对象库",
-      "locations": {
-        "/home/duanlinghui/dshwork": "97108a7 [main] ← 并发方",
-        "/home/duanlinghui/dshwork/.wt/factory-verify": "97108a7 [factory-verify] ← 本工作流"
-      },
-      "why_not_just_a_branch": "只分分支、不改工作目录，等于分支切了但写入位置没切 —— 本轮实际踩到：我的 BRANCH_SEPARATION.md 与两个修复一开始写进了主树（main），而不是 factory-verify。worktree 才是文件系统层面的隔离"
+    "why_the_gate_missed_it": {
+      "mechanism": "依赖使用门禁位于 `if outcome.passed:` 之内（factory/loop.py:1159 起）—— 只有测试通过后才评估依赖",
+      "consequence": "REQ-11 的测试从未通过，**门禁从未运行**，因此 dependency_violations=0 并不代表「依赖用对了」，而代表「依赖根本没被评估」",
+      "structural_flaw": "**门禁在测试门禁的下游** —— 一个永远无法让测试通过的需求，其依赖使用永远不会被检查。而这恰恰是最需要检查的情形（跨模块集成失败）。",
+      "subsidiary": "即便门禁运行了，它检查的是**静态调用**（是否 import 并调用上游导出）；movementsService.js 有 0 条 import，本应被判 DEPENDENCY_NOT_USED。所以问题纯粹是**执行顺序**，不是检测逻辑。"
     },
-    "isolation_verified": {
-      "test": "在 worktree 建 DRIFT.txt / ISOLATION_PROBE.txt",
-      "result": "worktree 内存在；主树内不存在 ✅；git status 各自独立",
-      "functional_check": "worktree 内跑 check_all → 257/257 通过；跑 tests/test_dag.py → 10 红 1 绿（符合预期）"
+    "secondary_failure": "REQ-11 的最后一次实现调用 `读取超时（>300.0s）` —— 4 次尝试中至少 1 次死于环境；这放大了失败，但不是根因",
+    "test_broken_note": "REQ-11 早期版本的测试确实 import 了未安装的 `better-sqlite3`（模板依赖里只有 `sqlite3`），被 TEST_BROKEN 正确拦截；回退后的版本改用动态 import，不再有该问题 —— 说明 TEST_BROKEN 机制工作正常"
+  },
+
+  "gate_activity": {
+    "TEST_BROKEN": "触发 2 次（REQ-3、REQ-11），均回退写测试阶段",
+    "依赖使用门禁": "触发 2 次（REQ-3、REQ-7），**均在重写后满足** —— 门禁有效",
+    "上游失败传播": "触发 1 次（REQ-11 失败 → REQ-12 跳过）",
+    "RED 门禁": "全部通过",
+    "WEAK_TEST": "0 次"
+  },
+
+  "answers": {
+    "依赖累积是否有实现层问题": "**有。** 且本轮第一次拿到了直接证据（而非推测）：REQ-11 需要与 REQ-7 集成，两侧模块各自「实现完整」，但从未连接。",
+    "REQ-12 是否进入 TDD": "**否** —— 因 REQ-11 失败而跳过。最深链末端仍无数据。",
+    "多模块串行是否工作": "**工作** —— 拓扑序执行、上游失败传播、菱形共享节点只执行一次，全部按设计运行。问题不在调度层，在**跨模块契约**。"
+  },
+
+  "actionable_next": [
+    {
+      "priority": "高",
+      "action": "把依赖使用门禁从 `if outcome.passed` 内**移出**，或增加一条「测试通过前也做一次静态依赖检查」的路径",
+      "rationale": "当前结构让「测试过不去」的需求免于依赖检查，而这类需求恰恰最可能有依赖问题。这是一行位置问题，不是新检测器。",
+      "expected": "REQ-11 这类情形会被判 DEPENDENCY_NOT_USED 并回传理由，而不是空耗 4 轮实现"
     },
-    "ownership_manifest": {
-      "factory_verify_owns": ["factory/testaudit.py", "factory/testplan.py", "factory/config.py", "factory/models.py", "tests/test_dag.py", "tools/*（除 test_call_edges.py）", "DAG_DESIGN.md", "ARCHITECTURE_AUDIT.md", "ISOLATION.md", "BRANCH_SEPARATION.md", "V1_RELEASE.md", "V2_RELEASE.md"],
-      "sdk_contract_owns": ["factory/version.py", "factory/store.py（call_edges/node_contracts）", "factory/pipeline.py（容器节点/ROOT）", "tools/test_call_edges.py", "API_DOC_CONFORMANCE.md", "sdk_contract_report.json", "v2_contract_report.json", ".pack_v1.py", ".pack_v2.py"],
-      "co_owned_needs_coordination": ["factory/loop.py", "factory/llm.py", "factory/models.py", "main.py", "tools/test_gates.py"],
-      "conflict_rule": "共存文件优先保留**后验证过的一方** —— 谁有断言覆盖就保留谁，另一方把改动重做在断言之上"
+    {
+      "priority": "高",
+      "action": "在需求规格里显式声明跨模块调用契约（如「REQ-11 必须调用 REQ-7 的 updateQuantity」并写进测试计划）",
+      "rationale": "同名函数、不同语义（updateQuantity 的 from/to vs quantity）是模型无法自行发现的 —— 两个需求的单模块测试都无法暴露它"
     },
-    "sync_procedure": {
-      "no_auto_sync": "两分支不自动同步，交换改动必须显式",
-      "examples": ["git checkout sdk-contract -- factory/version.py", "git diff factory-verify sdk-contract -- factory/loop.py", "git merge sdk-contract"],
-      "why_merge_not_rebase": "rebase 重写历史，而两分支都在被持续提交，rebase 冲突比 merge 更难归因",
-      "doc": "BRANCH_SEPARATION.md"
+    {
+      "priority": "中",
+      "action": "DAG 设计中的两个缺口（悬空依赖 / 环）本轮**未被触发** —— 可作为低优先级",
+      "rationale": "本轮没有出现悬空依赖或环；closure6 是闭包，调度层正常工作"
     }
-  },
+  ],
 
-  "collaboration_note": {
-    "observation": "并发方提交 b582582 `fix(red-gate): 缺实现模块导致的 0 个测试是有效 RED，不是 TEST_BROKEN` **修正了我引入的一个过宽规则**",
-    "my_rule": "not passed and total == 0 → TEST_BROKEN",
-    "their_correction": "TDD 里实现尚未写出时，测试 import 实现模块必然失败、收集到 0 个测试 —— 这本就是有效的 RED，不是坏测试",
-    "assessment": "**他们是对的。** 我的规则会把每一次首次运行都误判为坏测试",
-    "significance": "这是两条工作流唯一一次**实质性相互修正**，且修正方向正确"
-  },
+  "check_all": {"assertions_passed": "257/257（8 类）", "all_pass": true},
 
-  "cleanup_done": {
-    "snapshots_pruned": "删除 .workstreams/v2-verified、backup-20260930-012050（保留 v2-run）",
-    "run_artifacts_pruned": "删除 v2-run 下的 out-guard/out-guard2/out-watch*（约 199 MB 的 node_modules）",
-    "caches_pruned": ".npm-cache（24 MB）、.cache、.zipv",
-    "workspace_size": "247 MB → 24 MB"
-  },
-
-  "pending": {
-    "closure6_valid_data": "**仍缺** —— 需用修好的 guard（快照自带 .git）+ 修好的 all_passed（要求完整）重跑",
-    "dag_implementation": "factory-verify 分支上实现 factory/dag.py，使 D1–D10 转绿",
-    "explicit_merge": "与 sdk-contract 做一次显式合并，解决共存文件冲突"
-  },
-
-  "assertions": {
-    "check_all": "257/257 通过（8 类）",
-    "dag_suite": "10 红 1 绿（预期红，刻意未登记进 check_all）"
+  "not_done": {
+    "REQ-12_data": "仍无 —— 依赖 REQ-11",
+    "dag_implementation": "未实施（本轮聚焦跑通 closure6）",
+    "commit": "本轮结果尚未提交到 factory-verify 分支（evidence 与 task_report 需提交）"
   }
 }
