@@ -4,7 +4,7 @@
   "probes_per_check": 3,
   "max_runs": 2,
   "cycles": 1,
-  "closure6_runs": 0,
+  "closure6_runs": 1,
   "probe_history": [
     {
       "at": "2026-09-30 23:08:30",
@@ -16,7 +16,29 @@
       ]
     }
   ],
-  "run_results": [],
-  "outcome": "running",
-  "note": ""
+  "run_results": [
+    {
+      "index": 1,
+      "session": "20260930-230751",
+      "started": "2026-09-30 23:15:32",
+      "elapsed_s": 422.0,
+      "exit_code": 1,
+      "run_log": "/home/duanlinghui/dshwork/logs/gateway-watch/run-20260930-230751-1.log",
+      "states": {
+        "REQ-1": "PASSED",
+        "REQ-5": "PASSED"
+      },
+      "passed": 2,
+      "failed": 0,
+      "upstream_failed": 0,
+      "gateway_retries": null,
+      "retries_exhausted": null,
+      "total_tokens": null,
+      "all_passed": true,
+      "isolation_verified": true
+    }
+  ],
+  "outcome": "all_passed",
+  "note": "closure6 全链通过 —— 依赖累积终于有干净数据",
+  "finished_at": "2026-09-30 23:15:32"
 }

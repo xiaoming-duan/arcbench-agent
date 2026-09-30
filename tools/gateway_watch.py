@@ -161,8 +161,26 @@ class Watch:
                 "retries_exhausted": d.get("cost", {}).get("retries_exhausted"),
                 "total_tokens": d.get("cost", {}).get("total_tokens"),
             })
-            # 全链通过 = 依赖累积终于有干净数据
-            record["all_passed"] = bool(states) and all(v == "PASSED" for v in states.values())
+            # 全链通过必须**同时**满足：报告完整 且 全部 PASSED。
+            #
+            # 实测事故：run 在 REQ-3 期间因 git 报错崩溃，异常处理器写出了
+            # 只含 REQ-1/REQ-5 的**部分报告**；初版判据只看「报告里的是否全通过」，
+            # 于是把一个 2/6 的部分报告判成 all_passed，打印出
+            # 「🎉 closure6 全链通过」—— **假突破**。
+            # 报告不完整时绝不能声称通过。
+            record["reported"] = len(states)
+            record["expected"] = d.get("requirements_total", 0)
+            record["complete"] = (
+                record["expected"] > 0 and record["reported"] == record["expected"]
+            )
+            record["all_passed"] = (
+                record["complete"] and all(v == "PASSED" for v in states.values())
+            )
+            if not record["complete"]:
+                record["incomplete_reason"] = (
+                    f"报告只含 {record['reported']}/{record['expected']} 个需求"
+                    + (f"；error={str(d.get('error'))[:160]}" if d.get("error") else "")
+                )
         # 隔离是否被证明
         try:
             text = run_log.read_text(encoding="utf-8", errors="replace")

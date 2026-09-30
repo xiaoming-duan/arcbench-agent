@@ -202,6 +202,27 @@ def cmd_guard(args: argparse.Namespace) -> int:
         print("❌ guard 需要命令，例如：-- python3 main.py ...")
         return 1
 
+    # ★ 让快照**自带 .git**，切断与工作区仓库的关系。
+    #
+    # 实测事故：快照放在 `.workstreams/` 下，而工作区的 .gitignore 忽略了该路径。
+    # 工厂的 git 层执行 `git add .`（cwd = 输出目录），git 向上解析到**工作区仓库**，
+    # 于是报「The following paths are ignored ... .workstreams」并抛 RuntimeError，
+    # 运行在 REQ-3 期间崩溃，异常处理器写出只含 2/6 个需求的**部分报告**。
+    #
+    # 更糟的是它**看起来像成功**：初版的 all_passed 只检查「报告里的是否全通过」，
+    # 于是那个 2/6 的部分报告被打成「全链通过」——假突破。
+    #
+    # 快照自带 .git 后，`git rev-parse --show-toplevel` 停在快照，
+    # 外层 .gitignore 不再适用，且隔离更彻底（连仓库都独立）。
+    snap_git = dest / ".git"
+    if not snap_git.exists():
+        subprocess.run(["git", "init", "-q", "."], cwd=str(dest), check=False)
+        subprocess.run(["git", "config", "user.email", "factory@local"], cwd=str(dest), check=False)
+        subprocess.run(["git", "config", "user.name", "factory"], cwd=str(dest), check=False)
+        subprocess.run(["git", "add", "-A"], cwd=str(dest), check=False)
+        subprocess.run(["git", "commit", "-q", "-m", "snapshot base"], cwd=str(dest), check=False)
+        print(f"   （已为快照建立独立 git 仓库：{snap_git}）")
+
     before_ws = build_manifest(ROOT)
     print(f"\n▶️  在冻结副本内运行: {' '.join(args.command)}")
     print(f"    cwd = {dest}（并发方改的是工作区，物理上够不着）\n")
