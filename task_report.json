@@ -1,130 +1,86 @@
 {
-  "v2_submitted": {
-    "uploaded": "**未上传** —— 本环境无 CLI、无凭据、无上传脚本，需你手动上传",
-    "package_ready": true,
-    "artifact": "dist/arcbench-agent-v2-final.zip（612 KB / 174 个文件 / check_all 243 项通过）",
-    "artifact_alt": "dist/arcbench-agent-v2-final.tar.gz（528 KB / 236 条目 = 174 文件 + 62 目录）",
-    "tag": "单模块闭环已验证；REQ-7 已通过测试阶段，因网关超时未能完成依赖修复",
-    "manual_upload": true,
-    "naming_note": "本环境无 `zip` 命令，用 Python 的 zipfile 生成同名 .zip。**未覆盖**并发工作流已有的 dist/arcbench-agent-v2.zip（585 KB，非本工作流产物），故命名为 v2-final",
-    "integrity_verified": ["zip 完整性测试通过（无损坏）", "36 个 Python 文件语法校验通过", "包内 check_all_output.txt 显示 243 项通过", "7 类排除项在包内出现 0 次"]
+  "read_locations": {
+    "dag_build_plan": "**factory/dag.py 不存在** —— 只在 DAG_DESIGN.md 里是设计，运行时零 `dag` 引用。故本轮断言对「目标接口」写，并用回退适配器接「当前真实能力」（adapter._topological_order，产物只有 order）",
+    "closure_equivalent": "tools/closure.py：`closure_of(targets, deps)` :39、`depths(nodes, deps)` :52、`load_graph(path)` :32。注意它**从 YAML 读图**（不是内存图），且**没有 dangling 字段**（只在 main() 里打印）",
+    "existing_assertions": "无 D1–D10 函数名冲突；但**编号 D10 已被占用** —— tools/verify_d10.py（mock 门禁修复验证，check_all 里登记为「D10 修复验证」），且 test_gates.py 里的 D3/D4 是另一组缺陷编号。故测试函数名加 `DAG-` 前缀",
+    "test_framework": "pytest 9.0.3 可用（本轮按用户给的 pytest 风格写）。项目原有约定是 tools/ 下纯脚本 + check() 辅助 + 退出码 0/1"
   },
-  "gateway_health_script": {
-    "location": "tools/gateway_watch.py",
-    "log_dir": "logs/gateway-watch/",
-    "probe_interval_minutes": 5,
-    "probes_per_check": 3,
-    "max_retries": 3,
-    "on_3_of_3": "run closure6 with guard",
-    "on_partial": "等下一个周期（1–2/3 与 0/3 同样处理）",
-    "stop_conditions": [
-      "closure6 全链通过（outcome=all_passed）—— 依赖累积终于有干净数据",
-      "累计 closure6 运行达上限（outcome=max_runs_reached）",
-      "达到最长运行时限（outcome=max_hours_reached）",
-      "模型凭据不可用（探测即报，不消耗预算）"
-    ],
-    "outputs": {
-      "watch_<会话>.log": "逐步日志",
-      "status.json": "可随时 `--status` 查看的状态与历史",
-      "run_<会话>-<N>.log": "第 N 次 closure6 的完整输出"
-    },
-    "first_trigger": {
-      "when": "2026-09-30 22:11:29",
-      "probe": "3/3 成功（14.7s / 8.0s / 12.2s）",
-      "action": "立即开跑 closure6"
-    },
-    "bug_found_and_fixed": {
-      "id": "W1",
-      "what": "重启后输出目录与日志名会覆盖上一轮（索引从 1 重来）—— 实测踩到：重启后 run-1.log 被覆盖",
-      "fix": "用启动时间戳做命名空间（self.session）：out-watch<会话>-<N> / run-<会话>-<N>.log",
-      "data_rescued": "覆盖前已抢救上一轮报告到 evidence/watch-run1-report.json"
+  "assertions_written": {
+    "file": "tests/test_dag.py（新建目录与文件，未触碰任何 factory/ 源码）",
+    "count": "11 条（D1–D10 + 补充 D7b）",
+    "D1": "dangling_dependencies field exists",
+    "D2": "dangling list non-empty 且列出集合外的 B",
+    "D3": "no false positives（集合内依赖不得被判悬空）",
+    "D4": "multiple dangles all reported（4 个全报，不是只报第一个）",
+    "D5": "cycle_detected field exists",
+    "D6": "cycle_detected True",
+    "D7": "not silent fallback to input order（按用户规范：重排 or 标记）",
+    "D7b": "**补充**，严格强于 D7：有环必须被**显式标记**，重排不算处理 —— 见下方说明",
+    "D8": "self-loop detected（A→A）",
+    "D9": "no false cycle positive（菱形无环 → False）",
+    "D10": "dag.py vs closure.py isomorphism（levels == closure.depths；order 满足全部偏序；dangling 一致）",
+    "design_choice": "被断言对象通过 `_load_build_plan()` 解析：factory.dag 存在则用真实现，否则回退到当前能力。**回退不是为了让测试通过** —— 它让每条失败的原因指向**缺失的性质**（「计划缺少字段 dangling_dependencies，当前产物只有 ['order']」），而不是笼统的 ImportError。dag.py 落地后自动切到真实现"
+  },
+  "run_result": {
+    "total": 11,
+    "passed": 1,
+    "failed": 10,
+    "failure_summary": "10 红 1 绿。**每一条红的原因都正确指向缺口**：所有失败信息均为「计划缺少字段 X —— 当前实现的产物只有 ['order']（来源：回退：adapter._topological_order）」。即：当前实现只能产出顺序，dangling_dependencies / cycle_detected / levels 三个性质**都没有被报告出来**",
+    "the_one_green": {
+      "test": "DAG-D7（not silent fallback to input order）",
+      "why_green": "按用户给定的规范 `输出与输入顺序不同，或输出含 cycle_detected: True`，那个 **`or` 让它变弱**。实测当前实现对任何环都会重排（DFS 后序追加），于是 D7 无条件通过",
+      "evidence": "同一张图、只是 dict 键序不同：输入 ('A','B') → 输出 ('B','A')；输入 ('B','A') → 输出 ('A','B')。**输出随输入翻转** —— 「碰巧重排」不传递任何信息，调用方从 order 上看不出有环",
+      "action_taken": "补 D7b 断言「有环必须被显式标记」，该条**报红**。D7 保留原样（按用户规范），但在报告与文件注释里标注其弱点"
     }
   },
-  "dag_design": {
-    "read_locations": {
-      "topological_execution": "factory/adapter.py:364 `_topological_order()`（定义），:336（调用）；调度在 factory/pipeline.py `run_factory()` 的 `for requirement in req_set.requirements` 循环",
-      "UPSTREAM_FAILED": "factory/pipeline.py 同一循环内：`blocked_by = [dep for dep in requirement.dependencies if dep in outcomes and outcomes[dep].state != \"PASSED\"]`",
-      "dependency_structure": "requirements_probe_closure6/requirements.yaml —— REQ-1←[3,7,11]、REQ-5←[7]、REQ-3←[12]、REQ-7←[11]、REQ-11←[12]；汇聚点 REQ-7/REQ-11/REQ-12；枢纽 REQ-1（闭包内 3 个下游，全量集 8 个）",
-      "container_nodes": "factory/pipeline.py `build_children_map()` / `container_ids_of()`（**并发工作流新增**：平台 ROOT 只分解不设计）"
-    },
-    "topological_sort_algorithm": "递归 DFS + `done`/`visiting` 双集合（adapter.py:364）。稳定（按输入顺序遍历）；环时退回原顺序并告警。**实测正确，设计中不改算法，只搬家**",
-    "diamond_dependency_handling": "**已正确，无需改动**。`done` 集合使同一节点只入 order 一次；调度层是普通 for 循环不做重入，物理上不可能重复执行。实测：乱序输入 → [REQ-1, REQ-3, REQ-5, REQ-7, REQ-11, REQ-12]，每节点恰好 1 次，共享祖先 REQ-1 经两条路径可达仍只出现 1 次",
-    "upstream_failed_consistency": "**当前一致，但一致地静默**。排序与阻断对 `requirement.dependencies` 的解释相同：排序只认集合内的依赖（`by_id.get(dep)` 为 None 则跳过），阻断只认跑过的依赖（`dep in outcomes`）。两处都忽略悬空依赖 —— 一致，但都没记录。设计中统一到单一判定函数 `dag.blocked_by()`，优先级：环 > 悬空(block 模式) > 上游失败 > OK",
-    "design_doc_path": "DAG_DESIGN.md",
-    "key_finding": "**用户列的四项要求里有三项已满足**（拓扑排序 ✅ / 串行执行 ✅ / UPSTREAM_FAILED 传播 ✅ / 菱形只执行一次 ✅）。真正要做的不是「实现 DAG」，而是补两个**静默失败**的缺口，并把散落两处的图逻辑收敛成一个可测的层。",
-    "real_gaps": [
-      {
-        "id": "gap-1",
-        "severity": "高",
-        "what": "悬空依赖静默忽略：声明依赖不在本次运行集合内时，既不排序也不阻断，直接按原顺序执行 —— 无报错、无记录",
-        "repro": "输入 [REQ-12(deps=[REQ-3,REQ-11]), REQ-11(deps=[REQ-1,REQ-7])]（其余全缺失）→ 输出 ['REQ-11','REQ-12']",
-        "harm": ["失败归因不可分辨（是实现能力不足还是上游根本没跑？）", "可能假阳性通过（下游用参数注入绕过时，会在上游缺失的情况下'通过'）", "子集运行的合法性被混淆"],
-        "design": "新增 `dangling_dependency_policy: warn|block`（默认 warn，与现状逐位一致）+ **无论哪种策略都记录进报告**（`RequirementResult.dangling_dependencies`）。关键不在默认值，而在必须被记录"
-      },
-      {
-        "id": "gap-2",
-        "severity": "中",
-        "what": "依赖环退回原顺序，可能先执行依赖方；输出顺序取决于输入顺序，且告警只进日志不进报告",
-        "repro": "输入 [A(deps=[B]), B(deps=[A])] → 输出 ['B','A'] + 告警",
-        "design": "检测强连通分量 → 环内节点判 `CYCLIC_DEPENDENCY` 不进 TDD 循环，**其余节点照常执行**（隔离规格缺陷，不报废整轮）"
-      },
-      {
-        "id": "gap-3",
-        "severity": "低",
-        "what": "图逻辑散落两处（adapter 排序 / pipeline 调度+传播），无单一可测入口，无断言保证二者对 dependencies 的解释一致",
-        "design": "新增 factory/dag.py：`ExecutionPlan`（order/cycles/dangling/levels/hubs）+ `build_plan()` + `blocked_by()`。让运行时的计划与 tools/closure.py 同构 —— 分析工具与执行层不再各算一套图"
-      }
-    ],
-    "not_doing": ["并行调度（瓶颈是网关与模型收敛，不是 CPU）", "按需重算下游（每轮全新输出目录，无增量场景）", "任务级（Step 级）DAG（属另一层级）", "动态重排", "改动 _topological_order 的算法"],
-    "verification_plan": "D1–D10 共 10 条纯函数断言，其中 D10 最有价值：`ExecutionPlan.levels/hubs` 必须与 `tools/closure.py` 对同一图输出完全一致 —— 保证核验工具与执行层不各算一套图",
-    "implementation_order": "1) 新建 dag.py + D1–D10 → 2) adapter 改薄封装并跑 check_all 确认无回归 → 3) pipeline 改用 dag.blocked_by（T21a–T21e 必须仍全过）→ 4) 加报告字段 → 5) closure6 实跑做**等价性验证**（默认策略下行为应逐位不变，只增可观测性）",
-    "timing_recommendation": "建议先拿到 closure6 的第一份多模块数据，再实施 DAG 层。理由：两个缺口是**归因**问题不是**执行**问题；在没见过一次真实多模块运行前就改图逻辑，等于在不知道失败模式的情况下设计对策。但 D1–D10 是纯函数测试，可立即先写"
-  },
-  "gateway_triggered": {
-    "triggered": "是",
-    "trigger_detail": "2026-09-30 22:11:29 探测 3/3 成功（14.7s / 8.0s / 12.2s）→ 脚本立即触发 closure6（guard 隔离）",
-    "closure6_run": "已完成，用时 1261.0s（21 分 1 秒），exit=2",
-    "result": "3 通过 / 1 失败 / 2 跳过（尝试 4 个）",
-    "states": {"REQ-1": "PASSED", "REQ-3": "PASSED", "REQ-5": "PASSED", "REQ-7": "FAILED", "REQ-11": "UPSTREAM_FAILED", "REQ-12": "UPSTREAM_FAILED"},
-    "REQ-7_result": "FAILED（**环境**）—— `测试生成失败: HTTP 400 Bad Request: proxy_error ... read: connection reset by peer`，attempts=0（死在测试生成阶段，未进入实现）",
-    "REQ-11_entered": false,
-    "REQ-12_entered": false,
-    "gateway_retries": "1（成功 0 / 耗尽 1）",
-    "total_tokens": 79323,
-    "isolation_verified": true,
-    "isolation_evidence": "✅ 冻结副本逐文件未变 —— 本次测量可证明跑在冻结的那份代码上（运行期间工作区有 2 个我方文件被并发方改动，但跑的是副本，测量未受污染）",
-    "per_requirement": {
-      "REQ-1": "PASSED（2 次尝试 / 1 次测试重写 / 25,283 token）",
-      "REQ-5": "PASSED（1 次尝试 / 1 次测试重写 / 18,410 token）",
-      "REQ-3": "PASSED（2 次尝试 / 1 次测试重写 / 28,257 token）"
-    },
-    "report_preserved": "evidence/watch-run1-report.json"
-  },
-  "gateway_watcher_status": {
-    "state": "已重启，继续运行剩余预算",
-    "why_restarted": "首个监控 job 随会话 job 列表清空而终止（其 closure6 run1 已完成并留存），需续上剩余预算",
-    "budget": "已用 1 次 + 新会话 max-runs 2 = 总数 3（符合用户设定的上限）",
-    "restart_probe": "2026-09-30 23:00:13 探测 3/3 成功 → 已触发第 2 次 closure6"
+  "runtime_logic_untouched": true,
+  "runtime_untouched_evidence": {
+    "files_not_touched": ["factory/pipeline.py", "factory/adapter.py"],
+    "dag_py_not_created": "factory/dag.py 未创建（仅设计）",
+    "what_i_added": "只有 tests/test_dag.py（新建文件）",
+    "note": "但 factory/pipeline.py 的 mtime 是 09-30 23:05 —— **不是我改的**，是并发工作流在本轮期间改的。另有 llm.py / loop.py / main.py / version.py / tools/test_gates.py 同时在漂移"
   },
   "check_all": {
-    "assertions_passed": "243/243（8 类）",
+    "assertions_passed": "250/250（8 类）",
     "all_pass": true,
-    "note": "test_gates 由 134 增至 141（并发工作流持续新增断言）"
+    "dag_suite_not_registered": "**刻意不登记** tests/test_dag.py 进 check_all —— 它当前是预期红的（TDD 红），登记会破坏 check_all 的「全过」不变量。等 dag.py 落地、断言转绿后再登记"
   },
-  "v3_pending": {
-    "condition": "等网关窗口跑完 closure6 且 REQ-7 通过 → REQ-11/REQ-12 进入 TDD 循环",
-    "then": "check_all → 打包 v3",
-    "tag_decision_tree": {
-      "全链通过": "依赖累积已验证",
-      "REQ-7 仍失败且错误模式不同": "加对应判据再跑",
-      "REQ-7 仍失败且错误模式相同": "检查 prompt 修改是否被覆盖",
-      "环境再次打断": "记录，等下一个窗口（脚本会自动等）"
-    }
+  "bugs_found_and_fixed_this_round": {
+    "id": "W2",
+    "severity": "中",
+    "what": "监控重启后输出目录与日志名会覆盖上一轮（索引从 1 重来）：日志 run-1.log 被覆盖，且 closure6 复用了 out-watch1 脏目录（混入上一轮残留的 req1.listItems.test.js / req3.summarizeItems.test.js）",
+    "found_by": "对比测试文件 mtime：同一目录里同时存在 22:15/22:23 的旧文件与 23:03 的新文件",
+    "fix": "用启动时间戳做命名空间（self.session）→ out-watch<会话>-<N> / run-<会话>-<N>.log；status.json 加入 session 字段自描述",
+    "action": "已杀掉跑在脏目录里的那次运行并删除 out-watch1，重启后确认新目录为 out-watch20260930-230751-1",
+    "data_rescued": "覆盖前已抢救上一轮报告到 evidence/watch-run1-report.json"
+  },
+  "closure6_status": {
+    "running": true,
+    "current_session": "20260930-230751",
+    "probe": "2026-09-30 23:08:30 探测 3/3 成功（15.3s / 9.8s / 14.5s）→ 已触发 closure6",
+    "output_dir": ".workstreams/v2-run/out-watch20260930-230751-1（唯一，不脏）",
+    "budget": "本会话 max-runs 2",
+    "earlier_run": {
+      "session": "20260930-221054",
+      "result": "3 通过 / 1 失败 / 2 跳过，隔离 ✅，1261s",
+      "REQ-7": "FAILED（**环境**：proxy_error / connection reset by peer，attempts=0 死在测试生成阶段）",
+      "report": "evidence/watch-run1-report.json"
+    },
+    "bounded_rerun_working": "两次触发都是「探测 3/3 → 立即开跑」，且上限生效；未出现无限重跑"
+  },
+  "gateway_observation": {
+    "pattern": "网关呈「探测时健康、长任务中掉线」的形态：两次探测均 3/3 成功（每次调用 2–15s），但 closure6 跑到中段就出现 connection reset / timeout",
+    "implication": "3 次简单探测**不足以预测**长任务中的稳定性 —— 探测只覆盖短请求。若要让探测更有预测力，应探测一次**接近真实负载长度**的调用（例如 >2000 token 的 prompt）",
+    "not_changed": "未改探测策略（用户明确「不调无关配置」），仅记录该观察供后续参考"
+  },
+  "next": {
+    "if_window_succeeds": "REQ-7 通过 → REQ-11/REQ-12 进入 TDD → 归因问题可能立即暴露 → 断言已就位，可直接实施 dag.py 使 D1–D10 转绿",
+    "if_environment_fails_again": "按用户指示不跑第 3 次，记录「网关持续不稳定，依赖累积验证未完成」，把时间投在 DAG 实施上",
+    "awaiting": "closure6 窗口结果"
   },
   "not_done": {
-    "v2_upload": "需你手动上传（本环境无上传能力）",
-    "reserve_trace": "未碰",
-    "pack_py_cleanup": "未删除（已加进打包排除列表）",
-    "dag_implementation": "按要求只做设计，未实现、未运行"
+    "dag_implementation": "按要求只写断言，未实现 dag.py，未改运行时逻辑",
+    "probe_strategy_change": "未调（不调无关配置）",
+    "dag_suite_registration": "刻意未登记进 check_all（当前预期红）"
   }
 }

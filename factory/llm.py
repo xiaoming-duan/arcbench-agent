@@ -27,6 +27,11 @@ logger = logging.getLogger("factory.llm")
 DEFAULT_BASE_URL = "https://api.deepseek.com/v1"
 RETRYABLE_STATUS = {408, 409, 425, 429, 500, 502, 503, 504}
 MAX_RETRIES = 3
+# 超时这类「已经等满一整个 timeout」的失败，只再试一次。
+# 理由：同一个 prompt、同一个超时，原样重发大概率再等满一次 ——
+# 3 × 180s = 9 分钟换一次必然的重蹈覆辙，把整轮的时间预算烧光。
+# 快速失败（连接被拒 / 5xx / 429）重试很便宜，仍用 MAX_RETRIES。
+MAX_SLOW_RETRIES = 1
 MAX_TOKEN_CEILING = 8000
 
 
@@ -335,7 +340,8 @@ class ModelClient:
                 response = self._sdk.chat.completions.create(**payload)
             except Exception as exc:  # noqa: BLE001 —— SDK 异常层次视版本而异
                 last_error = ModelCallError(f"openai SDK 调用失败: {exc}")
-                if _is_retryable_sdk_error(exc) and attempt < MAX_RETRIES:
+                retry_cap = MAX_SLOW_RETRIES if _is_timeout_error(exc) else MAX_RETRIES
+                if _is_retryable_sdk_error(exc) and attempt <= retry_cap:
                     self.stats.gateway_retries += 1
                     _sleep_backoff(attempt)
                     continue
@@ -396,7 +402,8 @@ class ModelClient:
                 except TimeoutError as exc:
                     # 注意：TimeoutError 是 OSError 子类，必须排在下面的 OSError 之前
                     last_error = ModelCallError(f"读取超时（>{self.timeout_s}s）")
-                    if attempt < MAX_RETRIES:
+                    # 超时只再试一次：原样重发大概率再等满一次（见 MAX_SLOW_RETRIES）
+                    if attempt <= MAX_SLOW_RETRIES:
                         self.stats.gateway_retries += 1
                         retries_used += 1
                         _sleep_backoff(attempt)
@@ -468,6 +475,22 @@ def _sdk_response_to_dict(response: Any) -> dict[str, Any]:
             "total_tokens": getattr(usage, "total_tokens", 0),
         },
     }
+
+
+def _is_timeout_error(exc: Exception) -> bool:
+    """是否是「等满了一整个超时」的失败（区别于快速失败）。
+
+    平台实测（2026-09-30 14:46）：`openai SDK 调用失败: Request timed out.`
+    —— 这类失败每次都要耗满 timeout_s，与连接被拒/5xx 的代价完全不同，
+    因此重试上限要分开算。
+    """
+    if isinstance(exc, TimeoutError):
+        return True
+    if type(exc).__name__ in {"APITimeoutError", "Timeout", "ConnectTimeout",
+                              "ReadTimeout", "TimeoutException", "ReadTimeoutError"}:
+        return True
+    text = str(exc).lower()
+    return "timed out" in text or "timeout" in text or "超时" in text
 
 
 def _is_retryable_sdk_error(exc: Exception) -> bool:

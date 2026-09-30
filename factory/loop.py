@@ -59,6 +59,20 @@ _BROKEN_TEST_PATTERNS = (
     re.compile(r"ReferenceError", re.IGNORECASE),
 )
 
+# 瞬时/传输层故障特征。这类失败**不应直接判需求失败**：重试一次有意义，
+# 且一次超时不该把已经过了设计/写测试/RED 的需求整条丢掉。
+_TRANSIENT_MODEL_MARKERS = (
+    "timed out", "timeout", "超时", "temporarily", "rate limit", "429",
+    "500", "502", "503", "504", "connection", "连接", "network", "网络",
+    "remotedisconnected", "reset by peer", "unavailable", "eof occurred",
+)
+
+
+def _is_transient_model_error(exc: Exception) -> bool:
+    """模型/传输层故障是否为「瞬时」——决定是回传重试还是直接判失败。"""
+    text = str(exc).lower()
+    return any(marker in text for marker in _TRANSIENT_MODEL_MARKERS)
+
 # 收集阶段「模块找不到」的两种典型措辞。**路径两侧的引号可有可无**：
 #   Rolldown/Node: Cannot find module '../src/x.js' imported from /abs/tests/x.test.js
 #                  平台实测该路径**带单引号**：imported from '/workspace/.../x.test.js'
@@ -814,12 +828,33 @@ class TddLoop:
 
         # ---- 阶段 1: 设计 ----
         self.store.design_started(req_id, f"{req_id} 设计开始")
-        try:
-            plan = self.generator.design(requirement)
-        except Exception as exc:
-            self.store.design_failed(req_id, f"{req_id} 设计失败: {exc}")
+        # 设计是整条链的第一关，失败即全盘皆输（平台实测：根需求失败会级联
+        # 跳过几十个下游）。它对瞬时故障再给一次机会。
+        # 注意 design() 没有反馈通道（只接 requirement），所以只对**瞬时**故障重试；
+        # 非瞬时失败（如需求无法解析）重试无意义，直接判失败。
+        plan = None
+        design_error = ""
+        for design_attempt in (1, 2):
+            try:
+                plan = self.generator.design(requirement)
+                break
+            except Exception as exc:
+                design_error = str(exc)
+                transient = _is_transient_model_error(exc)
+                logger.error(
+                    "[设计] %s 第 %d 次调用失败%s: %s",
+                    req_id,
+                    design_attempt,
+                    "（疑似瞬时故障，重试一次）" if transient else "",
+                    design_error,
+                )
+                if design_attempt == 1 and transient:
+                    continue
+                break
+        if plan is None:
+            self.store.design_failed(req_id, f"{req_id} 设计失败: {design_error}")
             result.state = "FAILED"
-            result.note = f"设计失败: {exc}"
+            result.note = f"设计失败: {design_error}"
             logger.error(result.note)
             return result
 
@@ -875,11 +910,32 @@ class TddLoop:
                     allowed_paths=allowed_paths,
                 )
             except Exception as exc:
-                self.store.design_failed(req_id, f"{req_id} 测试生成失败: {exc}")
-                result.state = "FAILED"
-                result.note = f"测试生成失败: {exc}"
-                logger.error(result.note)
-                return result
+                # 与实现阶段同理：写测试这一环**本来就有**带反馈的重试循环
+                # （max_write_attempts + write_violations），但模型异常此前直接
+                # `return result` 绕过了它，把「重试基础设施」白白浪费。
+                model_error = str(exc)
+                transient = _is_transient_model_error(exc)
+                logger.error(
+                    "[写测试] %s 第 %d 次调用失败%s: %s",
+                    req_id,
+                    attempt,
+                    "（疑似瞬时故障，回传后重试）" if transient else "",
+                    model_error,
+                )
+                if attempt >= max_write_attempts:
+                    self.store.design_failed(req_id, f"{req_id} 测试生成失败: {model_error}")
+                    result.state = "FAILED"
+                    result.note = f"测试生成失败（{attempt} 次尝试）: {model_error}"
+                    logger.error(result.note)
+                    return result
+                write_violations.append(
+                    {
+                        "code": "MODEL_CALL_FAILED",
+                        "path": "(模型调用)",
+                        "detail": f"上一次调用失败：{model_error}。请重新产出完整测试文件。",
+                    }
+                )
+                continue
 
             test_files, violations = self._enforce_test_whitelist(
                 requirement, test_files, allowed_paths
@@ -1063,12 +1119,34 @@ class TddLoop:
                     requirement, plan, failures, test_context=test_context
                 )
             except Exception as exc:
-                self.store.implement_failed(req_id, f"{req_id} 实现失败: {exc}")
-                result.state = "FAILED"
-                result.note = f"实现失败: {exc}"
-                logger.error(result.note)
-                result.attempts = attempts
-                return result
+                # ★模型/传输层故障**不应直接判需求失败**。
+                # 实测（平台 2026-09-30 14:46）：一处 `openai SDK 调用失败: Request
+                # timed out.` 让一个已经过了设计、写测试、RED 三道关的需求当场判 FAILED；
+                # 它又是上游，最终导致 21 个下游被跳过 —— 一次超时毁掉半轮。
+                # 改为：记为一次失败的尝试，把错误回传（下一次提示词因此**不同**，
+                # 不是原样重发），并继续消耗既有修复预算。
+                model_error = str(exc)
+                transient = _is_transient_model_error(exc)
+                logger.error(
+                    "[实现] %s 第 %d 次调用失败%s: %s",
+                    req_id,
+                    attempts,
+                    "（疑似瞬时故障，回传后重试）" if transient else "",
+                    model_error,
+                )
+                if attempts > self.config.max_repairs:
+                    self.store.implement_failed(req_id, f"{req_id} 实现失败: {model_error}")
+                    result.state = "FAILED"
+                    result.note = f"实现失败（{attempts} 次尝试）: {model_error}"
+                    logger.error(result.note)
+                    result.attempts = attempts
+                    return result
+                failures = [
+                    f"上一次实现调用在模型侧失败：{model_error}\n"
+                    "请重新产出**完整**实现文件；若上次输出过长导致超时，"
+                    "请精简到刚好满足测试所需的最小实现。"
+                ]
+                continue
 
             impl_files = self._guard_implementation_files(requirement, impl_files, result)
             apply_generated_files(self.output_dir, impl_files)

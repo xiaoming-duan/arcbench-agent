@@ -1,11 +1,21 @@
 {
-  "started_at": "2026-09-30 23:06:08",
+  "started_at": "2026-09-30 23:07:51",
   "interval_s": 300,
   "probes_per_check": 3,
   "max_runs": 2,
-  "cycles": 0,
+  "cycles": 1,
   "closure6_runs": 0,
-  "probe_history": [],
+  "probe_history": [
+    {
+      "at": "2026-09-30 23:08:30",
+      "ok": 3,
+      "detail": [
+        "#1 ✅ 15.3s",
+        "#2 ✅ 9.8s",
+        "#3 ✅ 14.5s"
+      ]
+    }
+  ],
   "run_results": [],
   "outcome": "running",
   "note": ""

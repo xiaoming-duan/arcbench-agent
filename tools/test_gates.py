@@ -1268,6 +1268,109 @@ def t34_sdk_backend_parity_and_summary_arithmetic() -> None:
           f"{attempted}+{up}+{payload['decomposed']} vs {payload['requirements_total']}")
 
 
+def t35_transient_model_failure_does_not_kill_requirement() -> None:
+    """模型/传输层瞬时故障不应**直接判需求失败**。
+
+    实测（平台 2026-09-30 14:46）：
+        ERROR factory.loop | 实现失败: openai SDK 调用失败: Request timed out.
+    一个已经过了设计、写测试、RED 三道关的需求被一次超时当场判 FAILED；
+    它又是上游，最终 21 个下游被跳过 —— 一次超时毁掉半轮。
+
+    修法：记为一次失败的尝试，把错误**回传**给下一次调用（提示词因此不同，
+    不是原样重发），并继续消耗既有修复预算。非瞬时失败仍快速判失败。
+    """
+    from factory.models import GeneratedFile
+
+    class FlakyGen(FakeGenerator):
+        def __init__(self, *, fail_impl=0, fail_design=0, fail_write=0, **kw):
+            super().__init__(**kw)
+            self.fail_impl, self.fail_design, self.fail_write = fail_impl, fail_design, fail_write
+            self.design_calls = 0
+            self.write_attempts_count = 0
+            self.impl_failures: list[list] = []
+
+        def design(self, requirement):  # noqa: ANN001
+            self.design_calls += 1
+            if self.fail_design > 0:
+                self.fail_design -= 1
+                raise RuntimeError("openai SDK 调用失败: Request timed out.")
+            return super().design(requirement)
+
+        def write_tests(self, *a, **kw):  # noqa: ANN002, ANN003
+            # 注意：要在这里计数，而不是靠 write_calls —— 失败的那次调用
+            # 根本没走到 super()，用 write_calls 数会把「重试」看成「没重试」。
+            self.write_attempts_count += 1
+            if self.fail_write > 0:
+                self.fail_write -= 1
+                raise RuntimeError("openai SDK 调用失败: Request timed out.")
+            return super().write_tests(*a, **kw)
+
+        def implement(self, requirement, plan, failures, test_context=""):  # noqa: ANN001
+            self.impl_failures.append(list(failures))
+            if self.fail_impl > 0:
+                self.fail_impl -= 1
+                raise RuntimeError("openai SDK 调用失败: Request timed out.")
+            return [GeneratedFile(path="backend/src/impl.js",
+                                  content="module.exports = { value: () => 1 };")]
+
+    def mk(**kw):
+        return FlakyGen(write_script=[FAILING_TEST], design=sample_design(),
+                        plan=sample_plan(), **kw)
+
+    # ① 实现阶段瞬时失败 -> 重试，且第二次的 failures 带上了错误（提示词不同）
+    ws = make_workspace()
+    gen = mk(fail_impl=1)
+    build_loop(ws, gen, max_repairs=1).run(sample_requirement())
+    check("T35a 实现调用瞬时失败后会重试（不是当场判死）",
+          len(gen.impl_failures) >= 2, f"implement 调用 {len(gen.impl_failures)} 次")
+    check("T35b 重试时的 failures 回传了失败原因（提示词因此不同，非原样重发）",
+          any("timed out" in f for f in (gen.impl_failures[1] if len(gen.impl_failures) > 1 else [])),
+          str(gen.impl_failures[1] if len(gen.impl_failures) > 1 else [])[:80])
+    shutil.rmtree(ws, ignore_errors=True)
+
+    # ② 一直失败 -> 仍受既有修复预算约束（有界，不无限重试）
+    ws = make_workspace()
+    gen = mk(fail_impl=99)
+    res = build_loop(ws, gen, max_repairs=1).run(sample_requirement())
+    check("T35c 持续失败仍受 max_repairs 约束（有界）",
+          res.state == "FAILED" and len(gen.impl_failures) <= 3,
+          f"state={res.state} 调用 {len(gen.impl_failures)} 次")
+    check("T35d 失败理由说明尝试次数与模型侧原因",
+          "次尝试" in (res.note or "") and "timed out" in (res.note or ""),
+          (res.note or "")[:80])
+    shutil.rmtree(ws, ignore_errors=True)
+
+    # ③ 设计阶段瞬时失败 -> 重试一次（设计是第一关，失败即全盘皆输）
+    ws = make_workspace()
+    gen = mk(fail_design=1)
+    build_loop(ws, gen).run(sample_requirement())
+    check("T35e 设计瞬时失败会重试一次", gen.design_calls == 2, f"design 调用 {gen.design_calls} 次")
+    shutil.rmtree(ws, ignore_errors=True)
+
+    # ④ 非瞬时失败 -> 不重试（重试无意义）
+    ws = make_workspace()
+    gen = FlakyGen(write_script=[FAILING_TEST], design=sample_design(),
+                   plan=sample_plan(), fail_design=99)
+    gen.fail_design = 0
+    gen.design = lambda requirement: (_ for _ in ()).throw(RuntimeError("需求格式非法，无法解析"))
+    res = build_loop(ws, gen).run(sample_requirement())
+    check("T35f 非瞬时失败不重试，直接判失败",
+          res.state == "FAILED" and "设计失败" in (res.note or ""), (res.note or "")[:60])
+    shutil.rmtree(ws, ignore_errors=True)
+
+    # ⑤ 写测试阶段瞬时失败 -> 走上**本来就有**的带反馈重试循环
+    ws = make_workspace()
+    gen = mk(fail_write=1)
+    res = build_loop(ws, gen).run(sample_requirement())
+    # 断言「尝试了 2 次」且「第 2 次真的写成了」——证明需求继续往下走，
+    # 而不是在第一次模型抖动时就被判死。（最终 state 仍是 FAILED：
+    # 这个夹具的测试断言 value()==999，本来就永远不可能通过。）
+    check("T35g 写测试瞬时失败会重试并继续（复用既有重试循环，不再绕过它）",
+          gen.write_attempts_count >= 2 and len(gen.write_calls) >= 1,
+          f"尝试 {gen.write_attempts_count} 次, 成功写入 {len(gen.write_calls)} 次")
+    shutil.rmtree(ws, ignore_errors=True)
+
+
 def t23_uncollectable_test_rolls_back_to_test_stage() -> None:
     """测试文件跑不起来（0 个测试被收集）-> 判 TEST_BROKEN 并回退到写测试阶段，
     而不是把 4 轮实现预算浪费在一个坏掉的测试文件上。
@@ -1536,6 +1639,7 @@ def main() -> int:
         t32_missing_implementation_is_valid_red,
         t33_exit_code_contract,
         t34_sdk_backend_parity_and_summary_arithmetic,
+        t35_transient_model_failure_does_not_kill_requirement,
     ):
         try:
             fn()

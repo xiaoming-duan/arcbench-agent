@@ -65,6 +65,7 @@ class Watch:
         self.session = datetime.now().strftime('%Y%m%d-%H%M%S')
         self.log_path = LOG_DIR / f"watch-{self.session}.log"
         self.state: dict = {
+            "session": self.session,
             "started_at": now(),
             "interval_s": args.interval,
             "probes_per_check": args.probes,
