@@ -25,7 +25,10 @@ EXCLUDED_DIRS = {"backups", ".workstreams", "dist", ".arc", ".npm-cache",
                  # 运行期日志目录（与 .arc/ out*/ *.log 同类：运行产物，可重建）
                  "logs",
                  # 平台 API 文档的抓取缓存（2.8MB 派生物，可重新抓取）
-                 ".apidoc"}
+                 ".apidoc",
+                 # git worktree（另一条工作流为分支隔离建的检出副本）——
+                 # 里面是**同一份源码的第二份拷贝**，进包会让文件数翻倍
+                 ".wt"}
 EXCLUDED_PREFIXES = (".verify-", ".probe-", ".zipcheck", ".zipv", ".bkcheck")
 EXCLUDED_SUFFIXES = (".log", ".pyc", ".pyo")
 
