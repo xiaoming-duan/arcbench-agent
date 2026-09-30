@@ -59,16 +59,24 @@ _BROKEN_TEST_PATTERNS = (
     re.compile(r"ReferenceError", re.IGNORECASE),
 )
 
-# 收集阶段「模块找不到」的两种典型措辞
-#   Rolldown/Node: Cannot find module '<spec>' imported from <file>
-#   Vite:          Failed to resolve import "<spec>" from "<file>"
+# 收集阶段「模块找不到」的两种典型措辞。**路径两侧的引号可有可无**：
+#   Rolldown/Node: Cannot find module '../src/x.js' imported from /abs/tests/x.test.js
+#                  平台实测该路径**带单引号**：imported from '/workspace/.../x.test.js'
+#   Vite:          Failed to resolve import "../src/x.js" from "tests/x.test.js"
+#
+# 初版写成 `imported from\s*(?P<frm>[^\s'"]+)` —— 要求 from 之后第一个字符不是引号，
+# 于是平台上带引号的真实报错**一条都匹配不上**，整个修复静默失效。
+# 而单测却全绿：因为夹具是我自己手写的「无引号版」，而不是平台原文。
+# 教训：夹具必须来自真实日志，不能来自我对格式的假设。
 _MISSING_MODULE_PATTERNS = (
     re.compile(
-        r"""Cannot find module\s*['"](?P<spec>[^'"]+)['"]\s*imported from\s*(?P<frm>[^\s'"]+)""",
+        r"""Cannot find module\s*['"]?(?P<spec>[^'"]+)['"]?\s*imported from\s*"""
+        r"""['"]?(?P<frm>[^'"\s]+)['"]?""",
         re.IGNORECASE,
     ),
     re.compile(
-        r"""Failed to resolve import\s*['"](?P<spec>[^'"]+)['"]\s*from\s*['"](?P<frm>[^'"]+)['"]""",
+        r"""Failed to resolve import\s*['"]?(?P<spec>[^'"]+)['"]?\s*from\s*"""
+        r"""['"]?(?P<frm>[^'"\s]+)['"]?""",
         re.IGNORECASE,
     ),
 )

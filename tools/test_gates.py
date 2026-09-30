@@ -1036,13 +1036,21 @@ def t32_missing_implementation_is_valid_red() -> None:
         return TO(passed=passed, command="vitest", exit_code=1, total=total,
                   failed=0, stdout="", stderr=stderr)
 
+    # ★夹具必须是**平台原文**：importing 路径两侧带单引号。
+    #   初版夹具是我手写的「无引号版」，于是正则里漏掉 ['"]? 也照样全绿，
+    #   而修复在平台上一條都匹配不上、静默失效（2026-09-30 14:15:55 的日志）。
     missing_impl = (
-        "Error: Cannot find module '../src/services/summary.js' "
-        f"imported from {tf}\n\n Test Files  1 failed (1)\n      Tests  no tests"
+        "Error: Cannot find module '../src/services/workbookService.js' "
+        f"imported from '{tf}'\n\n Test Files  1 failed (1)\n      Tests  no tests"
     )
     o = outcome(missing_impl)
     check("T32a 缺实现模块的收集失败 -> 不算 TEST_BROKEN（有效 RED）",
           loop._is_uncollectable(o) is False, str(loop._expected_red_reason(o)))
+    # 无引号变体（本地实测的 Rolldown 措辞）也必须认——两种都出现过
+    unquoted = ("Error: Cannot find module '../src/services/summary.js' "
+                f"imported from {tf}\n      Tests  no tests")
+    check("T32a2 无引号变体同样识别（两种措辞都要认）",
+          loop._is_uncollectable(outcome(unquoted)) is False)
     check("T32b 且给出可读理由（点明是 RED 常态）",
           "尚未存在" in (loop._expected_red_reason(o) or "")
           or "RED 阶段" in (loop._expected_red_reason(o) or ""),
