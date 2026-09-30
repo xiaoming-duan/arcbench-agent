@@ -220,6 +220,7 @@ RUN_REPORT_FIELDS: tuple[str, ...] = (
     "project_name",
     "requirements_total",
     "upstream_failed",
+    "decomposed",
     "generator",
     "test_dialect",
     "ok",
@@ -313,6 +314,9 @@ class RunReport:
     results: list[RequirementResult] = field(default_factory=list)
     # 因上游未通过而未进入 TDD 循环的需求数（不计入通过率分母）
     upstream_failed: int = 0
+    # 容器节点（ROOT 等）：只分解不设计，不产生 RequirementResult。
+    # 但它计入 requirements_total，所以必须单独报出来，否则摘要里账目对不上。
+    decomposed: int = 0
     artifacts: list[str] = field(default_factory=list)
     generator: str = ""
     test_dialect: str = ""
@@ -330,6 +334,7 @@ class RunReport:
             "project_name": self.project_name,
             "requirements_total": self.requirements_total,
             "upstream_failed": self.upstream_failed,
+            "decomposed": self.decomposed,
             "generator": self.generator,
             "test_dialect": self.test_dialect,
             "ok": self.ok,

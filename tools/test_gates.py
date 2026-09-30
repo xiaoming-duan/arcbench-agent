@@ -1174,6 +1174,100 @@ def t33_exit_code_contract() -> None:
         shutil.rmtree(ws, ignore_errors=True)
 
 
+def t34_sdk_backend_parity_and_summary_arithmetic() -> None:
+    """① SDK 后端必须与 HTTP 后端同等记账与校验；② 摘要账目必须对得上。
+
+    实测（平台 2026-09-30 14:42）：
+      「成本记账: 调用 0 次 / token 0 … / prompt 69276 字符（单次最大 11804）」
+    prompt 体积在 complete() 入口累加，而 calls 只在 HTTP 后端自增 ——
+    平台上 openai 是装好的（requirements.txt 里有），所以走的是 SDK 路径，
+    于是**整套记账与截断诊断全部缺席**：
+      - 成本恒为 0
+      - finish_reason=length 的截断永不告警
+      - 空正文不报错、传输错误不重试、协议适配也没有
+
+    同一份日志还暴露第二个账目问题：共 42 个需求，尝试 3 + 上游失败 21 = 24，
+    剩下 18 个是「只分解不设计」的容器节点，此前在摘要里完全不出现。
+    """
+    from factory.llm import MAX_TOKEN_CEILING, CallStats, ModelCallError, ModelClient
+    from factory.models import RUN_REPORT_FIELDS, RunReport
+
+    class _Resp:
+        def __init__(self, content, finish="stop", usage=(11, 7, 18), reasoning=None):
+            self._d = {
+                "choices": [{"finish_reason": finish,
+                             "message": {"content": content, "reasoning_content": reasoning}}],
+                "usage": {"prompt_tokens": usage[0], "completion_tokens": usage[1],
+                          "total_tokens": usage[2]},
+            }
+
+        def model_dump(self):  # noqa: ANN201
+            return self._d
+
+    class _Completions:
+        def __init__(self, script):
+            self.script = list(script)
+            self.calls = []
+
+        def create(self, **payload):  # noqa: ANN003
+            self.calls.append(payload)
+            item = self.script.pop(0) if self.script else _Resp("")
+            if isinstance(item, Exception):
+                raise item
+            return item
+
+    def client(script):
+        c = object.__new__(ModelClient)
+        c.stats = CallStats()
+        c.api_key, c.model, c.base_url = "k", "m", None
+        c.temperature, c.max_tokens, c.timeout_s = 0.2, 1500, 30
+        comp = _Completions(script)
+        c._sdk = type("S", (), {"chat": type("C", (), {"completions": comp})()})()
+        return c
+
+    c = client([_Resp('{"ok":1}')])
+    out = c._complete_sdk(system="s", user="u", json_mode=True)
+    check("T34a SDK 后端会记调用次数（此前恒为 0）",
+          out == '{"ok":1}' and c.stats.calls == 1, f"calls={c.stats.calls}")
+    check("T34b SDK 后端会记 token（此前恒为 0）",
+          c.stats.total_tokens == 18 and c.stats.prompt_tokens == 11,
+          f"tokens={c.stats.total_tokens}")
+
+    c = client([_Resp("")])
+    try:
+        c._complete_sdk(system="s", user="u", json_mode=False)
+        raised = ""
+    except ModelCallError as exc:
+        raised = str(exc)
+    check("T34c SDK 后端空正文会报错（并触发预算升级后停在上限）",
+          "空内容" in raised and c.max_tokens == MAX_TOKEN_CEILING,
+          f"{raised[:50]} max_tokens={c.max_tokens}")
+
+    class _Boom(Exception):
+        status_code = 503
+
+    c = client([_Boom("upstream 503"), _Resp('{"ok":1}')])
+    c._complete_sdk(system="s", user="u", json_mode=False)
+    check("T34d SDK 后端可重试错误会重试并计入 gateway_retries（此前一次都不重试）",
+          c.stats.gateway_retries == 1 and c.stats.calls == 1,
+          f"retries={c.stats.gateway_retries} calls={c.stats.calls}")
+
+    c = client([Exception("unsupported parameter: max_tokens"), _Resp('{"ok":1}')])
+    c._complete_sdk(system="s", user="u", json_mode=False)
+    check("T34e SDK 后端共享协议适配（max_tokens -> max_completion_tokens）",
+          c.stats.adaptation_retries == 1
+          and "max_completion_tokens" in c._sdk.chat.completions.calls[1],
+          f"adapt={c.stats.adaptation_retries}")
+
+    # ② 摘要账目
+    check("T34f RunReport 契约含 decomposed", "decomposed" in RUN_REPORT_FIELDS)
+    payload = RunReport(project_name="p", requirements_total=42, decomposed=18).to_dict()
+    attempted, up = 3, 21
+    check("T34g 账目可对上：尝试 + 上游失败 + 分解节点 = 总数",
+          attempted + up + payload["decomposed"] == payload["requirements_total"],
+          f"{attempted}+{up}+{payload['decomposed']} vs {payload['requirements_total']}")
+
+
 def t23_uncollectable_test_rolls_back_to_test_stage() -> None:
     """测试文件跑不起来（0 个测试被收集）-> 判 TEST_BROKEN 并回退到写测试阶段，
     而不是把 4 轮实现预算浪费在一个坏掉的测试文件上。
@@ -1441,6 +1535,7 @@ def main() -> int:
         t31_code_version_anchor,
         t32_missing_implementation_is_valid_red,
         t33_exit_code_contract,
+        t34_sdk_backend_parity_and_summary_arithmetic,
     ):
         try:
             fn()

@@ -211,13 +211,24 @@ class ModelClient:
     # ---- 后端 1: openai SDK ----
 
     def _complete_sdk(self, *, system: str, user: str, json_mode: bool) -> str:
-        if self._sdk is None:
-            from openai import OpenAI
+        """SDK 后端（openai 包）。
 
-            kwargs: dict[str, Any] = {"api_key": self.api_key, "timeout": self.timeout_s}
-            if self.base_url:
-                kwargs["base_url"] = self.base_url
-            self._sdk = OpenAI(**kwargs)
+        ★实测缺陷（平台 2026-09-30 14:42）：平台上 `openai` 是**装好的**
+        （requirements.txt 里就有），所以走的是这条路径 —— 而它此前只做
+        「create 然后直接返回 content」，于是 HTTP 后端里那一整套东西全部缺席：
+
+          - 用量记账：成本恒为「调用 0 次 / token 0」。
+            平台上「prompt 69276 字符（单次最大 11804）但调用 0 次」这个
+            自相矛盾的数字，就是这么来的：prompt 体积在 complete() 入口累加，
+            而 calls 只在这条路径之外自增。
+          - finish_reason=length 的截断告警永不触发（截断因此不可见）
+          - 空正文 / 只有 reasoning_content 不报错
+          - 传输层错误不重试（HTTP 路径会重试可恢复状态码与网络异常）
+          - 协议适配降级（temperature / response_format / max_tokens）也没有
+
+        现在两条路径共用 `_with_adaptation` 与 `_extract_content`，
+        差别只剩「怎么把请求发出去」。
+        """
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": [
@@ -229,11 +240,7 @@ class ModelClient:
         }
         if json_mode:
             payload["response_format"] = {"type": "json_object"}
-        try:
-            response = self._sdk.chat.completions.create(**payload)
-        except Exception as exc:
-            raise ModelCallError(f"openai SDK 调用失败: {exc}") from exc
-        return response.choices[0].message.content or ""
+        return self._with_adaptation(payload, self._sdk_chat)
 
     # ---- 后端 2: 标准库 HTTP ----
 
@@ -249,13 +256,18 @@ class ModelClient:
         }
         if json_mode:
             payload["response_format"] = {"type": "json_object"}
+        return self._with_adaptation(payload, self._post_chat)
 
-        # 逐项降级重试：不同服务端对 sampling / response_format 的支持不一致。
-        # 注意：这类是**协议适配**重试，与网络层的 gateway_retries 分开计数——
-        # 否则 retry_success_rate 的口径会被混入两种不同性质的失败。
+    def _with_adaptation(self, payload: dict[str, Any], call) -> str:  # noqa: ANN001
+        """协议适配降级循环 —— 两条后端共用，不再各写一份。
+
+        逐项降级重试：不同服务端对 sampling / response_format 的支持不一致。
+        注意：这类是**协议适配**重试，与网络层的 gateway_retries 分开计数——
+        否则 retry_success_rate 的口径会被混入两种不同性质的失败。
+        """
         for _ in range(4):
             try:
-                return self._post_chat(payload)
+                return call(payload)
             except ModelCallError as exc:
                 message = str(exc)
                 if "temperature" in message and payload.get("temperature") != 1:
@@ -306,6 +318,35 @@ class ModelClient:
         self.stats.reasoning_tokens += int(
             (usage.get("completion_tokens_details") or {}).get("reasoning_tokens") or 0
         )
+
+    def _sdk_chat(self, payload: dict[str, Any]) -> str:
+        """把一次 SDK 调用发出去，并做与 HTTP 后端**同样**的记账与正文校验。"""
+        if self._sdk is None:
+            from openai import OpenAI
+
+            kwargs: dict[str, Any] = {"api_key": self.api_key, "timeout": self.timeout_s}
+            if self.base_url:
+                kwargs["base_url"] = self.base_url
+            self._sdk = OpenAI(**kwargs)
+
+        last_error: Exception | None = None
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                response = self._sdk.chat.completions.create(**payload)
+            except Exception as exc:  # noqa: BLE001 —— SDK 异常层次视版本而异
+                last_error = ModelCallError(f"openai SDK 调用失败: {exc}")
+                if _is_retryable_sdk_error(exc) and attempt < MAX_RETRIES:
+                    self.stats.gateway_retries += 1
+                    _sleep_backoff(attempt)
+                    continue
+                raise last_error from exc
+            data = _sdk_response_to_dict(response)
+            # ★记账与校验：这两步此前在 SDK 路径上完全缺席，
+            #   导致平台上成本恒为 0、截断永不告警。
+            self._record_usage(data)
+            self.stats.calls += 1
+            return _extract_content(data)
+        raise last_error or ModelCallError("openai SDK 调用失败")
 
     def _post_chat(self, payload: dict[str, Any]) -> str:
         url = f"{self.base_url}/chat/completions"
@@ -390,6 +431,62 @@ def _sleep_backoff(attempt: int) -> None:
     delay = min(2 ** (attempt - 1), 8)
     logger.warning("模型调用失败，%ss 后重试（第 %d 次）", delay, attempt + 1)
     time.sleep(delay)
+
+
+def _sdk_response_to_dict(response: Any) -> dict[str, Any]:
+    """把 openai SDK 的响应对象转成与 HTTP 后端一致的 dict。
+
+    统一成 dict 之后，`_record_usage` 与 `_extract_content` 才能两条路径共用——
+    否则记账与正文校验就得在 SDK 路径上重写一遍，而那正是它们当初被漏掉的原因。
+    """
+    for attr in ("model_dump", "to_dict", "dict"):
+        dump = getattr(response, attr, None)
+        if callable(dump):
+            try:
+                data = dump()
+            except TypeError:      # 某些版本的 dict() 需要参数
+                continue
+            if isinstance(data, dict):
+                return data
+    # 兜底：手工拼出最小可用结构
+    choice = (getattr(response, "choices", None) or [None])[0]
+    message = getattr(choice, "message", None)
+    usage = getattr(response, "usage", None)
+    return {
+        "choices": [
+            {
+                "finish_reason": getattr(choice, "finish_reason", None),
+                "message": {
+                    "content": getattr(message, "content", None),
+                    "reasoning_content": getattr(message, "reasoning_content", None),
+                },
+            }
+        ],
+        "usage": {
+            "prompt_tokens": getattr(usage, "prompt_tokens", 0),
+            "completion_tokens": getattr(usage, "completion_tokens", 0),
+            "total_tokens": getattr(usage, "total_tokens", 0),
+        },
+    }
+
+
+def _is_retryable_sdk_error(exc: Exception) -> bool:
+    """SDK 异常是否值得重试 —— 与 HTTP 后端的 RETRYABLE_STATUS 对齐。
+
+    HTTP 路径会重试 429/5xx 与网络异常；SDK 路径此前**一次都不重试**，
+    于是平台上一次网关抖动就直接判该需求失败。
+    """
+    status = getattr(exc, "status_code", None) or getattr(
+        getattr(exc, "response", None), "status_code", None
+    )
+    if isinstance(status, int):
+        return status == 429 or 500 <= status < 600
+    name = type(exc).__name__
+    return name in {
+        "APIConnectionError", "APITimeoutError", "InternalServerError",
+        "RateLimitError", "Timeout", "ConnectTimeout", "ReadTimeout",
+        "ConnectionError", "RemoteDisconnected",
+    } or isinstance(exc, (TimeoutError, ConnectionError, OSError))
 
 
 def _extract_content(data: dict[str, Any]) -> str:

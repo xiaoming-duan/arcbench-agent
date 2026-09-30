@@ -257,9 +257,15 @@ def run_factory(
         # 空转测试（实现前就通过）意味着这条"绿灯"不构成证据，不能算通过。
         # 测试是唯一权威；一条永远不会失败的测试不是权威。
         weak = sum(1 for item in report.results if item.red_first_ok is False)
+        # ★容器节点（ROOT 等）只分解不设计，因此不产生 RequirementResult。
+        #   它们仍计入 requirements_total，但此前在摘要里**完全不出现**——
+        #   实测平台日志：共 42 个需求，尝试 3 个 + 上游失败 21 个 = 24，
+        #   剩下 18 个无从解释。现在单独列出来，账目当场对得上。
+        report.decomposed = len(container_ids)
         summary = (
             f"完成: {passed} 通过 / {failed} 失败 / {upstream_failed} 上游失败跳过"
             f" / {weak} 空转测试(WEAK_TEST)"
+            f" / {report.decomposed} 分解节点（只分解不设计）"
             f" / 共 {report.requirements_total} 个需求（尝试 {attempted} 个）"
         )
         store.commit(f"factory: {summary}")

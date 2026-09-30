@@ -59,7 +59,11 @@ def now() -> str:
 class Watch:
     def __init__(self, args: argparse.Namespace) -> None:
         self.args = args
-        self.log_path = LOG_DIR / f"watch-{datetime.now().strftime('%Y%m%d-%H%M%S')}.log"
+        # 用启动时间戳做命名空间：重启后不再覆盖上一轮的日志与输出目录。
+        # 初版用 self.state["closure6_runs"]+1 做索引，重启后索引从 1 重来，
+        # 会把上一轮的 run-1.log 与 out-watch1/ 覆盖掉 —— 实测踩到。
+        self.session = datetime.now().strftime('%Y%m%d-%H%M%S')
+        self.log_path = LOG_DIR / f"watch-{self.session}.log"
         self.state: dict = {
             "started_at": now(),
             "interval_s": args.interval,
@@ -109,7 +113,7 @@ class Watch:
     # ---------------------------------------------------------------- 运行
     def run_closure6(self, index: int) -> dict:
         """用 guard 在冻结副本里跑 closure6，返回记录。"""
-        out_dir = f"out-watch{index}"
+        out_dir = f"out-watch{self.session}-{index}"
         snap = ROOT / ".workstreams" / SNAPSHOT_LABEL
         if not snap.is_dir():
             return {"error": f"冻结快照不存在: {snap}（先跑 workstream.py snapshot）"}
@@ -131,14 +135,15 @@ class Watch:
         ]
         t0 = time.time()
         self.log(f"▶️  第 {index} 次 closure6 开跑（guard 隔离，cwd={snap}）")
-        run_log = LOG_DIR / f"run-{index}.log"
+        run_log = LOG_DIR / f"run-{self.session}-{index}.log"
         with run_log.open("w", encoding="utf-8") as fh:
             proc = subprocess.run(cmd, cwd=str(ROOT), env=env,
                                   stdout=fh, stderr=subprocess.STDOUT, text=True)
         elapsed = time.time() - t0
 
         record: dict = {
-            "index": index, "started": now(), "elapsed_s": round(elapsed, 1),
+            "index": index, "session": self.session,
+            "started": now(), "elapsed_s": round(elapsed, 1),
             "exit_code": proc.returncode, "run_log": str(run_log),
         }
         # 读报告
