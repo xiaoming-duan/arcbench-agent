@@ -1371,6 +1371,127 @@ def t35_transient_model_failure_does_not_kill_requirement() -> None:
     shutil.rmtree(ws, ignore_errors=True)
 
 
+def t37_quota_exhaustion_is_terminal_and_fails_fast() -> None:
+    """配额/余额耗尽 = 终局，不是瞬时：不重试，且整轮提前收摊。
+
+    实测（平台 2026-09-30 18:26）：
+        429 {'code': 'Free quota exhausted and balance too low, please recharge
+             compute credits.', 'type': 'insufficient_quota'}
+    它带着 **429**，而我上一轮的瞬时判据里恰好有 "429" 这个词 —— 于是配额耗尽
+    被同时判为「可重试」和「瞬时」，一次运行白白「网关重试 11 次（成功 0）」，
+    外加每个需求 3 次循环级重试。
+
+    关键区分：同是 429，
+        429 rate_limit_exceeded -> 瞬时，退避重试有意义
+        429 insufficient_quota  -> 终局，重试纯属烧时间
+    """
+    from factory.llm import (
+        _is_quota_exhausted,
+        _is_retryable_sdk_error,
+        _is_timeout_error,
+    )
+    from factory.loop import _is_transient_model_error
+
+    real = ("openai SDK 调用失败: Error code: 429 - {'error': {'code': "
+            "'Free quota exhausted and balance too low, please recharge compute credits.', "
+            "'type': 'insufficient_quota'}}")
+
+    check("T37a 能识别配额耗尽（insufficient_quota / recharge / compute credits）",
+          _is_quota_exhausted(real) and _is_quota_exhausted("insufficient_quota"))
+    check("T37b 限流不算配额耗尽（429 rate limit 仍应可重试）",
+          not _is_quota_exhausted("429 rate limit exceeded, please retry later"))
+
+    check("T37c 配额耗尽的真实报错**不**判为瞬时（此前被 429 误判）",
+          _is_transient_model_error(Exception(real)) is False, "被误判为瞬时")
+    check("T37d 限流仍判为瞬时（不能把该重试的也一刀切掉）",
+          _is_transient_model_error(Exception("429 rate limit exceeded")) is True)
+    check("T37e 超时仍判为瞬时",
+          _is_transient_model_error(Exception("Request timed out.")) is True)
+    check("T37f 配额文本即使被别的层重新包装也认得出",
+          _is_transient_model_error(Exception(f"包装层: {real}")) is False)
+
+    # 时间/重试代价的区分仍然成立
+    check("T37g 超时判据独立于配额判据",
+          _is_timeout_error(Exception("Request timed out"))
+          and not _is_timeout_error(Exception(real)))
+    class _429(Exception):
+        status_code = 429
+    check("T37h 429 在传输层仍算可重试（限流场景），配额由上层先行拦截",
+          _is_retryable_sdk_error(_429("429")) is True)
+
+    # 配额异常必须能穿透 loop 的异常处理（不能被吞进「回传重试」）
+    import inspect
+
+    from factory.loop import TddLoop
+
+    for name in ("run",):
+        src = inspect.getsource(getattr(TddLoop, name))
+        check(f"T37i {name}() 对 ModelQuotaExhaustedError 显式上抛",
+              src.count("except ModelQuotaExhaustedError:") >= 3,
+              f"出现 {src.count('except ModelQuotaExhaustedError:')} 次")
+
+    from factory import pipeline
+
+    psrc = inspect.getsource(pipeline.run_factory)
+    check("T37j pipeline 在配额耗尽时 break（不再逐个烧重试预算）",
+          "ModelQuotaExhaustedError" in psrc and "break" in psrc)
+    check("T37k 配额中止时绝不判 ok",
+          "not quota_exhausted" in psrc)
+
+    # ---- 端到端：配额耗尽必须让整轮提前收摊（不是逐个需求烧重试预算）----
+    import tempfile as _tf
+
+    from arcbench_agent_runtime import AgentRuntime
+
+    from factory import pipeline as _P
+    from factory.config import FactoryConfig as _FC
+    from factory.llm import ModelQuotaExhaustedError as _Quota
+
+    class _QuotaGen:
+        name = "quota"
+        calls = 0
+
+        def design(self, requirement):  # noqa: ANN001
+            _QuotaGen.calls += 1
+            raise _Quota("insufficient_quota: Free quota exhausted, please recharge")
+
+        def plan_tests(self, *a, **k):  # noqa: ANN002, ANN003
+            raise AssertionError("配额已耗尽，不该走到计划阶段")
+
+        write_tests = implement = plan_tests
+
+    # 修（本工作流代为补上）：`_Path` 此前只在 t30 的作用域内局部导入，
+    # T37 直接引用 -> NameError，整个 test_gates 套件报红。
+    # 按该文件既有风格（t30 的 `from pathlib import Path as _Path`）补局部导入。
+    from pathlib import Path as _Path
+
+    ws = Path(_tf.mkdtemp(prefix="quota-abort-"))
+    reqs = ws / "reqs"
+    reqs.mkdir(parents=True)
+    (reqs / "requirements.yaml").write_text(
+        "schema_version: \"1.0\"\nproject: {id: q, name: quota}\nrequirements:\n"
+        + "".join(f"  - id: REQ-{i}\n    name: r{i}\n" for i in (1, 2, 3)),
+        encoding="utf-8")
+    runtime = AgentRuntime.from_env(project_dir=str(ws / "out"))
+    cfg = _FC()
+    cfg.install_deps = "never"
+    original = _P.build_generator
+    _P.build_generator = lambda *a, **k: _QuotaGen()  # type: ignore[assignment]
+    try:
+        report = _P.run_factory(runtime, reqs, ws / "out", config=cfg,
+                                template_dir=ROOT / "template")
+    finally:
+        _P.build_generator = original  # type: ignore[assignment]
+
+    check("T37l 配额耗尽时整轮提前收摊（只尝试了 1 个需求）",
+          _QuotaGen.calls == 1, f"design 被调用 {_QuotaGen.calls} 次")
+    check("T37m 提前中止时 report.ok=False 且 error 指向配额",
+          report.ok is False and "Quota" in (report.error or ""),
+          f"ok={report.ok} error={(report.error or '')[:60]}")
+    shutil.rmtree(ws, ignore_errors=True)
+
+
+
 def t23_uncollectable_test_rolls_back_to_test_stage() -> None:
     """测试文件跑不起来（0 个测试被收集）-> 判 TEST_BROKEN 并回退到写测试阶段，
     而不是把 4 轮实现预算浪费在一个坏掉的测试文件上。
@@ -1401,6 +1522,57 @@ def t23_uncollectable_test_rolls_back_to_test_stage() -> None:
     fb = loop._broken_test_feedback(collected_fail)
     check("T23e 反馈给出可执行的修法（vi.hoisted 不能引用顶层 import）",
           "vi.hoisted" in fb and "require(" in fb and "收集" in fb)
+
+
+def t36_dependency_audit_runs_even_when_tests_fail() -> None:
+    """依赖审计必须**无条件运行**，不放在 `if outcome.passed` 内。
+
+    实测缺陷（closure6 直接证据）：
+      审计原先位于 `if outcome.passed:` 之内 -> 测试不过就永不审计 ->
+      报告里 `dependency_violations = 0` 看起来像「依赖用对了」，
+      **实际是「依赖根本没被评估」**。
+      REQ-11 的 movementsService.js 有 0 条 import、与上游从未连接，
+      本应被判 DEPENDENCY_NOT_USED —— 只要门禁运行。
+
+    而「测试过不去」恰恰最可能有依赖问题：跨模块集成断裂时，
+    下游测试正是因为接不上上游而失败。
+
+    这条断言守的是**位置**（编号本应为 T26，但该号已被并发工作流占用，故改为 T36）：审计调用必须在 `if outcome.passed:` 之前。
+    """
+    import inspect
+    source = inspect.getsource(TddLoop.run)
+
+    # 找到实现循环里最后一次 runner.run 之后的区域
+    idx_run = source.rfind("outcome = self.runner.run(test_paths)")
+    assert idx_run != -1, "找不到 outcome = self.runner.run(test_paths)"
+    tail = source[idx_run:]
+
+    # 该区域内「测试通过分支」的相对位置。
+    # 必须匹配**代码行**（12 空格缩进）而不是裸子串 ——
+    # 初版用 tail.find("if outcome.passed:")，结果命中了注释里引用的同一串文字，
+    # 于是断言在修复已生效的情况下仍报红。断言必须认代码，不认注释。
+    marker = "\n            if outcome.passed:\n"
+    idx_if = tail.find(marker)
+    assert idx_if != -1, "找不到其后的 if outcome.passed: 代码行"
+
+    region_before_if = tail[:idx_if]
+    for name in ("dep_audit = self._audit_dependencies(",
+                 "mock_audit = self._audit_mocks(",
+                 "bypass_audit = self._audit_bypass("):
+        check(f"T36 审计在 if outcome.passed 之前: {name.split(' =')[0]}",
+              name in region_before_if,
+              "在 if 内 -> 测试不过就永不审计" if name not in region_before_if else "")
+
+    check("T36d 违规记录在循环外无条件执行",
+          "result.dependency_violations = [u.to_dict() for u in dep_audit.violations]"
+          in source)
+
+    # combined_ok 不得短路：必须是三个 ok 的由 and 连接
+    gate = source[source.find("dep_ok_raw = "):]
+    gate = gate[:gate.find("if outcome.passed and dep_ok")]
+    check("T36e combined_ok 非短路（三个 ok 全部参与 and 链）",
+          "dep_ok = dep_ok and mock_ok and bypass_ok" in gate,
+          "若写成嵌套 if 短路，被跳过的门禁结果不会被使用")
 
 
 def t22_test_source_is_given_to_implement() -> None:
@@ -1638,8 +1810,10 @@ def main() -> int:
         t31_code_version_anchor,
         t32_missing_implementation_is_valid_red,
         t33_exit_code_contract,
+        t36_dependency_audit_runs_even_when_tests_fail,
         t34_sdk_backend_parity_and_summary_arithmetic,
         t35_transient_model_failure_does_not_kill_requirement,
+        t37_quota_exhaustion_is_terminal_and_fails_fast,
     ):
         try:
             fn()

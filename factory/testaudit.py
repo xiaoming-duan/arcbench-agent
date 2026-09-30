@@ -384,9 +384,15 @@ DEP_FAKE = "FAKE_DEPENDENCY"
 DEP_UPSTREAM_MISSING = "UPSTREAM_MISSING"
 DEP_SKIPPED_INDIRECT = "SKIPPED_INDIRECT"
 DEP_UNCERTAIN = "DEPENDENCY_CHECK_UNCERTAIN"
+# 跨模块调用契约不匹配：调用了上游，但**调用形状与声明不一致**。
+# 与 DEPENDENCY_NOT_USED 的区别：后者是「没调」，前者是「调了但调错」——
+# 单模块测试无法暴露后者（同名不同语义），只有声明式契约能。
+DEP_CONTRACT_MISMATCH = "CONTRACT_MISMATCH"
 
 # 判定为违规（阻断）的
-DEP_VIOLATIONS = frozenset({DEP_NOT_USED, DEP_FAKE, DEP_UPSTREAM_MISSING})
+DEP_VIOLATIONS = frozenset({DEP_NOT_USED, DEP_FAKE, DEP_UPSTREAM_MISSING,
+                            # 调了但调用形状与声明不符 —— 同样必须阻断
+                            DEP_CONTRACT_MISMATCH})
 # 记录下来、人工复核，但**不阻断**
 DEP_UNCERTAIN_VERDICTS = frozenset({DEP_SKIPPED_INDIRECT, DEP_UNCERTAIN})
 
@@ -524,6 +530,64 @@ class DependencyAudit:
         return describe_dependencies(self)
 
 
+def actual_call_arity(source: str, symbol: str) -> int | None:
+    """在下游源码里找 `symbol(...)` 的调用，返回**实参个数**；找不到返回 None。
+
+    顶层逗号计数，忽略嵌套括号与字符串里的逗号。
+    """
+    import re as _re
+    for m in _re.finditer(rf"(?<![\w$.]){_re.escape(symbol)}\s*\(", source):
+        start = m.end()
+        depth = 0
+        count = 0
+        seen_token = False
+        i = start
+        while i < len(source):
+            ch = source[i]
+            if ch in "([{":
+                depth += 1
+            elif ch in ")]}":
+                if depth == 0:
+                    break
+                depth -= 1
+            elif ch == "," and depth == 0:
+                count += 1
+            elif not ch.isspace():
+                seen_token = True
+            i += 1
+        return (count + 1) if seen_token else 0
+    return None
+
+
+def check_contract_signature(
+    declared: "CrossModuleCall",
+    sources: Sequence[tuple[str, str]],
+) -> tuple[bool, str, int | None]:
+    """比对实际调用与声明签名。返回 (是否一致, 说明, 实际参数个数)。
+
+    只在 `cross_module_calls` 声明了该 upstream 时被调用 ——
+    未声明时本函数根本不参与，门禁行为与从前逐位一致。
+    """
+    want = declared.declared_arity
+    if want is None:
+        return True, "声明未给出可解析的签名，跳过签名比对", None
+    actuals: list[tuple[str, int]] = []
+    for path, text in sources:
+        got = actual_call_arity(text, declared.symbol)
+        if got is not None:
+            actuals.append((path, got))
+    if not actuals:
+        return True, f"未找到 {declared.symbol}(...) 的调用，签名比对留给「是否调用」判定", None
+    bad = [(p, n) for p, n in actuals if n != want]
+    if not bad:
+        return True, f"调用形状与声明一致（{want} 个参数）", want
+    worst = bad[0]
+    return False, (
+        f"声明签名 `{declared.signature}`（{want} 个参数），"
+        f"但 {worst[0]} 里按 **{worst[1]} 个参数**调用 `{declared.symbol}`"
+    ), worst[1]
+
+
 def audit_dependency_usage(
     output_dir: Path,
     *,
@@ -532,6 +596,8 @@ def audit_dependency_usage(
     downstream_files: Sequence[str],
     upstream_files: Sequence[str],
     indirect_reason: str = "",
+    # 可选：该 upstream 的声明式调用契约。为空时**本函数行为与从前逐位一致**。
+    declared_calls: Sequence["CrossModuleCall"] = (),
 ) -> DependencyUsage:
     """检查下游实现是否真的调用了上游模块导出的函数/方法。
 
@@ -621,6 +687,31 @@ def audit_dependency_usage(
                     else:
                         unknown.add(f"{ns}.{member}")
 
+    # ---- 跨模块调用契约的签名比对（仅当声明了 cross_module_calls）----
+    # 位置刻意放在既有「是否 import / 是否调用导出符号」判定**之后**：
+    # 先确认「确实调了」，再确认「调的形状对不对」。
+    # declared_calls 为空时这一段整体跳过，既有行为不变。
+    if declared_calls:
+        sources: list[tuple[str, str]] = []
+        for rel in downstream_files:
+            p = output_dir / rel
+            if p.is_file():
+                sources.append((rel, p.read_text(encoding="utf-8")))
+        for declared in declared_calls:
+            if declared.upstream != upstream:
+                continue
+            ok, why, actual_arity = check_contract_signature(declared, sources)
+            if not ok:
+                return DependencyUsage(
+                    downstream=downstream, upstream=upstream,
+                    verdict=DEP_CONTRACT_MISMATCH,
+                    detail=why,
+                    upstream_exports=tuple(sorted(exports)),
+                    referenced_symbols=tuple(sorted(referenced)),
+                    called_symbols=tuple(sorted(called)),
+                    upstream_files=tuple(upstream_files),
+                )
+
     if referenced:
         return DependencyUsage(
             downstream=downstream, upstream=upstream, verdict=DEP_USED,
@@ -661,6 +752,7 @@ def audit_requirement_dependencies(
     downstream_files: Sequence[str],
     produced_files: dict[str, Sequence[str]],
     indirect_dependencies: dict[str, str] | None = None,
+    declared_calls: Sequence["CrossModuleCall"] = (),
 ) -> DependencyAudit:
     """对一个需求的全部声明依赖做使用审计。
 
@@ -679,6 +771,7 @@ def audit_requirement_dependencies(
                 downstream_files=downstream_files,
                 upstream_files=list(produced_files.get(upstream, [])),
                 indirect_reason=indirect.get(upstream, ""),
+                declared_calls=declared_calls,
             )
         )
     return audit
@@ -700,6 +793,10 @@ def describe_dependencies(audit: DependencyAudit) -> str:
             lines.append(f"    上游实现文件（请 require 这些路径）: {', '.join(item.upstream_files[:5])}")
         if item.upstream_exports:
             lines.append(f"    上游导出清单（请调用其中之一）: {', '.join(item.upstream_exports[:10])}")
+        if item.verdict == DEP_CONTRACT_MISMATCH:
+            lines.append("    **修正指令**：按需求声明的 cross_module_calls 里的签名调用 —— "
+                         "参数个数与顺序都必须一致；语义（含副作用）也必须一致。"
+                         "若你已按声明调用而本报告仍不匹配，检查是否在别处用了另一种写法。")
     lines.append(
         "要求：下游实现必须**真实调用**上游模块导出的函数/方法"
         "（import 那个模块并使用它的导出），不能只声明依赖、也不能用参数注入绕过。"

@@ -14,6 +14,7 @@ from typing import Sequence
 
 from .config import FactoryConfig
 from .generator import Generator
+from .llm import ModelQuotaExhaustedError
 from .models import (
     DesignPlan,
     GeneratedFile,
@@ -61,6 +62,12 @@ _BROKEN_TEST_PATTERNS = (
 
 # 瞬时/传输层故障特征。这类失败**不应直接判需求失败**：重试一次有意义，
 # 且一次超时不该把已经过了设计/写测试/RED 的需求整条丢掉。
+# 配额/余额耗尽（终局，绝不可重试）——与限流同码不同命
+_QUOTA_TEXT_MARKERS = (
+    "insufficient_quota", "quota exhausted", "exceeded your current quota",
+    "balance too low", "recharge", "compute credits", "insufficient balance",
+)
+
 _TRANSIENT_MODEL_MARKERS = (
     "timed out", "timeout", "超时", "temporarily", "rate limit", "429",
     "500", "502", "503", "504", "connection", "连接", "network", "网络",
@@ -69,8 +76,19 @@ _TRANSIENT_MODEL_MARKERS = (
 
 
 def _is_transient_model_error(exc: Exception) -> bool:
-    """模型/传输层故障是否为「瞬时」——决定是回传重试还是直接判失败。"""
+    """模型/传输层故障是否为「瞬时」——决定是回传重试还是直接判失败。
+
+    ★必须先排除配额耗尽：它也带 429，但重试永远不会成功。
+    实测教训：把配额耗尽当瞬时，一次运行白白「网关重试 11 次（成功 0）」，
+    外加每个需求的 3 次循环级重试。
+    """
+    if isinstance(exc, ModelQuotaExhaustedError):
+        return False
     text = str(exc).lower()
+    # 兜底：异常被别的层重新包装过（不再是 ModelQuotaExhaustedError）时，
+    # 仍靠文本认出「配额/余额」——它绝不能进重试路径。
+    if any(marker in text for marker in _QUOTA_TEXT_MARKERS):
+        return False
     return any(marker in text for marker in _TRANSIENT_MODEL_MARKERS)
 
 # 收集阶段「模块找不到」的两种典型措辞。**路径两侧的引号可有可无**：
@@ -508,6 +526,11 @@ class TddLoop:
             downstream_files=self._impl_files.get(requirement.req_id, []),
             produced_files=self._impl_files,
             indirect_dependencies=indirect,
+            # 跨模块调用契约（可选；未声明时为空元组，门禁行为不变）
+            declared_calls=(
+                requirement.cross_module_calls
+                if self.config.enforce_contract_signature else ()
+            ),
         )
 
     def _audit_mocks(self, requirement: Requirement, allowed_paths: Sequence[str]) -> MockAudit:
@@ -838,6 +861,8 @@ class TddLoop:
             try:
                 plan = self.generator.design(requirement)
                 break
+            except ModelQuotaExhaustedError:
+                raise          # 终局故障：重试永远不会成功，交给 pipeline 提前收摊
             except Exception as exc:
                 design_error = str(exc)
                 transient = _is_transient_model_error(exc)
@@ -909,6 +934,8 @@ class TddLoop:
                     ),
                     allowed_paths=allowed_paths,
                 )
+            except ModelQuotaExhaustedError:
+                raise          # 终局故障，见上
             except Exception as exc:
                 # 与实现阶段同理：写测试这一环**本来就有**带反馈的重试循环
                 # （max_write_attempts + write_violations），但模型异常此前直接
@@ -1118,6 +1145,8 @@ class TddLoop:
                 impl_files = self.generator.implement(
                     requirement, plan, failures, test_context=test_context
                 )
+            except ModelQuotaExhaustedError:
+                raise          # 终局故障，见上
             except Exception as exc:
                 # ★模型/传输层故障**不应直接判需求失败**。
                 # 实测（平台 2026-09-30 14:46）：一处 `openai SDK 调用失败: Request
@@ -1153,6 +1182,45 @@ class TddLoop:
             self._record_impl_files(requirement, impl_files)
 
             outcome = self.runner.run(test_paths)
+
+            # ---- 三个审计**无条件运行**，刻意不放在测试通过分支之内 ----
+            #
+            # 实测缺陷（本轮 closure6 直接证据）：
+            #   审计原先位于测试通过分支之内 —— 测试不过就永不审计。
+            #   于是报告里 `dependency_violations = 0`，看起来像「依赖用对了」，
+            #   **实际是「依赖根本没被评估」**。
+            #   REQ-11 的 movementsService.js 有 0 条 import、与上游从未连接，
+            #   本应被判 DEPENDENCY_NOT_USED —— 只要门禁运行。
+            #
+            # 而「测试过不去」恰恰是**最可能有依赖问题**的情形：
+            #   跨模块集成断裂时，下游测试正是因为接不上上游而失败。
+            #   门禁位于测试门禁的下游，等于在最需要它的场景下自动关闭。
+            #
+            # 三个审计都是静态分析（不调模型、不跑测试），每次尝试多跑一遍成本可忽略。
+            dep_audit = self._audit_dependencies(requirement)
+            mock_audit = self._audit_mocks(requirement, allowed_paths)
+            bypass_audit = self._audit_bypass(requirement)
+            if bypass_audit.findings:
+                result.dependency_injection_warnings = [
+                    f.to_dict() for f in bypass_audit.findings
+                ]
+                logger.warning(
+                    "[注入旁路·警告] %s %s",
+                    req_id,
+                    "; ".join(f"{f.upstream}:{f.parameter}" for f in bypass_audit.findings),
+                )
+            # 测试**未通过**时也把依赖违规写进日志 —— 否则失败归因不可见
+            # （记录本身在循环外已无条件执行，这里补的是运行期可见性）
+            if not outcome.passed and (dep_audit.violations or mock_audit.violations):
+                logger.warning(
+                    "[依赖门禁·归因] %s 测试未通过，同期依赖审计: %s",
+                    req_id,
+                    "; ".join(
+                        [f"{u.upstream}={u.verdict}" for u in dep_audit.violations]
+                        + [f"{u.upstream}={u.verdict}" for u in mock_audit.violations]
+                    ),
+                )
+
             if outcome.passed:
                 last_good_impl = list(impl_files)
                 last_good_passed = True
@@ -1160,18 +1228,6 @@ class TddLoop:
                 #   方案1  声明了依赖就必须真实调用上游（模块层空转）
                 #   方案2-A 测试不得 mock 未声明的上游（测试层空转）
                 #   方案2-B 实现不得用形参守卫绕过上游（仅警告）
-                dep_audit = self._audit_dependencies(requirement)
-                mock_audit = self._audit_mocks(requirement, allowed_paths)
-                bypass_audit = self._audit_bypass(requirement)
-                if bypass_audit.findings:
-                    result.dependency_injection_warnings = [
-                        f.to_dict() for f in bypass_audit.findings
-                    ]
-                    logger.warning(
-                        "[注入旁路·警告] %s %s",
-                        req_id,
-                        "; ".join(f"{f.upstream}:{f.parameter}" for f in bypass_audit.findings),
-                    )
                 reasons = []
                 if not dep_audit.ok:
                     reasons.append(describe_dependencies(dep_audit))

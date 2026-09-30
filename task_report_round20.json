@@ -1,0 +1,105 @@
+{
+  "read_locations": {
+    "if_outcome_passed_block": "factory/loop.py:1156 `if outcome.passed:`（实现循环内、runner.run 之后）。原先 dep_audit / mock_audit / bypass_audit 三个审计调用全部在这个分支**之内**",
+    "_audit_dependencies_call": "factory/loop.py:1163 `dep_audit = self._audit_dependencies(requirement)`（原位置，在 if 内）；循环前 :1109-1111 初始化为空的 `DependencyAudit()/MockAudit()/InjectionAudit()` —— 所以测试不过时它们**永远是空的**",
+    "combined_ok_logic": "factory/loop.py:1253-1269。`dep_ok_raw = dep_audit.ok or not enforce_dependency_usage` → 同理 mock/bypass → `dep_ok = dep_ok and mock_ok and bypass_ok`（**已是 and 链，非嵌套 if，不短路**）→ 存入 `result.gate_audits` → `if outcome.passed and dep_ok:` 最终判定",
+    "gate_log_output": "factory/loop.py:1186 附近 `logger.warning(\"[依赖门禁] %s 测试通过，但依赖未被真实验证: %s\", ...)`，格式为 `upstream=VERDICT`（如 `REQ-7=DEPENDENCY_NOT_USED`）—— **该行已存在**，但同样在 if 内，测试不过时不打印"
+  },
+
+  "gate_position_fix": {
+    "before": "dep_audit / mock_audit / bypass_audit 三个调用在 `if outcome.passed:` 之内",
+    "after": "三个调用移到 `if outcome.passed:` **之前**，无条件运行；break/continue 的重试决策仍留在 if 内",
+    "line_changed": "factory/loop.py:1156 附近（原 if 分支起点前插入三个审计调用；原位置的三行删除）",
+    "lines_delta": "+32 / -3（含 14 行说明注释）",
+    "rationale": "测试不过 → 依赖永不检查；而「测试过不去」恰恰最可能有依赖问题（跨模块集成断裂时，下游测试正是因为接不上上游而失败）。门禁位于测试门禁的下游，等于在最需要它的场景下自动关闭",
+    "extra_added": "新增 `[依赖门禁·归因]` 日志行：测试**未通过**时也把同期依赖审计结果打出来，否则失败归因不可见",
+    "not_changed": "检测逻辑一行未动（audit_dependency_usage / audit_mocked_dependencies / audit_injection_bypass 的实现均未修改）"
+  },
+
+  "combined_ok_check": {
+    "current_impl": "`dep_ok = dep_ok and mock_ok and bypass_ok`（三个 ok 已各自算好，再由 and 链合并）",
+    "is_short_circuit": "**否** —— 三个门禁结果都会被求值并参与合并，不存在因前一个为假而跳过后续求值的情况",
+    "changed": "**未改**。读到的实现已经是 and 链，符合要求，无需改动",
+    "note_on_final_if": "最终判定 `if outcome.passed and dep_ok:` 中的 `and` 会短路，但这**不丢信息**：测试不过时需求本就走 else 分支判 FAILED，而违规记录（:1245-1247）在循环外无条件执行，仍会完整写入报告",
+    "verified_by": "T36e 断言：检查 `dep_ok and mock_ok and bypass_ok` 存在于最终判定之前"
+  },
+
+  "gate_log_confirmed": {
+    "DEPENDENCY_NOT_USED_written": true,
+    "existing_line": "`[依赖门禁] REQ-11 测试通过，但依赖未被真实验证: REQ-1=DEPENDENCY_NOT_USED; REQ-7=DEPENDENCY_NOT_USED`",
+    "added_line": "`[依赖门禁·归因] REQ-11 测试未通过，同期依赖审计: REQ-1=DEPENDENCY_NOT_USED; REQ-7=DEPENDENCY_NOT_USED`（本次运行触发 3 次）"
+  },
+
+  "assertion_added": {
+    "name": "t36_dependency_audit_runs_even_when_tests_fail",
+    "numbering_note": "**编号本应为 T26，但 T26 已被并发工作流占用**（`t26_root_container_is_not_designed`），故改为 T36（当前最大编号 T35 之后）",
+    "assertions": [
+      "T36a-c 三个审计调用必须出现在 `if outcome.passed:` **代码行**之前（用 12 空格缩进的代码行匹配，不认注释）",
+      "T36d `result.dependency_violations = [...]` 在循环外无条件执行",
+      "T36e `combined_ok` 非短路（`dep_ok and mock_ok and bypass_ok`）"
+    ],
+    "self_inflicted_bug_found": "初版断言用 `tail.find(\"if outcome.passed:\")` 匹配裸子串，结果**命中了我自己注释里引用的同一串文字**，导致修复已生效却仍报红。改为匹配 `\\n            if outcome.passed:\\n`（代码行）后通过 —— 断言必须认代码，不认注释"
+  },
+
+  "closure6_rerun": {
+    "guard_used": true,
+    "snapshot": ".workstreams/closure6-gatefix（含修复）",
+    "output_dir": "out-gatefix（唯一）",
+    "isolation_verified": "✅ 冻结副本逐文件未变 + ✅ 运行期间工作区无改动",
+    "result": "4 通过 / 1 失败 / 1 跳过（尝试 5 个 = 80%）",
+    "report_completeness": "6/6",
+    "wall_clock": "00:19:57 → 00:53:22 = 33 分 25 秒",
+    "totals": {"calls": 28, "total_tokens": 177153, "reasoning_tokens": 124975,
+               "gateway_retries": 0, "retries_succeeded": 0, "retries_exhausted": 0},
+
+    "REQ-7_status": "PASSED（4 次尝试 / 47,266 token；上一轮为 2 次尝试 / 27,300 token —— 模型侧方差，非配置变化）",
+    "REQ-11_status": "FAILED（4 次尝试 / 1 次测试重写 / 91,348 token）",
+    "REQ-11_verdict": "**DEPENDENCY_NOT_USED（2 条违规）**",
+    "REQ-11_violations_detail": [
+      {"upstream": "REQ-1", "verdict": "DEPENDENCY_NOT_USED", "detail": "下游完全没有 import 上游模块；上游导出: listItems"},
+      {"upstream": "REQ-7", "verdict": "DEPENDENCY_NOT_USED", "detail": "下游完全没有 import 上游模块；上游导出: updateQuantity"}
+    ],
+    "REQ-11_note": "测试通过但依赖未被真实验证（REQ-1=DEPENDENCY_NOT_USED; REQ-7=DEPENDENCY_NOT_USED）：重写 4 次仍未满足依赖使用要求",
+    "REQ_11_blocked_by_dependency_gate": "**是** —— `[依赖门禁] REQ-11 BLOCK -> FAILED`",
+    "REQ-12_entered_tdd": false,
+    "REQ-12_status": "UPSTREAM_FAILED（REQ-11=FAILED）",
+    "dependency_violations": "REQ-11 = 2 条（其余需求 0 条）",
+    "regressions": "REQ-11 记录 2 条 IMPLEMENTATION_REGRESSION（模型重写把测试从 PASSED 改坏，回归检查两次正确回退）",
+    "new_attribution_log_fired": "`[依赖门禁·归因]` 触发 3 次 —— 证明审计在测试未通过时确实运行了",
+
+    "before_after_comparison": {
+      "before_fix": {
+        "dependency_violations": 0,
+        "note": "实现失败（4 次尝试）: 读取超时（>300.0s）",
+        "problem": "0 看起来像「依赖用对了」，实际是「依赖根本没被评估」；失败被误归因为超时"
+      },
+      "after_fix": {
+        "dependency_violations": 2,
+        "note": "测试通过但依赖未被真实验证（REQ-1/REQ-7=DEPENDENCY_NOT_USED）：重写 4 次仍未满足依赖使用要求",
+        "improvement": "失败归因干净且精确 —— 指向跨模块集成断裂，而不是超时"
+      }
+    }
+  },
+
+  "check_all": {
+    "assertions_passed": "262/262（8 类）",
+    "all_pass": true,
+    "delta": "较上一轮 +5（新增 T36a-e 五条断言）"
+  },
+
+  "verdict": {
+    "REQ_11_blocked_by_dependency_gate": "**是**。修复后 REQ-11 被依赖使用门禁正确阻断，并给出两条精确违规（REQ-1 / REQ-7 = DEPENDENCY_NOT_USED），失败归因从误导性的「超时」变为「跨模块未集成」",
+    "fix_effective": "是。三处验证一致：① 新增日志行触发 3 次；② 报告的 dependency_violations 由 0 变 2；③ 失败 note 指向依赖而非超时",
+    "still_failing": "REQ-11 仍 FAILED —— 因为模型在 4 轮内确实没有让实现连接上游。**这是真实的实现层缺陷，不是门禁误判。** 门禁现在把原因说清楚了，但不会替模型修好它。",
+    "next_step": "rerun_or_declare_cross_module_contract",
+    "next_step_detail": "推荐**在需求规格里显式声明跨模块调用契约**（第 2 项）。理由：REQ-7 的 `updateQuantity(sku, from, to)` 与 REQ-11 测试期望的 `updateQuantity(sku, quantity, from)` 是**同名不同语义**，两个需求的单模块测试各自通过却无法暴露它。仅靠门禁回传「你没 import 上游」不足以让模型推断出正确的参数语义。",
+    "supporting_evidence": "本次运行 REQ-11 拿到 `[依赖门禁·归因]` 提示 3 次、`[依赖门禁]` 阻断理由 1 次，仍未修好 —— 说明「回传理由」对这一类是必要但不充分的。"
+  },
+
+  "not_done": {
+    "detection_logic": "未改（按要求）",
+    "manual_fix_of_req11": "未做（按要求，不手动改实现或测试冲 REQ-11 通过）",
+    "dag_gaps": "未碰（按要求）",
+    "commit_push": "已提交并推送到 factory-verify 分支"
+  }
+}

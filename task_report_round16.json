@@ -1,0 +1,86 @@
+{
+  "read_locations": {
+    "dag_build_plan": "**factory/dag.py 不存在** —— 只在 DAG_DESIGN.md 里是设计，运行时零 `dag` 引用。故本轮断言对「目标接口」写，并用回退适配器接「当前真实能力」（adapter._topological_order，产物只有 order）",
+    "closure_equivalent": "tools/closure.py：`closure_of(targets, deps)` :39、`depths(nodes, deps)` :52、`load_graph(path)` :32。注意它**从 YAML 读图**（不是内存图），且**没有 dangling 字段**（只在 main() 里打印）",
+    "existing_assertions": "无 D1–D10 函数名冲突；但**编号 D10 已被占用** —— tools/verify_d10.py（mock 门禁修复验证，check_all 里登记为「D10 修复验证」），且 test_gates.py 里的 D3/D4 是另一组缺陷编号。故测试函数名加 `DAG-` 前缀",
+    "test_framework": "pytest 9.0.3 可用（本轮按用户给的 pytest 风格写）。项目原有约定是 tools/ 下纯脚本 + check() 辅助 + 退出码 0/1"
+  },
+  "assertions_written": {
+    "file": "tests/test_dag.py（新建目录与文件，未触碰任何 factory/ 源码）",
+    "count": "11 条（D1–D10 + 补充 D7b）",
+    "D1": "dangling_dependencies field exists",
+    "D2": "dangling list non-empty 且列出集合外的 B",
+    "D3": "no false positives（集合内依赖不得被判悬空）",
+    "D4": "multiple dangles all reported（4 个全报，不是只报第一个）",
+    "D5": "cycle_detected field exists",
+    "D6": "cycle_detected True",
+    "D7": "not silent fallback to input order（按用户规范：重排 or 标记）",
+    "D7b": "**补充**，严格强于 D7：有环必须被**显式标记**，重排不算处理 —— 见下方说明",
+    "D8": "self-loop detected（A→A）",
+    "D9": "no false cycle positive（菱形无环 → False）",
+    "D10": "dag.py vs closure.py isomorphism（levels == closure.depths；order 满足全部偏序；dangling 一致）",
+    "design_choice": "被断言对象通过 `_load_build_plan()` 解析：factory.dag 存在则用真实现，否则回退到当前能力。**回退不是为了让测试通过** —— 它让每条失败的原因指向**缺失的性质**（「计划缺少字段 dangling_dependencies，当前产物只有 ['order']」），而不是笼统的 ImportError。dag.py 落地后自动切到真实现"
+  },
+  "run_result": {
+    "total": 11,
+    "passed": 1,
+    "failed": 10,
+    "failure_summary": "10 红 1 绿。**每一条红的原因都正确指向缺口**：所有失败信息均为「计划缺少字段 X —— 当前实现的产物只有 ['order']（来源：回退：adapter._topological_order）」。即：当前实现只能产出顺序，dangling_dependencies / cycle_detected / levels 三个性质**都没有被报告出来**",
+    "the_one_green": {
+      "test": "DAG-D7（not silent fallback to input order）",
+      "why_green": "按用户给定的规范 `输出与输入顺序不同，或输出含 cycle_detected: True`，那个 **`or` 让它变弱**。实测当前实现对任何环都会重排（DFS 后序追加），于是 D7 无条件通过",
+      "evidence": "同一张图、只是 dict 键序不同：输入 ('A','B') → 输出 ('B','A')；输入 ('B','A') → 输出 ('A','B')。**输出随输入翻转** —— 「碰巧重排」不传递任何信息，调用方从 order 上看不出有环",
+      "action_taken": "补 D7b 断言「有环必须被显式标记」，该条**报红**。D7 保留原样（按用户规范），但在报告与文件注释里标注其弱点"
+    }
+  },
+  "runtime_logic_untouched": true,
+  "runtime_untouched_evidence": {
+    "files_not_touched": ["factory/pipeline.py", "factory/adapter.py"],
+    "dag_py_not_created": "factory/dag.py 未创建（仅设计）",
+    "what_i_added": "只有 tests/test_dag.py（新建文件）",
+    "note": "但 factory/pipeline.py 的 mtime 是 09-30 23:05 —— **不是我改的**，是并发工作流在本轮期间改的。另有 llm.py / loop.py / main.py / version.py / tools/test_gates.py 同时在漂移"
+  },
+  "check_all": {
+    "assertions_passed": "250/250（8 类）",
+    "all_pass": true,
+    "dag_suite_not_registered": "**刻意不登记** tests/test_dag.py 进 check_all —— 它当前是预期红的（TDD 红），登记会破坏 check_all 的「全过」不变量。等 dag.py 落地、断言转绿后再登记"
+  },
+  "bugs_found_and_fixed_this_round": {
+    "id": "W2",
+    "severity": "中",
+    "what": "监控重启后输出目录与日志名会覆盖上一轮（索引从 1 重来）：日志 run-1.log 被覆盖，且 closure6 复用了 out-watch1 脏目录（混入上一轮残留的 req1.listItems.test.js / req3.summarizeItems.test.js）",
+    "found_by": "对比测试文件 mtime：同一目录里同时存在 22:15/22:23 的旧文件与 23:03 的新文件",
+    "fix": "用启动时间戳做命名空间（self.session）→ out-watch<会话>-<N> / run-<会话>-<N>.log；status.json 加入 session 字段自描述",
+    "action": "已杀掉跑在脏目录里的那次运行并删除 out-watch1，重启后确认新目录为 out-watch20260930-230751-1",
+    "data_rescued": "覆盖前已抢救上一轮报告到 evidence/watch-run1-report.json"
+  },
+  "closure6_status": {
+    "running": true,
+    "current_session": "20260930-230751",
+    "probe": "2026-09-30 23:08:30 探测 3/3 成功（15.3s / 9.8s / 14.5s）→ 已触发 closure6",
+    "output_dir": ".workstreams/v2-run/out-watch20260930-230751-1（唯一，不脏）",
+    "budget": "本会话 max-runs 2",
+    "earlier_run": {
+      "session": "20260930-221054",
+      "result": "3 通过 / 1 失败 / 2 跳过，隔离 ✅，1261s",
+      "REQ-7": "FAILED（**环境**：proxy_error / connection reset by peer，attempts=0 死在测试生成阶段）",
+      "report": "evidence/watch-run1-report.json"
+    },
+    "bounded_rerun_working": "两次触发都是「探测 3/3 → 立即开跑」，且上限生效；未出现无限重跑"
+  },
+  "gateway_observation": {
+    "pattern": "网关呈「探测时健康、长任务中掉线」的形态：两次探测均 3/3 成功（每次调用 2–15s），但 closure6 跑到中段就出现 connection reset / timeout",
+    "implication": "3 次简单探测**不足以预测**长任务中的稳定性 —— 探测只覆盖短请求。若要让探测更有预测力，应探测一次**接近真实负载长度**的调用（例如 >2000 token 的 prompt）",
+    "not_changed": "未改探测策略（用户明确「不调无关配置」），仅记录该观察供后续参考"
+  },
+  "next": {
+    "if_window_succeeds": "REQ-7 通过 → REQ-11/REQ-12 进入 TDD → 归因问题可能立即暴露 → 断言已就位，可直接实施 dag.py 使 D1–D10 转绿",
+    "if_environment_fails_again": "按用户指示不跑第 3 次，记录「网关持续不稳定，依赖累积验证未完成」，把时间投在 DAG 实施上",
+    "awaiting": "closure6 窗口结果"
+  },
+  "not_done": {
+    "dag_implementation": "按要求只写断言，未实现 dag.py，未改运行时逻辑",
+    "probe_strategy_change": "未调（不调无关配置）",
+    "dag_suite_registration": "刻意未登记进 check_all（当前预期红）"
+  }
+}

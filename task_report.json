@@ -1,86 +1,124 @@
 {
+  "headline": "第 4 次**未能执行** —— API 配额耗尽（外部阻碍）；有效样本仍为 3 次（2/3 全链通过）。REQ-5 用例数分析**证实过度生成假说**。",
+
   "read_locations": {
-    "dag_build_plan": "**factory/dag.py 不存在** —— 只在 DAG_DESIGN.md 里是设计，运行时零 `dag` 引用。故本轮断言对「目标接口」写，并用回退适配器接「当前真实能力」（adapter._topological_order，产物只有 order）",
-    "closure_equivalent": "tools/closure.py：`closure_of(targets, deps)` :39、`depths(nodes, deps)` :52、`load_graph(path)` :32。注意它**从 YAML 读图**（不是内存图），且**没有 dangling 字段**（只在 main() 里打印）",
-    "existing_assertions": "无 D1–D10 函数名冲突；但**编号 D10 已被占用** —— tools/verify_d10.py（mock 门禁修复验证，check_all 里登记为「D10 修复验证」），且 test_gates.py 里的 D3/D4 是另一组缺陷编号。故测试函数名加 `DAG-` 前缀",
-    "test_framework": "pytest 9.0.3 可用（本轮按用户给的 pytest 风格写）。项目原有约定是 tools/ 下纯脚本 + check() 辅助 + 退出码 0/1"
+    "run2_req5_test_file": ".workstreams/var-a/out-var2/backend/tests/req5.validateItem.test.js",
+    "architecture_doc": "软件工厂-项目架构文档.md（原 1480 行，现 1539 行）；第 17 章《过程发现：门禁的度量与修订》在第 1277 行",
+    "assertion_7": "tests/test_contract_mismatch.py:164（本轮已补全四要素：局限 / 原因 / 影响 / 提醒）",
+    "req5_usage_count_history": [
+      {"run": "run1", "file": "req5.validateItem.test.js", "usecases": 2, "expects": 6, "result": "PASSED(1 轮)"},
+      {"run": "run2", "file": "req5.validateItem.test.js", "usecases": 6, "expects": 7, "result": "FAILED(4 轮)"},
+      {"run": "run3", "file": "req5.validateItem.test.js", "usecases": 2, "expects": 6, "result": "PASSED(1 轮)"},
+      {"run": "run4", "file": "（无）", "usecases": null, "result": "未进入 TDD 循环"}
+    ]
   },
-  "assertions_written": {
-    "file": "tests/test_dag.py（新建目录与文件，未触碰任何 factory/ 源码）",
-    "count": "11 条（D1–D10 + 补充 D7b）",
-    "D1": "dangling_dependencies field exists",
-    "D2": "dangling list non-empty 且列出集合外的 B",
-    "D3": "no false positives（集合内依赖不得被判悬空）",
-    "D4": "multiple dangles all reported（4 个全报，不是只报第一个）",
-    "D5": "cycle_detected field exists",
-    "D6": "cycle_detected True",
-    "D7": "not silent fallback to input order（按用户规范：重排 or 标记）",
-    "D7b": "**补充**，严格强于 D7：有环必须被**显式标记**，重排不算处理 —— 见下方说明",
-    "D8": "self-loop detected（A→A）",
-    "D9": "no false cycle positive（菱形无环 → False）",
-    "D10": "dag.py vs closure.py isomorphism（levels == closure.depths；order 满足全部偏序；dangling 一致）",
-    "design_choice": "被断言对象通过 `_load_build_plan()` 解析：factory.dag 存在则用真实现，否则回退到当前能力。**回退不是为了让测试通过** —— 它让每条失败的原因指向**缺失的性质**（「计划缺少字段 dangling_dependencies，当前产物只有 ['order']」），而不是笼统的 ImportError。dag.py 落地后自动切到真实现"
+
+  "run_4": {
+    "guard_used": true,
+    "isolation_verified": "✅ 冻结副本逐文件未变 + ✅ 运行期间工作区无改动（隔离机制本身正常）",
+    "executed": false,
+    "abort_reason": "**模型配额/余额耗尽** —— HTTP 429 `insufficient_quota`: 'Free quota exhausted and balance too low, please recharge compute credits.'",
+    "abort_behavior": "工厂**优雅处理**：识别为致命错误 → 停止本轮剩余需求 → 报告 `0 通过 / 0 失败 / 尝试 0 个` + `error` 指向配额 → 退出。**未崩溃、未产出部分报告、未误报通过**（这正是前几轮修出来的行为）",
+    "duration": "5 秒（02:39:16 → 02:39:21）",
+    "quota_probe": "直接探测 5 次 → **0/5 可用**，全部 ModelQuotaExhaustedError",
+    "REQ-5_status": "n/a（未进入 TDD 循环）",
+    "REQ-5_attempts": 0,
+    "REQ-7_attempts": 0,
+    "REQ-11_attempts": 0,
+    "REQ-12_attempts": 0,
+    "dependency_violations": "n/a",
+    "CONTRACT_MISMATCH": "n/a",
+    "gateway_retries": 0,
+    "total_token": 0,
+    "full_chain_result": "**无效样本** —— 不纳入统计",
+    "evidence": ".run-var4.log"
   },
-  "run_result": {
-    "total": 11,
-    "passed": 1,
-    "failed": 10,
-    "failure_summary": "10 红 1 绿。**每一条红的原因都正确指向缺口**：所有失败信息均为「计划缺少字段 X —— 当前实现的产物只有 ['order']（来源：回退：adapter._topological_order）」。即：当前实现只能产出顺序，dangling_dependencies / cycle_detected / levels 三个性质**都没有被报告出来**",
-    "the_one_green": {
-      "test": "DAG-D7（not silent fallback to input order）",
-      "why_green": "按用户给定的规范 `输出与输入顺序不同，或输出含 cycle_detected: True`，那个 **`or` 让它变弱**。实测当前实现对任何环都会重排（DFS 后序追加），于是 D7 无条件通过",
-      "evidence": "同一张图、只是 dict 键序不同：输入 ('A','B') → 输出 ('B','A')；输入 ('B','A') → 输出 ('A','B')。**输出随输入翻转** —— 「碰巧重排」不传递任何信息，调用方从 order 上看不出有环",
-      "action_taken": "补 D7b 断言「有环必须被显式标记」，该条**报红**。D7 保留原样（按用户规范），但在报告与文件注释里标注其弱点"
-    }
-  },
-  "runtime_logic_untouched": true,
-  "runtime_untouched_evidence": {
-    "files_not_touched": ["factory/pipeline.py", "factory/adapter.py"],
-    "dag_py_not_created": "factory/dag.py 未创建（仅设计）",
-    "what_i_added": "只有 tests/test_dag.py（新建文件）",
-    "note": "但 factory/pipeline.py 的 mtime 是 09-30 23:05 —— **不是我改的**，是并发工作流在本轮期间改的。另有 llm.py / loop.py / main.py / version.py / tools/test_gates.py 同时在漂移"
-  },
-  "check_all": {
-    "assertions_passed": "250/250（8 类）",
-    "all_pass": true,
-    "dag_suite_not_registered": "**刻意不登记** tests/test_dag.py 进 check_all —— 它当前是预期红的（TDD 红），登记会破坏 check_all 的「全过」不变量。等 dag.py 落地、断言转绿后再登记"
-  },
-  "bugs_found_and_fixed_this_round": {
-    "id": "W2",
-    "severity": "中",
-    "what": "监控重启后输出目录与日志名会覆盖上一轮（索引从 1 重来）：日志 run-1.log 被覆盖，且 closure6 复用了 out-watch1 脏目录（混入上一轮残留的 req1.listItems.test.js / req3.summarizeItems.test.js）",
-    "found_by": "对比测试文件 mtime：同一目录里同时存在 22:15/22:23 的旧文件与 23:03 的新文件",
-    "fix": "用启动时间戳做命名空间（self.session）→ out-watch<会话>-<N> / run-<会话>-<N>.log；status.json 加入 session 字段自描述",
-    "action": "已杀掉跑在脏目录里的那次运行并删除 out-watch1，重启后确认新目录为 out-watch20260930-230751-1",
-    "data_rescued": "覆盖前已抢救上一轮报告到 evidence/watch-run1-report.json"
-  },
-  "closure6_status": {
-    "running": true,
-    "current_session": "20260930-230751",
-    "probe": "2026-09-30 23:08:30 探测 3/3 成功（15.3s / 9.8s / 14.5s）→ 已触发 closure6",
-    "output_dir": ".workstreams/v2-run/out-watch20260930-230751-1（唯一，不脏）",
-    "budget": "本会话 max-runs 2",
-    "earlier_run": {
-      "session": "20260930-221054",
-      "result": "3 通过 / 1 失败 / 2 跳过，隔离 ✅，1261s",
-      "REQ-7": "FAILED（**环境**：proxy_error / connection reset by peer，attempts=0 死在测试生成阶段）",
-      "report": "evidence/watch-run1-report.json"
+
+  "four_run_summary": {
+    "results": ["run1: 6/6 通过（有效）", "run2: 2/6 通过（有效，REQ-5 失败）", "run3: 6/6 通过（有效）", "run4: 无效（配额耗尽，未执行）"],
+    "valid_samples": 3,
+    "pass_rate": "**2/3 全链通过**（有效样本内）",
+    "gateway_stable": true,
+    "gateway_retries": "run1/2/3 均为 **0** —— 环境三轮完全稳定",
+    "per_requirement_attempts": {
+      "REQ-1":  "1 / 1 / 1",
+      "REQ-5":  "1 / 4(FAIL) / 1",
+      "REQ-3":  "2 / 4 / 2",
+      "REQ-7":  "4 / 跳过 / 2",
+      "REQ-11": "2 / 跳过 / 2",
+      "REQ-12": "4 / 跳过 / 3"
     },
-    "bounded_rerun_working": "两次触发都是「探测 3/3 → 立即开跑」，且上限生效；未出现无限重跑"
+    "REQ-5_attempts_range": "1–4（含 1 次失败）",
+    "REQ-7_attempts_range": "2–4（另 1 次跳过）",
+    "REQ-12_attempts_range": "3–4（另 1 次跳过）",
+    "token_variance": "147,716 / 84,388 / 144,336；两次全链通过的在 144k–148k（差 2.3%），run2 因早停 84k"
   },
-  "gateway_observation": {
-    "pattern": "网关呈「探测时健康、长任务中掉线」的形态：两次探测均 3/3 成功（每次调用 2–15s），但 closure6 跑到中段就出现 connection reset / timeout",
-    "implication": "3 次简单探测**不足以预测**长任务中的稳定性 —— 探测只覆盖短请求。若要让探测更有预测力，应探测一次**接近真实负载长度**的调用（例如 >2000 token 的 prompt）",
-    "not_changed": "未改探测策略（用户明确「不调无关配置」），仅记录该观察供后续参考"
+
+  "req5_test_analysis": {
+    "run1_usecase_count": 2,
+    "run2_usecase_count": 6,
+    "run3_usecase_count": 2,
+    "run4_usecase_count": "n/a",
+    "over_generation_hypothesis": "**证实** —— run2 的 REQ-5 测试是 **6 个用例**，而两次通过的运行都是 **2 个**（3 倍差距）。按任务给出的判据『run2 确实是 6 用例，run1/3 是 3–4』属于『测试生成过度』一栏；实际差距比该栏预设的更大",
+    "varianced_from_test_or_impl": "**测试侧是主变量**。证据链：① 用例数 2→6 是 run2 独有的差异；② run2 的 REQ-5 依赖违规 0、回归 0，即门禁层面无异常；③ 环境指标（网关重试）三轮均为 0。因此 run2 的失败更可能源于『测试要求被放宽到 6 个场景，实现难度随之抬升』，而非『模型这次实现能力差』",
+    "root_vs_deep_observation": "任务提出的假设（根节点测试生成容易过度：无上游约束 → 倾向写更多场景；深层节点有上游契约 → 围绕集成写、更聚焦）在本样本中**得到一致但不充分的证据**：REQ-5 是根节点且出现了 6 用例；深层节点（REQ-11）三轮尝试次数稳定在 2。**样本量不足以确证**，需专门实验",
+    "caveat": "单次观测（n=1 的失败样本）。不能排除『6 用例那次恰好也是实现较弱的一次』。区分二者需要固定用例数的对照实验。"
   },
-  "next": {
-    "if_window_succeeds": "REQ-7 通过 → REQ-11/REQ-12 进入 TDD → 归因问题可能立即暴露 → 断言已就位，可直接实施 dag.py 使 D1–D10 转绿",
-    "if_environment_fails_again": "按用户指示不跑第 3 次，记录「网关持续不稳定，依赖累积验证未完成」，把时间投在 DAG 实施上",
-    "awaiting": "closure6 窗口结果"
+
+  "architecture_doc_update": {
+    "section_added": "验证纪律",
+    "location": "软件工厂-项目架构文档.md 第 **19 章**《验证纪律〔v1.3 新增〕》（原第 17 章《过程发现：门禁的度量与修订》之后）",
+    "doc_version": "v1.2 → **v1.3**；1480 → 1539 行",
+    "subsections": ["19.1 三次同类教训（表格：T36 自伤 / fixture 转义 / 元断言误导输出 + 共同结构图）", "19.2 落地的做法（6 项，含元断言、断言只匹配代码行、中性 detail、已知局限钉进断言、未触发门禁须合成验证、报告完整性检查）", "19.3 一条推论：门禁本身也是被测对象（正向/反向/关闭路径三类用例）", "19.4 与第 17 章的关系（门禁对不对 vs 判断门禁对不对的方式对不对）"],
+    "three_lessons_recorded": true,
+    "core_statement": "任何用于验证的代码（断言、fixture、门禁、度量函数）本身必须被独立验证。验证器自身失效，会伪装成「被测对象有 bug」。这不是一次修复，是一个系统性问题。",
+    "notable": "第 1 条教训被特别标注为**最危险**：它让**正确的修复看起来是坏的** —— 若无独立复核，可能把正确的修复回滚掉"
   },
+
+  "contract_mismatch_limitation": {
+    "assertion_location": "tests/test_contract_mismatch.py:164 断言⑦（本轮补全为四要素注释块）",
+    "limitation_documented": true,
+    "limited_case": "同个数的**参数顺序错**（`foo(b, a, c)` vs `foo(a, b, c)`）→ 静态同形，均判 DEPENDENCY_USED",
+    "reason": "**静态分析的固有限制**：按参数**个数**比对是唯一可靠判据；按名字比对不成立（调用方使用自己作用域里的变量名，`foo(quantity, sku)` 未必是错的）",
+    "impact": "实际有限 —— 即使顺序写错，模型通常能通过**测试反馈**发现（下游测试断言的正是副作用的可观察后果）。是「已知局限」，不是「未发现的 bug」",
+    "reminder": "将来若改为能检出（如引入类型标注解析），**本条断言会失败** —— 那正是提醒：同步更新架构文档 11.3 节的「已知局限」段",
+    "detection_logic_unchanged": true
+  },
+
+  "incidental_finding": {
+    "what": "**check_all 起初是红的，但不是我的改动** —— 并发工作流新增的 `t37_quota_exhaustion_is_terminal_and_fails_fast` 自身有 bug",
+    "error": "`NameError: name '_Path' is not defined`",
+    "cause": "`_Path` 只在 `t30` 的作用域内局部导入（test_gates.py:716），T37 在 :1463 直接引用却未在自己的作用域导入",
+    "their_test_is_valid": "T37 的内容是对的且有价值 —— 它记录了一个真实缺陷：**429 同时意味着「限流（瞬时，可重试）」与「配额耗尽（终局，重试纯烧时间）」**，而上一轮的瞬时判据里恰好含 '429'，导致配额耗尽被当成可重试，一次运行白跑「网关重试 11 次」",
+    "convergence": "两条工作流**同时**撞上 429 配额问题：我这轮 run4 因此中止，他们在 T37 里固化了区分逻辑",
+    "fix_applied": "补一行作用域内 `from pathlib import Path as _Path`（沿用该文件 t30 的既有风格）。**最小改动，未触碰其判定逻辑**",
+    "attribution": "该 bug 与其修复均属并发工作流的代码；本工作流代为补上以使共享门禁恢复绿色"
+  },
+
+  "check_all": {
+    "assertions_passed": "**309/309（9 类）**",
+    "all_pass": true,
+    "delta": "较上轮 +13（并发方新增的 T37 系列 12 条 + 本轮无新增）",
+    "note": "修复 T37 的 `_Path` 前为 1 类失败（172 项中 1 项），修复后全绿"
+  },
+
+  "next_decision": {
+    "variance_vs_structural": "**倾向方差**，但证据不足以定论。理由：① REQ-5 只在 3 次中的 1 次失败（1/3）；② 该次失败伴随一个可解释的差异（用例数 2→6）；③ 环境三轮稳定（网关重试均 0）。按任务判据『4 次里 REQ-5 失败 1 次 → 方差问题』，但**第 4 次未能执行**，所以严格说仍是 1/3 而非 1/4",
+    "candidate_actions": ["root_budget_increase", "test_usecase_limit"],
+    "action_assessment": {
+      "test_usecase_limit": "**证据更强**。run2 的失败伴随 2→6 用例跳变，而通过运行均为 2；限制根节点用例数（3–4）直接针对观测到的差异源，且比加实现预算**更省 token**（减少要满足的需求，而不是增加尝试次数）",
+      "root_budget_increase": "**证据较弱**。REQ-5 在 2/3 有效样本中 1 轮即通过 —— 说明常规情况下预算充裕；仅 1 次需要更多轮。加预算只在那 1 次可能有帮助，且会推高所有运行的成本"
+    },
+    "ready_for_independent_experiment": false,
+    "why_not_ready": "① 配额耗尽，**当前无法获得新样本** —— 任何配置实验都跑不了；② 有效样本 3 次，且失败样本 n=1，不足以支撑对失败模式的因果判断。**先恢复配额，再补 1–2 次基线样本，然后才做配置实验**",
+    "blocking_condition": "模型配额/余额耗尽（HTTP 429 insufficient_quota），5/5 探测失败。需充值后才能继续跑 closure6"
+  },
+
   "not_done": {
-    "dag_implementation": "按要求只写断言，未实现 dag.py，未改运行时逻辑",
-    "probe_strategy_change": "未调（不调无关配置）",
-    "dag_suite_registration": "刻意未登记进 check_all（当前预期红）"
+    "run_4": "**未能执行** —— 外部配额阻碍，非跳过",
+    "config_changes": "未改（按要求）",
+    "root_budget_increase": "未做（按要求，且样本未稳定）",
+    "test_usecase_limit": "未做（按要求，先确认观察）",
+    "contract_mismatch_detection_logic": "未改（按要求，仅补全注释与文档）"
   }
 }

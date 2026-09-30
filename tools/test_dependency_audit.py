@@ -310,6 +310,66 @@ def main() -> int:
     check("B③ 无守卫、直接调用上游 -> 不告警", b.ok and not b.findings)
     shutil.rmtree(ws, ignore_errors=True)
 
+    # ==================== 跨模块调用契约（cross_module_calls）====================
+    print()
+    print("=" * 78)
+    print("跨模块调用契约：解析 / 推导 / 签名校验")
+    print("=" * 78)
+    from factory.adapter import _adapt
+    from factory.models import CrossModuleCall
+    from factory.testaudit import DEP_CONTRACT_MISMATCH
+
+    spec = {
+        "requirements": [
+            {"id": "REQ-7", "name": "更新", "depends_on": ["REQ-1"]},
+            {"id": "REQ-11", "name": "流水", "depends_on": ["REQ-1", "REQ-7"],
+             "cross_module_calls": [{"upstream": "REQ-7", "symbol": "updateQuantity",
+                                     "signature": "updateQuantity(sku, quantity, from, to)",
+                                     "semantics": "更新并记流水",
+                                     "side_effects": ["记录流水"]}]},
+        ]}
+    rs = _adapt(spec, source=Path("x"))  # noqa: F821
+    by = {r.req_id: r for r in rs.requirements}
+    check("C1 解析 cross_module_calls 到 Requirement",
+          len(by["REQ-11"].cross_module_calls) == 1 and
+          by["REQ-11"].cross_module_calls[0].declared_arity == 4)
+    check("C2 推导上游的 incoming_contracts（上下游双向，无需上游重复声明）",
+          len(by["REQ-7"].incoming_contracts) == 1 and
+          by["REQ-7"].incoming_contracts[0].symbol == "updateQuantity")
+    check("C3 未声明时两个字段都为空（行为不变）",
+          not by["REQ-7"].cross_module_calls and not by["REQ-11"].incoming_contracts)
+    check("C4 形状不对的条目被跳过而不抛错（可选字段的容错）",
+          len(_adapt({"requirements": [{"id": "R", "cross_module_calls": [
+              {"symbol": "no_upstream"}, "not_a_dict", {"upstream": "U"}]}]},
+              source=Path("x")).requirements[0].cross_module_calls) == 0)
+
+    cws = Path(tempfile.mkdtemp(prefix="contract-"))
+    (cws / "backend/src").mkdir(parents=True)
+    (cws / "backend/src/up.js").write_text(
+        "function updateQuantity(a,b,c,d){}\nmodule.exports={updateQuantity};\n", encoding="utf-8")
+    decl = CrossModuleCall(upstream="REQ-7", symbol="updateQuantity",
+                           signature="updateQuantity(sku, quantity, from, to)")
+    for label, body, want in [
+        ("4 参数", "const {updateQuantity}=require('./up');\nupdateQuantity(1,2,3,4);\n", "DEPENDENCY_USED"),
+        ("3 参数", "const {updateQuantity}=require('./up');\nupdateQuantity(1,2,3);\n", DEP_CONTRACT_MISMATCH),
+        ("5 参数", "const {updateQuantity}=require('./up');\nupdateQuantity(1,2,3,4,5);\n", DEP_CONTRACT_MISMATCH),
+        ("0 import", "const x=[];\nmodule.exports={x};\n", "DEPENDENCY_NOT_USED"),
+    ]:
+        (cws / "backend/src/down.js").write_text(body, encoding="utf-8")
+        got = audit_dependency_usage(
+            cws, downstream="REQ-11", upstream="REQ-7",
+            downstream_files=["backend/src/down.js"],
+            upstream_files=["backend/src/up.js"], declared_calls=(decl,)).verdict
+        check(f"C5 声明 4 参数 / 实际 {label} -> {want}", got == want, f"实际 {got}")
+    (cws / "backend/src/down.js").write_text(
+        "const {updateQuantity}=require('./up');\nupdateQuantity(1,2,3);\n", encoding="utf-8")
+    got = audit_dependency_usage(
+        cws, downstream="REQ-11", upstream="REQ-7",
+        downstream_files=["backend/src/down.js"],
+        upstream_files=["backend/src/up.js"]).verdict
+    check("C6 未声明契约时不做签名比对（行为不变）", got == "DEPENDENCY_USED", f"实际 {got}")
+    shutil.rmtree(cws, ignore_errors=True)
+
     print()
     print("=" * 78)
     failed = [n for n, ok, _ in RESULTS if not ok]

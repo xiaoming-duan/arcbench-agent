@@ -109,7 +109,7 @@ requirements:
     intent: 默认与自定义阈值下的汇总都正确，空列表返回全零
 - id: REQ-7
   name: 更新条目数量
-  description: 按 SKU 更新数量，返回更新后的条目。
+  description: 按 SKU 更新数量，**并写入一条变动流水**。from 为变更前数量、to 为变更后数量；调用即产生一条流水记录。
   depends_on:
   - REQ-1
   - REQ-5
@@ -117,6 +117,7 @@ requirements:
   - 存在的 SKU 更新成功并返回新数量
   - 负数数量被拒绝
   - 不存在的 SKU 返回 null
+  - 每次更新写入一条流水记录（副作用）
   scenarios:
   - id: REQ-7-SCN-1
     name: 更新数量
@@ -130,7 +131,7 @@ requirements:
   interfaces:
   - id: REQ-7.SVC.UpdateQty
     type: db
-    content: 'updateQuantity(sku, quantity): Item | null'
+    content: 'updateQuantity(sku, quantity, from, to): Item | null'
     file_path: backend/src/services/items.js
   tests:
   - id: REQ-7.TEST.update-qty
@@ -173,6 +174,17 @@ requirements:
     - REQ-11.SVC.Movements
     file_path: backend/tests/req11.movements.test.js
     intent: 更新数量后产生流水且可查询，无流水时返回空数组
+  cross_module_calls:
+  - upstream: REQ-7
+    symbol: updateQuantity
+    signature: updateQuantity(sku, quantity, from, to)
+    semantics: 更新库存数量并写入一条流水记录
+    side_effects:
+    - 记录流水到 movements 数组
+  - upstream: REQ-1
+    symbol: listItems
+    signature: listItems(filter)
+    semantics: 查询库存项列表，供流水查询时关联 SKU 信息
 - id: REQ-12
   name: 库存周转报表
   description: 综合汇总与流水，产出一个可直接渲染的报表对象。

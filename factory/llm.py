@@ -114,6 +114,36 @@ class ModelCallError(RuntimeError):
     """模型调用失败（网络或服务端错误）。"""
 
 
+class ModelQuotaExhaustedError(ModelCallError):
+    """模型配额 / 余额耗尽 —— **不是瞬时故障**，重试永远不会成功。
+
+    实测（平台 2026-09-30 18:26）：
+        429 {'code': 'Free quota exhausted and balance too low, please recharge
+             compute credits.', 'type': 'insufficient_quota'}
+    它带着 429 状态码，因此**必须与限流区分开**：
+      - 429 rate_limit_exceeded  -> 瞬时，退避重试有意义
+      - 429 insufficient_quota   -> 终局，重试纯属烧时间
+    把两者混为一谈的代价实测可见：一次运行里「网关重试 11 次（成功 0）」。
+
+    单独成类还有一个作用：它可以一路穿透到 pipeline，让整轮**提前停止**——
+    配额没了，后面每个需求都注定失败。
+    """
+    ...
+
+
+# 配额/计费耗尽的特征词（与限流区分）
+_QUOTA_MARKERS = (
+    "insufficient_quota", "quota exhausted", "exceeded your current quota",
+    "balance too low", "recharge", "billing", "insufficient balance",
+    "no credits", "compute credits",
+)
+
+
+def _is_quota_exhausted(text: str) -> bool:
+    lowered = str(text or "").lower()
+    return any(marker in lowered for marker in _QUOTA_MARKERS)
+
+
 class ModelClient:
     """OpenAI 兼容 Chat Completions 客户端（SDK / 标准库双后端）。"""
 
@@ -339,6 +369,9 @@ class ModelClient:
             try:
                 response = self._sdk.chat.completions.create(**payload)
             except Exception as exc:  # noqa: BLE001 —— SDK 异常层次视版本而异
+                # ★配额耗尽优先判定：它也带 429，但重试永远不会成功。
+                if _is_quota_exhausted(exc):
+                    raise ModelQuotaExhaustedError(f"模型配额/余额耗尽: {exc}") from exc
                 last_error = ModelCallError(f"openai SDK 调用失败: {exc}")
                 retry_cap = MAX_SLOW_RETRIES if _is_timeout_error(exc) else MAX_RETRIES
                 if _is_retryable_sdk_error(exc) and attempt <= retry_cap:
@@ -383,6 +416,11 @@ class ModelClient:
                         detail = exc.read().decode("utf-8", errors="replace")[:400]
                     except Exception:  # pragma: no cover
                         pass
+                    # ★配额耗尽也返回 429，但绝不重试（与限流区分）
+                    if _is_quota_exhausted(detail) or _is_quota_exhausted(exc.reason):
+                        raise ModelQuotaExhaustedError(
+                            f"模型配额/余额耗尽（HTTP {exc.code}）: {detail[:200]}"
+                        ) from exc
                     message = f"HTTP {exc.code} {exc.reason}: {detail}"
                     last_error = ModelCallError(message)
                     if exc.code in RETRYABLE_STATUS and attempt < MAX_RETRIES:

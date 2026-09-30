@@ -1,14 +1,15 @@
 ==============================================================================
-统一校验：8 类断言
+统一校验：9 类断言
 ==============================================================================
 ✅  声称变更核查       tools/verify_changes.py      ✅ 全部 24 项声称的改动均已核实存在
-✅  门禁行为断言       tools/test_gates.py          ✅ 全部 141 项断言通过
+✅  门禁行为断言       tools/test_gates.py          ✅ 全部 173 项断言通过
 ✅  度量函数审计       tools/test_measures.py       ✅ 全部 18 项断言通过
-✅  依赖使用审计       tools/test_dependency_audit.py ✅ 全部 24 项断言通过
+✅  依赖使用审计       tools/test_dependency_audit.py ✅ 全部 33 项断言通过
 ✅  D10 修复验证     tools/verify_d10.py          ✅ 全部 6 项断言通过
 ✅  依赖边方向断言      tools/test_call_edges.py     ✅ 全部 11 项 call edge / node contract 断言通过
+✅  契约合成验证       tests/test_contract_mismatch.py ✅ 全部 25 项断言通过
 ✅  工作流隔离        tools/test_workstream.py     ✅ 全部 9 项断言通过
 ✅  架构核验工具       tools/test_audit_architecture.py ✅ 全部 10 项断言通过
 ==============================================================================
-✅ 全部 8 类断言通过（合计 243 项）
+✅ 全部 9 类断言通过（合计 309 项）
    任何关键改动之后都应重跑本入口，而不是靠肉眼确认。
