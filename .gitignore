@@ -35,3 +35,6 @@ node_modules/
 .env
 .DS_Store
 *.swp
+
+# 工作流隔离用的 worktree 容器（不随主树提交）
+.wt/
