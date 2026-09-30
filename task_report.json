@@ -1,86 +1,114 @@
 {
-  "read_locations": {
-    "dag_build_plan": "**factory/dag.py 不存在** —— 只在 DAG_DESIGN.md 里是设计，运行时零 `dag` 引用。故本轮断言对「目标接口」写，并用回退适配器接「当前真实能力」（adapter._topological_order，产物只有 order）",
-    "closure_equivalent": "tools/closure.py：`closure_of(targets, deps)` :39、`depths(nodes, deps)` :52、`load_graph(path)` :32。注意它**从 YAML 读图**（不是内存图），且**没有 dangling 字段**（只在 main() 里打印）",
-    "existing_assertions": "无 D1–D10 函数名冲突；但**编号 D10 已被占用** —— tools/verify_d10.py（mock 门禁修复验证，check_all 里登记为「D10 修复验证」），且 test_gates.py 里的 D3/D4 是另一组缺陷编号。故测试函数名加 `DAG-` 前缀",
-    "test_framework": "pytest 9.0.3 可用（本轮按用户给的 pytest 风格写）。项目原有约定是 tools/ 下纯脚本 + check() 辅助 + 退出码 0/1"
+  "task": "跟上一个工作流分离一个分支版本，隔离双方的代码",
+  "outcome": "已完成：三分支 + git worktree 物理隔离，且隔离经实证。**过程中发现并修掉一个假突破**（见 §1）",
+
+  "critical_finding_first": {
+    "title": "「closure6 全链通过」是假阳性 —— 实际只有 2/6 个需求跑了",
+    "how_it_happened": [
+      "监控 23:08:30 探测 3/3 → 开跑 closure6（guard 隔离）",
+      "23:15:32 监控判定「🎉 closure6 全链通过 —— 依赖累积终于有干净数据」",
+      "实查报告：requirements_total=6 但 results 只有 2 个（REQ-1、REQ-5）",
+      "运行日志显示 REQ-3 于 23:14:37 启动后进程崩溃，异常处理器写出**部分报告**"
+    ],
+    "crash_root_cause": {
+      "error": "RuntimeError: The following paths are ignored by one of your .gitignore files: .workstreams",
+      "chain": "guard 把运行放在 .workstreams/v2-run/ 下 → 该路径被工作区 .gitignore 忽略 → 工厂 git 层执行 `git add .`（cwd=输出目录）→ git 向上解析到工作区仓库 /home/duanlinghui/dshwork/.git → 报错并抛 RuntimeError",
+      "where": "arcbench-agent-runtime/src/arcbench_agent_runtime/gitops.py:128 `self.run([\"add\", \".\"])`（ensure_repo）与 :154（add_all）"
+    },
+    "why_my_judgement_was_wrong": {
+      "old_rule": "record['all_passed'] = bool(states) and all(v == 'PASSED' for v in states.values())",
+      "flaw": "只检查「报告里出现的是否全通过」，**不检查报告是否完整** —— 2/6 的部分报告恰好是全 PASSED，于是被判为全链通过",
+      "severity": "高 —— 差一点产出「依赖累积已验证」的假结论"
+    },
+    "fixes_applied": [
+      {
+        "id": "G1",
+        "target": "tools/gateway_watch.py",
+        "fix": "all_passed 现在要求 reported == requirements_total，并记录 complete / incomplete_reason",
+        "verified": "用真实的部分报告复算：旧判据 True（假突破）→ 新判据 False（正确拒绝）"
+      },
+      {
+        "id": "G2",
+        "target": "tools/workstream.py",
+        "fix": "guard 为每个快照建立**独立 git 仓库**（git init + 初始提交），切断与工作区仓库的关系；git rev-parse --show-toplevel 停在快照，外层 .gitignore 不再适用",
+        "verified": "最小复现：修复前 `git add .` 报错、修复后无报错（仓库根由 /home/duanlinghui/dshwork 变为快照自身）"
+      }
+    ],
+    "correct_conclusion": "**closure6 至今仍无有效数据。** 唯一一次「全链通过」是假突破；其余轮次均被环境（网关）打断。REQ-11 / REQ-12 仍从未进入 TDD 循环。"
   },
-  "assertions_written": {
-    "file": "tests/test_dag.py（新建目录与文件，未触碰任何 factory/ 源码）",
-    "count": "11 条（D1–D10 + 补充 D7b）",
-    "D1": "dangling_dependencies field exists",
-    "D2": "dangling list non-empty 且列出集合外的 B",
-    "D3": "no false positives（集合内依赖不得被判悬空）",
-    "D4": "multiple dangles all reported（4 个全报，不是只报第一个）",
-    "D5": "cycle_detected field exists",
-    "D6": "cycle_detected True",
-    "D7": "not silent fallback to input order（按用户规范：重排 or 标记）",
-    "D7b": "**补充**，严格强于 D7：有环必须被**显式标记**，重排不算处理 —— 见下方说明",
-    "D8": "self-loop detected（A→A）",
-    "D9": "no false cycle positive（菱形无环 → False）",
-    "D10": "dag.py vs closure.py isomorphism（levels == closure.depths；order 满足全部偏序；dangling 一致）",
-    "design_choice": "被断言对象通过 `_load_build_plan()` 解析：factory.dag 存在则用真实现，否则回退到当前能力。**回退不是为了让测试通过** —— 它让每条失败的原因指向**缺失的性质**（「计划缺少字段 dangling_dependencies，当前产物只有 ['order']」），而不是笼统的 ImportError。dag.py 落地后自动切到真实现"
-  },
-  "run_result": {
-    "total": 11,
-    "passed": 1,
-    "failed": 10,
-    "failure_summary": "10 红 1 绿。**每一条红的原因都正确指向缺口**：所有失败信息均为「计划缺少字段 X —— 当前实现的产物只有 ['order']（来源：回退：adapter._topological_order）」。即：当前实现只能产出顺序，dangling_dependencies / cycle_detected / levels 三个性质**都没有被报告出来**",
-    "the_one_green": {
-      "test": "DAG-D7（not silent fallback to input order）",
-      "why_green": "按用户给定的规范 `输出与输入顺序不同，或输出含 cycle_detected: True`，那个 **`or` 让它变弱**。实测当前实现对任何环都会重排（DFS 后序追加），于是 D7 无条件通过",
-      "evidence": "同一张图、只是 dict 键序不同：输入 ('A','B') → 输出 ('B','A')；输入 ('B','A') → 输出 ('A','B')。**输出随输入翻转** —— 「碰巧重排」不传递任何信息，调用方从 order 上看不出有环",
-      "action_taken": "补 D7b 断言「有环必须被显式标记」，该条**报红**。D7 保留原样（按用户规范），但在报告与文件注释里标注其弱点"
+
+  "branch_separation": {
+    "retroactive_split_impossible": {
+      "reason": "几乎每个核心文件都已被双方交替修改，且并发方此刻仍在写（23:05–23:14）。hunk 级归属无法在不猜测的前提下还原。",
+      "evidence_sample": {
+        "factory/loop.py": "09-30 23:12（我：TEST_BROKEN/依赖门禁/回归检查；对方：修正 TEST_BROKEN 规则）",
+        "factory/llm.py": "09-30 23:11（我：成本记账字段；对方：SDK 后端补齐）",
+        "factory/pipeline.py": "09-30 23:05（我：UPSTREAM_FAILED；对方：容器节点识别）",
+        "factory/models.py": "09-30 23:05",
+        "main.py": "09-30 22:08",
+        "tools/test_gates.py": "09-30 23:14（双方各自追加断言）"
+      },
+      "chosen_approach": "冻结当前混合态为**共同基线**，两分支从此各自前进 —— 不假装能还原历史，但保证未来不再混"
+    },
+    "structure": {
+      "common_base": "97108a7",
+      "branches": {
+        "main": "集成线（并发方在主树继续提交）",
+        "factory-verify": "本工作流（工厂验证：门禁/审计/度量/DAG 断言/架构核验）",
+        "sdk-contract": "并发工作流（SDK 契约：call_edges/node_contracts/API 文档）"
+      },
+      "all_aligned_at": "97108a7（三分支同基线）"
+    },
+    "physical_isolation": {
+      "mechanism": "git worktree —— 两个独立工作目录共享一个对象库",
+      "locations": {
+        "/home/duanlinghui/dshwork": "97108a7 [main] ← 并发方",
+        "/home/duanlinghui/dshwork/.wt/factory-verify": "97108a7 [factory-verify] ← 本工作流"
+      },
+      "why_not_just_a_branch": "只分分支、不改工作目录，等于分支切了但写入位置没切 —— 本轮实际踩到：我的 BRANCH_SEPARATION.md 与两个修复一开始写进了主树（main），而不是 factory-verify。worktree 才是文件系统层面的隔离"
+    },
+    "isolation_verified": {
+      "test": "在 worktree 建 DRIFT.txt / ISOLATION_PROBE.txt",
+      "result": "worktree 内存在；主树内不存在 ✅；git status 各自独立",
+      "functional_check": "worktree 内跑 check_all → 257/257 通过；跑 tests/test_dag.py → 10 红 1 绿（符合预期）"
+    },
+    "ownership_manifest": {
+      "factory_verify_owns": ["factory/testaudit.py", "factory/testplan.py", "factory/config.py", "factory/models.py", "tests/test_dag.py", "tools/*（除 test_call_edges.py）", "DAG_DESIGN.md", "ARCHITECTURE_AUDIT.md", "ISOLATION.md", "BRANCH_SEPARATION.md", "V1_RELEASE.md", "V2_RELEASE.md"],
+      "sdk_contract_owns": ["factory/version.py", "factory/store.py（call_edges/node_contracts）", "factory/pipeline.py（容器节点/ROOT）", "tools/test_call_edges.py", "API_DOC_CONFORMANCE.md", "sdk_contract_report.json", "v2_contract_report.json", ".pack_v1.py", ".pack_v2.py"],
+      "co_owned_needs_coordination": ["factory/loop.py", "factory/llm.py", "factory/models.py", "main.py", "tools/test_gates.py"],
+      "conflict_rule": "共存文件优先保留**后验证过的一方** —— 谁有断言覆盖就保留谁，另一方把改动重做在断言之上"
+    },
+    "sync_procedure": {
+      "no_auto_sync": "两分支不自动同步，交换改动必须显式",
+      "examples": ["git checkout sdk-contract -- factory/version.py", "git diff factory-verify sdk-contract -- factory/loop.py", "git merge sdk-contract"],
+      "why_merge_not_rebase": "rebase 重写历史，而两分支都在被持续提交，rebase 冲突比 merge 更难归因",
+      "doc": "BRANCH_SEPARATION.md"
     }
   },
-  "runtime_logic_untouched": true,
-  "runtime_untouched_evidence": {
-    "files_not_touched": ["factory/pipeline.py", "factory/adapter.py"],
-    "dag_py_not_created": "factory/dag.py 未创建（仅设计）",
-    "what_i_added": "只有 tests/test_dag.py（新建文件）",
-    "note": "但 factory/pipeline.py 的 mtime 是 09-30 23:05 —— **不是我改的**，是并发工作流在本轮期间改的。另有 llm.py / loop.py / main.py / version.py / tools/test_gates.py 同时在漂移"
+
+  "collaboration_note": {
+    "observation": "并发方提交 b582582 `fix(red-gate): 缺实现模块导致的 0 个测试是有效 RED，不是 TEST_BROKEN` **修正了我引入的一个过宽规则**",
+    "my_rule": "not passed and total == 0 → TEST_BROKEN",
+    "their_correction": "TDD 里实现尚未写出时，测试 import 实现模块必然失败、收集到 0 个测试 —— 这本就是有效的 RED，不是坏测试",
+    "assessment": "**他们是对的。** 我的规则会把每一次首次运行都误判为坏测试",
+    "significance": "这是两条工作流唯一一次**实质性相互修正**，且修正方向正确"
   },
-  "check_all": {
-    "assertions_passed": "250/250（8 类）",
-    "all_pass": true,
-    "dag_suite_not_registered": "**刻意不登记** tests/test_dag.py 进 check_all —— 它当前是预期红的（TDD 红），登记会破坏 check_all 的「全过」不变量。等 dag.py 落地、断言转绿后再登记"
+
+  "cleanup_done": {
+    "snapshots_pruned": "删除 .workstreams/v2-verified、backup-20260930-012050（保留 v2-run）",
+    "run_artifacts_pruned": "删除 v2-run 下的 out-guard/out-guard2/out-watch*（约 199 MB 的 node_modules）",
+    "caches_pruned": ".npm-cache（24 MB）、.cache、.zipv",
+    "workspace_size": "247 MB → 24 MB"
   },
-  "bugs_found_and_fixed_this_round": {
-    "id": "W2",
-    "severity": "中",
-    "what": "监控重启后输出目录与日志名会覆盖上一轮（索引从 1 重来）：日志 run-1.log 被覆盖，且 closure6 复用了 out-watch1 脏目录（混入上一轮残留的 req1.listItems.test.js / req3.summarizeItems.test.js）",
-    "found_by": "对比测试文件 mtime：同一目录里同时存在 22:15/22:23 的旧文件与 23:03 的新文件",
-    "fix": "用启动时间戳做命名空间（self.session）→ out-watch<会话>-<N> / run-<会话>-<N>.log；status.json 加入 session 字段自描述",
-    "action": "已杀掉跑在脏目录里的那次运行并删除 out-watch1，重启后确认新目录为 out-watch20260930-230751-1",
-    "data_rescued": "覆盖前已抢救上一轮报告到 evidence/watch-run1-report.json"
+
+  "pending": {
+    "closure6_valid_data": "**仍缺** —— 需用修好的 guard（快照自带 .git）+ 修好的 all_passed（要求完整）重跑",
+    "dag_implementation": "factory-verify 分支上实现 factory/dag.py，使 D1–D10 转绿",
+    "explicit_merge": "与 sdk-contract 做一次显式合并，解决共存文件冲突"
   },
-  "closure6_status": {
-    "running": true,
-    "current_session": "20260930-230751",
-    "probe": "2026-09-30 23:08:30 探测 3/3 成功（15.3s / 9.8s / 14.5s）→ 已触发 closure6",
-    "output_dir": ".workstreams/v2-run/out-watch20260930-230751-1（唯一，不脏）",
-    "budget": "本会话 max-runs 2",
-    "earlier_run": {
-      "session": "20260930-221054",
-      "result": "3 通过 / 1 失败 / 2 跳过，隔离 ✅，1261s",
-      "REQ-7": "FAILED（**环境**：proxy_error / connection reset by peer，attempts=0 死在测试生成阶段）",
-      "report": "evidence/watch-run1-report.json"
-    },
-    "bounded_rerun_working": "两次触发都是「探测 3/3 → 立即开跑」，且上限生效；未出现无限重跑"
-  },
-  "gateway_observation": {
-    "pattern": "网关呈「探测时健康、长任务中掉线」的形态：两次探测均 3/3 成功（每次调用 2–15s），但 closure6 跑到中段就出现 connection reset / timeout",
-    "implication": "3 次简单探测**不足以预测**长任务中的稳定性 —— 探测只覆盖短请求。若要让探测更有预测力，应探测一次**接近真实负载长度**的调用（例如 >2000 token 的 prompt）",
-    "not_changed": "未改探测策略（用户明确「不调无关配置」），仅记录该观察供后续参考"
-  },
-  "next": {
-    "if_window_succeeds": "REQ-7 通过 → REQ-11/REQ-12 进入 TDD → 归因问题可能立即暴露 → 断言已就位，可直接实施 dag.py 使 D1–D10 转绿",
-    "if_environment_fails_again": "按用户指示不跑第 3 次，记录「网关持续不稳定，依赖累积验证未完成」，把时间投在 DAG 实施上",
-    "awaiting": "closure6 窗口结果"
-  },
-  "not_done": {
-    "dag_implementation": "按要求只写断言，未实现 dag.py，未改运行时逻辑",
-    "probe_strategy_change": "未调（不调无关配置）",
-    "dag_suite_registration": "刻意未登记进 check_all（当前预期红）"
+
+  "assertions": {
+    "check_all": "257/257 通过（8 类）",
+    "dag_suite": "10 红 1 绿（预期红，刻意未登记进 check_all）"
   }
 }
