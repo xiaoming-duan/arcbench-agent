@@ -86,6 +86,19 @@ def hash_of(path: Path) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
+def hash_of_body(payload: dict[str, Any]) -> str:
+    """**正文哈希**：排除 `hash` 与 `integrity` 两个自指字段后的序列化哈希。
+
+    生成与门禁**必须共用本函数** —— 两边各写一套口径是这类校验最经典的失效方式
+    （生成时算 A、校验时算 B，于是永远不等或永远相等）。
+    """
+    import hashlib
+    body = {k: v for k, v in (payload or {}).items() if k not in ("hash", "integrity")}
+    return hashlib.sha256(
+        yaml.safe_dump(body, allow_unicode=True, sort_keys=False).encode("utf-8")
+    ).hexdigest()
+
+
 def hash_record_path(output_dir: Path, req_id: str) -> Path:
     """哈希记录文件：`.arc/contracts/<req_id>.sha256`。"""
     return contracts_dir(output_dir) / f"{req_id}.sha256"
@@ -112,6 +125,11 @@ def contract_payload(
         FROZEN_FIELD: True,
         "frozen_at": stamp,
         "frozen_by": frozen_by,
+        # `integrity` 内嵌指纹：**不含 integrity 块本身**的正文哈希。
+        # 为什么不能覆盖自身：哈希写进文件后再算哈希，值会变 —— 自指无解。
+        # 所以权威完整性仍由**侧车**（覆盖含 integrity 的完整文件）保证；
+        # 内嵌字段的价值是**可移植**：合同文件单独拿走也能自证正文未被改。
+        "integrity": {"sha256": body_hash, "algorithm": "sha256"},
         "hash": body_hash,
         "generated_at": stamp,
         "cross_module_calls": [c.to_dict() for c in requirement.cross_module_calls],
@@ -149,12 +167,10 @@ def write_contracts(output_dir: Path, requirements: Iterable[Requirement]) -> li
         # `hash` 字段记录**不含该字段的正文哈希**（自指哈希不可能）。
         # 权威哈希是**侧车**（覆盖含 hash 字段的完整文件）；这个字段
         # 是给人看的"内容指纹"，用于人眼比对两份合同是否同源。
-        import hashlib as _hl
-        body_for_hash = {k: v for k, v in body.items() if k != "hash"}
-        body["hash"] = _hl.sha256(
-            yaml.safe_dump(body_for_hash, allow_unicode=True, sort_keys=False)
-            .encode("utf-8")
-        ).hexdigest()
+        # 与门禁**共用同一口径**（见 hash_of_body 的注释）
+        _digest = hash_of_body(body)
+        body["hash"] = _digest
+        body["integrity"] = {"sha256": _digest, "algorithm": "sha256"}
         text = yaml.safe_dump(body, allow_unicode=True, sort_keys=False)
         path.write_text(text, encoding="utf-8")
         # ★ 冻结 = 写侧车哈希 + 置只读。
@@ -295,9 +311,29 @@ def check_contract(
             detail=f"合同未冻结（{FROZEN_FIELD} != true）—— 实现阶段不得使用未冻结的合同",
         )
 
-    # ★ 篡改校验：当前字节 vs 冻结时记录的 sha256。
-    # 这是**不可编辑性的真正保证** —— 权限位只是纵深防御的一层
-    # （同用户仍可 chmod 回来），而哈希比对无法绕过。
+    # ★ 篡改校验（两路，互补）：
+    #   ① **内嵌 integrity.sha256** —— 可移植：合同单独拿走也能自证正文未被改
+    #   ② **侧车 .sha256** —— 权威：覆盖含 integrity 块的**完整文件字节**，
+    #      连「有人只改了 integrity 字段」也能发现
+    # 权限位（0444）只是纵深防御，不构成这两条之外的保证。
+    body_digest = hash_of_body(payload)
+    declared_integrity = (payload.get("integrity") or {})
+    if isinstance(declared_integrity, dict):
+        want_body = str(declared_integrity.get("sha256") or "").strip()
+        algo = str(declared_integrity.get("algorithm") or "sha256").strip()
+        if algo != "sha256":
+            return ContractCheck(
+                req_id=requirement.req_id, ok=False, reason="CONTRACT_TAMPERED",
+                detail=f"integrity.algorithm 不是 sha256（{algo!r}）—— 无法校验",
+            )
+        frozen_at_meta = str(payload.get("frozen_at") or "未知")
+        if want_body and want_body != body_digest:
+            return ContractCheck(
+                req_id=requirement.req_id, ok=False, reason="CONTRACT_TAMPERED",
+                detail=(f"合同**正文**在冻结后被修改 —— 期望哈希 {want_body[:16]}… / "
+                        f"实际哈希 {body_digest[:16]}…（冻结于 {frozen_at_meta}）。"
+                        "合同是验收依据，实现阶段不得改动它"),
+            )
     rec = hash_record_path(output_dir, requirement.req_id)
     if rec.is_file():
         try:

@@ -32,6 +32,7 @@ sys.path.insert(0, str(ROOT / "arcbench-agent-runtime" / "src"))
 
 from factory.errors import (  # noqa: E402
     ALL_CLASSES,
+    RETRY_BUDGET,
     CLASS_DESIGN,
     CLASS_ENVIRONMENT,
     CLASS_IMPLEMENTATION,
@@ -111,13 +112,49 @@ def test_budget_semantics_is_retries_not_attempts():
     初版写成 `spent < budget`，于是 budget=1 在首轮就判死 ——
     「重试 1 次」变成「重试 0 次」。该错误被 T35a 抓出。
     """
-    b = RepairBudget(budgets={CLASS_ENVIRONMENT: 1})
-    _, can1 = b.charge("ENV_ERROR")
+    b = RepairBudget()                       # ENVIRONMENT 在 RETRY_BUDGET 里就是 1
+    _, can1 = b.charge("ENVIRONMENT")
     assert can1 is True, "budget=1 的首次失败应仍可再试一次"
-    _, can2 = b.charge("ENV_ERROR")
+    _, can2 = b.charge("ENVIRONMENT")
     assert can2 is False, "第二次失败后应耗尽"
-    assert b.exhausted(CLASS_ENVIRONMENT)
-    assert b.left(CLASS_ENVIRONMENT) == 0
+    assert b.exhausted("ENVIRONMENT")
+    assert b.left("ENVIRONMENT") == 0
+
+
+def test_retry_budget_map_matches_spec():
+    """config.RETRY_BUDGET 的八个信号与预算值必须与设计一致（逐项钉住）。"""
+    from factory.config import FactoryConfig
+    assert FactoryConfig.RETRY_BUDGET == RETRY_BUDGET
+    assert RETRY_BUDGET == {
+        "TEST_FAILED": 3,
+        "DEPENDENCY_NOT_USED": 3,
+        "CONTRACT_MISMATCH": 2,
+        "CONTRACT_MISSING": 1,
+        "CONTRACT_TAMPERED": 1,
+        "TEST_BROKEN": 2,
+        "WEAK_TEST": 2,
+        "ENVIRONMENT": 1,
+    }
+
+
+def test_signal_budget_overrides_class_budget():
+    """信号级预算优先于类别兜底 —— 这是「分类型」而非「分四类」的关键。"""
+    b = RepairBudget()
+    # CONTRACT_MISSING 与 DEPENDENCY_NOT_USED 同属 design 类，但预算不同
+    assert classify("CONTRACT_MISSING") == classify("DEPENDENCY_NOT_USED") == CLASS_DESIGN
+    assert b.budget_for("CONTRACT_MISSING") == 1
+    assert b.budget_for("DEPENDENCY_NOT_USED") == 3
+    # 表外信号回退到类别预算
+    assert b.budget_for("SOME_UNLISTED_DESIGN_SIGNAL") == DEFAULT_BUDGETS[CLASS_DESIGN]
+
+
+def test_contract_signals_have_tight_budgets():
+    """★ 合同类信号预算最紧（1–2）：合同问题**改实现修不好**，多给轮次是浪费。"""
+    for sig in ("CONTRACT_MISSING", "CONTRACT_TAMPERED"):
+        assert RETRY_BUDGET[sig] == 1, f"{sig} 应只给 1 次"
+    assert RETRY_BUDGET["CONTRACT_MISMATCH"] == 2
+    # 反向：实现类信号预算最宽
+    assert RETRY_BUDGET["TEST_FAILED"] == max(RETRY_BUDGET.values())
 
 
 def test_default_budgets_match_spec():
@@ -133,48 +170,57 @@ def test_default_budgets_match_spec():
 def test_environment_does_not_consume_implementation_budget():
     """★ P0-2 的核心主张：环境错误**不挤占**实现预算。"""
     b = RepairBudget()
-    b.charge("ENV_ERROR")
-    b.charge("ENV_ERROR")
-    assert b.spent[CLASS_ENVIRONMENT] == 2
-    assert b.spent[CLASS_IMPLEMENTATION] == 0, "环境错误不应计入实现"
-    assert b.left(CLASS_IMPLEMENTATION) == DEFAULT_BUDGETS[CLASS_IMPLEMENTATION]
+    b.charge("ENVIRONMENT")
+    b.charge("ENVIRONMENT")
+    assert b.spent.get("ENVIRONMENT") == 2
+    assert b.spent.get("TEST_FAILED", 0) == 0, "环境错误不应计入实现"
+    assert b.left("TEST_FAILED") == RETRY_BUDGET["TEST_FAILED"]
 
     # 反向：实现错误也不挤占环境预算
     b2 = RepairBudget()
     b2.charge("TEST_FAILED")
-    assert b2.spent[CLASS_ENVIRONMENT] == 0
+    assert b2.spent.get("ENVIRONMENT", 0) == 0
+    assert b2.left("ENVIRONMENT") == RETRY_BUDGET["ENVIRONMENT"]
 
 
-def test_each_class_counts_independently():
-    """四类各自独立计数，互不影响。"""
+def test_each_signal_counts_independently():
+    """每个**信号**各自独立计数，互不影响（P0-2 的计费键是信号）。"""
     b = RepairBudget()
-    for sig in ("DESIGN_FAILED", "TEST_FAILED", "TEST_BROKEN", "ENV_ERROR"):
+    for sig in ("CONTRACT_MISSING", "TEST_FAILED", "TEST_BROKEN", "ENVIRONMENT"):
         b.charge(sig)
-    assert b.spent == {CLASS_DESIGN: 1, CLASS_IMPLEMENTATION: 1,
-                       CLASS_TEST: 1, CLASS_ENVIRONMENT: 1}
-    assert set(b.spent) == set(ALL_CLASSES)
+    assert b.spent == {"CONTRACT_MISSING": 1, "TEST_FAILED": 1,
+                       "TEST_BROKEN": 1, "ENVIRONMENT": 1}
+    # 反向：同一类别下的两个信号**各自**计数，不合并
+    b2 = RepairBudget()
+    b2.charge("CONTRACT_MISSING")
+    b2.charge("CONTRACT_MISMATCH")
+    assert b2.spent == {"CONTRACT_MISSING": 1, "CONTRACT_MISMATCH": 1}
+    assert b2.spent_in_class(CLASS_DESIGN) == 2
 
 
 def test_history_preserves_order_and_exhaustion():
     """历史按发生顺序保留；耗尽列表正确。"""
-    b = RepairBudget(budgets={CLASS_TEST: 1})
+    b = RepairBudget()
     b.charge("TEST_FAILED")
     b.charge("TEST_BROKEN")
     b.charge("TEST_BROKEN")
     assert [s for _, s in b.history] == ["TEST_FAILED", "TEST_BROKEN", "TEST_BROKEN"]
     d = b.to_dict()
-    assert d["spent"][CLASS_TEST] == 2
-    assert CLASS_TEST in d["exhausted"]
-    assert CLASS_IMPLEMENTATION not in d["exhausted"]
+    assert d["spent"]["TEST_BROKEN"] == 2
+    # 预算 2 = 允许 2 次重试。用了 2 次**仍可再试一次**，故此时尚未耗尽。
+    assert "TEST_BROKEN" not in d["exhausted"]
+    b.charge("TEST_BROKEN")                       # 第 3 次 -> 超出预算 2
+    assert "TEST_BROKEN" in b.to_dict()["exhausted"]
+    assert "CONTRACT_MISSING" not in b.to_dict()["exhausted"]
 
 
 def test_tighter_budget_stops_sooner_than_looser():
     """对照：同一串失败下，预算小的一类更早耗尽（判据有区分度）。"""
     def run(budget: int) -> int:
-        b = RepairBudget(budgets={CLASS_ENVIRONMENT: budget})
+        b = RepairBudget(signal_budgets={"X": budget}, class_budgets={})
         n = 0
         for _ in range(10):
-            _, more = b.charge("ENV_ERROR")
+            _, more = b.charge("X")
             n += 1
             if not more:
                 break
@@ -238,10 +284,11 @@ def test_factory_config_exposes_four_budgets():
 
 
 def test_describe_budget_is_readable():
-    """账本摘要可读（供报告/日志）。"""
+    """账本摘要可读（供报告/日志）——按**信号**列出。"""
     b = RepairBudget()
     b.charge("TEST_FAILED")
-    b.charge("ENV_ERROR")
+    b.charge("ENVIRONMENT")
     text = describe_budget(b)
-    assert "implementation=1/3" in text
-    assert "environment=1/1" in text
+    assert "TEST_FAILED=1/3" in text
+    assert "ENVIRONMENT=1/1" in text
+    assert describe_budget(RepairBudget()) == "(未发生重试)"

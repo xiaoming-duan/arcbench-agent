@@ -71,6 +71,10 @@ _SIGNAL_TO_CLASS: dict[str, str] = {
     "DEPENDENCY_NOT_USED": CLASS_DESIGN,
     "UNVERIFIED_DEPENDENCY": CLASS_DESIGN,
     # 环境
+    # ★ 裸信号名 `ENVIRONMENT` 也要登记 —— 它是 RETRY_BUDGET 的键，
+    #   漏登记会让它掉进「未知信号 -> implementation」的兜底，
+    #   于是环境预算（1）被当成实现预算（3）。
+    "ENVIRONMENT": CLASS_ENVIRONMENT,
     "ENV_ERROR": CLASS_ENVIRONMENT,
     "MODEL_ERROR": CLASS_ENVIRONMENT,
     "DNS_ERROR": CLASS_ENVIRONMENT,
@@ -113,51 +117,105 @@ def is_environment(signal: str, detail: str = "") -> bool:
 # ---- 预算账本 ----
 
 
+#: 分类型错误重试预算（P0-2）。按**错误信号**分配，每类独立计数。
+#:
+#: 与四类兜底（DEFAULT_BUDGETS）的分工：
+#:   • 表内列出的信号 —— 用**该信号自己的**预算（更细，如 CONTRACT_MISSING 只给 1）
+#:   • 表外的信号     —— 回退到它所属**类别**的预算（不会没预算可用）
+#:
+#: 数字语义是「允许的重试次数」，**不含首次**。
+RETRY_BUDGET: dict[str, int] = {
+    "TEST_FAILED": 3,
+    "DEPENDENCY_NOT_USED": 3,
+    "CONTRACT_MISMATCH": 2,
+    "CONTRACT_MISSING": 1,
+    "CONTRACT_TAMPERED": 1,
+    "TEST_BROKEN": 2,
+    "WEAK_TEST": 2,
+    "ENVIRONMENT": 1,
+}
+
+
 @dataclass
 class RepairBudget:
-    """按类别独立计数的重试账本。
+    """按**错误类型**独立计数的重试账本（P0-2）。
 
     每类**独立**累加，互不挤占 —— 这正是 P0-2 的核心：
     环境错误重试 1 次，不会让实现少一次机会。
+
+    计数键是**信号**（如 `TEST_FAILED` / `CONTRACT_MISSING`），
+    不是粗粒度的类别 —— 因为「合同缺失」（模型改了也没用，只给 1 次）
+    与「实现没写对」（给 3 次）需要不同预算。
     """
 
-    budgets: dict[str, int] = field(default_factory=lambda: dict(DEFAULT_BUDGETS))
-    spent: dict[str, int] = field(default_factory=lambda: {k: 0 for k in ALL_CLASSES})
+    #: 信号级预算（来自 config.RETRY_BUDGET）
+    signal_budgets: dict[str, int] = field(default_factory=lambda: dict(RETRY_BUDGET))
+    #: 类别级兜底预算（表外信号用）
+    class_budgets: dict[str, int] = field(default_factory=lambda: dict(DEFAULT_BUDGETS))
+    #: 已用次数，**按信号**计数
+    spent: dict[str, int] = field(default_factory=dict)
     #: 按发生顺序记录 (类别, 信号)，供报告与诊断
     history: list[tuple[str, str]] = field(default_factory=list)
 
-    def budget(self, kind: str) -> int:
-        return int(self.budgets.get(kind, DEFAULT_BUDGETS.get(kind, 1)))
+    # 兼容旧构造：RepairBudget(budgets={CLASS_ENVIRONMENT: 1})
+    def __post_init__(self) -> None:
+        legacy = getattr(self, "budgets", None)          # type: ignore[attr-defined]
+        if isinstance(legacy, dict):
+            # 旧口径给的是**类别**预算；并入 class_budgets，并让信号级让位
+            self.class_budgets.update({k: int(v) for k, v in legacy.items()})
+            self.signal_budgets.clear()
+            object.__setattr__(self, "budgets", None) if False else None
+
+    def budget_for(self, signal: str) -> int:
+        """取某信号的预算：先查信号表，再回退到类别表。"""
+        key = (signal or "").strip().upper()
+        if key in self.signal_budgets:
+            return int(self.signal_budgets[key])
+        return int(self.class_budgets.get(classify(signal), 1))
+
+    # 旧名保留（测试与报告用）
+    def budget(self, key: str) -> int:
+        return self.budget_for(key)
 
     def charge(self, signal: str, detail: str = "") -> tuple[str, bool]:
         """记一次失败。返回 (类别, 是否还能再试)。
 
-        「还能再试」= 该类已用次数 **<=** 预算。
+        「还能再试」= 该**信号**已用次数 **<=** 其预算。
 
         预算语义是**允许的重试次数**（不含首次），所以是 `<=` 而不是 `<`。
         初版写成 `<`，于是 `budget=1` 的环境错误在**首次失败就判死** ——
         「重试 1 次」变成了「重试 0 次」，被现有断言 T35a 抓出。
         """
         kind = classify(signal, detail)
-        self.spent[kind] = self.spent.get(kind, 0) + 1
-        self.history.append((kind, signal))
-        return kind, self.spent[kind] <= self.budget(kind)
+        key = (signal or "").strip().upper() or kind.upper()
+        self.spent[key] = self.spent.get(key, 0) + 1
+        self.history.append((kind, key))
+        return kind, self.spent[key] <= self.budget_for(key)
 
-    def left(self, kind: str) -> int:
-        """该类**还能再试几次**。"""
-        return max(0, self.budget(kind) - self.spent.get(kind, 0))
+    def left(self, key: str) -> int:
+        """该信号**还能再试几次**。"""
+        return max(0, self.budget_for(key) - self.spent.get((key or "").upper(), 0))
 
-    def exhausted(self, kind: str) -> bool:
+    def exhausted(self, key: str) -> bool:
         """是否已用尽（已用次数 **>** 预算，与 charge 的 `<=` 对称）。"""
-        return self.spent.get(kind, 0) > self.budget(kind)
+        return self.spent.get((key or "").upper(), 0) > self.budget_for(key)
+
+    def spent_in_class(self, kind: str) -> int:
+        """某**类别**下的总花费（跨该类所有信号）。
+
+        按 history 逐条归类累加 —— history 里每条只记一次发生，
+        所以不受「同一信号重复出现被合并」的影响。
+        """
+        return sum(1 for _cls, _sig in self.history if _cls == kind)
 
     def to_dict(self) -> dict[str, object]:
         return {
-            "budgets": dict(self.budgets),
+            "signal_budgets": dict(self.signal_budgets),
+            "class_budgets": dict(self.class_budgets),
             "spent": dict(self.spent),
-            "left": {k: self.left(k) for k in ALL_CLASSES},
+            "left": {s: self.left(s) for s in sorted(set(self.spent) | set(self.signal_budgets))},
             "history": [f"{k}:{s}" for k, s in self.history],
-            "exhausted": [k for k in ALL_CLASSES if self.exhausted(k)],
+            "exhausted": sorted({s for s in self.spent if self.exhausted(s)}),
         }
 
 
@@ -175,11 +233,13 @@ def budgets_from_config(config: object) -> dict[str, int]:
 
 
 def describe_budget(b: RepairBudget) -> str:
-    """一行摘要，供报告与日志。"""
-    parts: list[str] = []
-    for k in ALL_CLASSES:
-        parts.append(f"{k}={b.spent.get(k, 0)}/{b.budget(k)}")
-    return " ".join(parts)
+    """一行摘要，供报告与日志。
+
+    只列**实际发生过**的信号 —— 把 8 个 `=0/N` 也打出来会淹没日志里真正有用的信息
+    （初版就是这样，空账本会输出一整行零）。
+    """
+    parts = [f"{k}={b.spent[k]}/{b.budget_for(k)}" for k in sorted(b.spent)]
+    return " ".join(parts) if parts else "(未发生重试)"
 
 
 def signals_of(b: RepairBudget, kind: str) -> list[str]:

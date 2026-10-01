@@ -1155,8 +1155,13 @@ class TddLoop:
         # ---- 分类重试预算（P0-2）----
         # 四类错误**独立计数**：环境错误重试 1 次不会挤占实现预算。
         # 循环上界取四类预算之和 + 1（首轮不计费），实际停止由各类预算分别决定。
-        budget = RepairBudget(budgets_from_config(self.config))
-        while attempts <= sum(budget.budgets.values()) + 1:
+        # 信号级预算来自 config.RETRY_BUDGET（表外信号回退到四类兜底）
+        _signal_budgets = dict(getattr(self.config, "RETRY_BUDGET", None)
+                               or getattr(type(self.config), "RETRY_BUDGET", {}) or {})
+        budget = RepairBudget(signal_budgets=_signal_budgets,
+                              class_budgets=budgets_from_config(self.config))
+        while attempts <= sum(budget.signal_budgets.values()) + sum(
+                budget.class_budgets.values()) + 1:
             attempts += 1
             try:
                 impl_files = self.generator.implement(
@@ -1182,9 +1187,7 @@ class TddLoop:
                 )
                 # ★ 环境错误独立计费：网关/DNS/配额重试再多也不会成功，
                 #   让它占用实现预算等于用一个不可控因素压低模型能力评估。
-                _kind, _can_retry = budget.charge(
-                    "ENV_ERROR" if transient else "MODEL_ERROR", model_error
-                )
+                _kind, _can_retry = budget.charge("ENVIRONMENT", model_error)
                 if not _can_retry:
                     self.store.implement_failed(
                         req_id,
@@ -1308,9 +1311,12 @@ class TddLoop:
                     ) + (";" if dep_audit.violations and mock_audit.violations else "")
                     + "; ".join(f"{u.upstream}=UNVERIFIED_DEPENDENCY" for u in mock_audit.violations),
                 )
+                # 依赖违规按**具体判定**计费（NOT_USED / MISMATCH / MISSING 各有预算）
+                _verdicts = ([u.verdict for u in dep_audit.violations]
+                             + [c["reason"] for c in result.contract_violations])
                 _kind, _can_retry = budget.charge(
-                    "DEPENDENCY_NOT_USED",
-                    "; ".join(u.verdict for u in dep_audit.violations),
+                    _verdicts[0] if _verdicts else "DEPENDENCY_NOT_USED",
+                    "; ".join(_verdicts),
                 )
                 if not _can_retry:
                     break

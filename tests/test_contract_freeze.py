@@ -278,6 +278,9 @@ def test_gate_blocks_on_tampered_contract(frozen, reqs):
     assert "冻结于" in bad.detail, "理由应含冻结时间戳"
 
 
+
+
+
 def test_contract_file_is_readonly(frozen):
     """冻结后合同与侧车都应为 0444 只读。"""
     import stat as _stat
