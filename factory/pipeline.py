@@ -14,6 +14,7 @@ from arcbench_agent_runtime import AgentRuntime
 
 from .adapter import _adapt
 from .config import FactoryConfig
+from .contracts import contracts_dir
 from .generator import build_generator
 from .llm import ModelClient, ModelQuotaExhaustedError
 from .loop import TddLoop
@@ -128,6 +129,13 @@ def run_factory(
         store.commit("requirements: 需求树入库")
 
         # ---- 决定生成器与测试方言 ----
+        # ---- 契约冻结：编译前把 cross_module_calls 写成只读合同 ----
+        # 位置刻意放在跑需求之前、模板就位之后：
+        #   需求 YAML 已解析完（req_set 可用），输出目录已存在（可写 .arc/contracts/）。
+        # 未声明 cross_module_calls 的需求不生成合同（可选能力的默认关闭语义）。
+        from .contracts import write_contracts
+        write_contracts(output_dir, req_set.requirements)
+
         dialect = _resolve_test_dialect(config, output_dir)
         generator_kind = config.resolve_generator()
         report.generator = generator_kind
@@ -147,6 +155,7 @@ def run_factory(
             fixture_root=fixture_root,
             test_dialect=dialect,
             model_client=model_client,
+            contracts_dir=contracts_dir(output_dir),
         )
         runner = build_runner(dialect, output_dir, timeout_s=config.test_timeout_s)
 

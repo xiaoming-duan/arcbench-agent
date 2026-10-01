@@ -15,6 +15,9 @@ from typing import Sequence
 from .config import FactoryConfig
 from .generator import Generator
 from .llm import ModelQuotaExhaustedError
+from .contracts import check_contracts, describe as describe_contracts
+from .uigate import check_ui, describe as describe_ui, e2e_sources_of
+from .errors import RepairBudget, budgets_from_config, describe_budget
 from .models import (
     DesignPlan,
     GeneratedFile,
@@ -1150,7 +1153,16 @@ class TddLoop:
         # 最近一次「测试通过」的实现，用于重写后回归回退
         last_good_impl: list[GeneratedFile] = []
         last_good_passed = False
-        while attempts <= self.config.max_repairs:
+        # ---- 分类重试预算（P0-2）----
+        # 四类错误**独立计数**：环境错误重试 1 次不会挤占实现预算。
+        # 循环上界取四类预算之和 + 1（首轮不计费），实际停止由各类预算分别决定。
+        # 信号级预算来自 config.RETRY_BUDGET（表外信号回退到四类兜底）
+        _signal_budgets = dict(getattr(self.config, "RETRY_BUDGET", None)
+                               or getattr(type(self.config), "RETRY_BUDGET", {}) or {})
+        budget = RepairBudget(signal_budgets=_signal_budgets,
+                              class_budgets=budgets_from_config(self.config))
+        while attempts <= sum(budget.signal_budgets.values()) + sum(
+                budget.class_budgets.values()) + 1:
             attempts += 1
             try:
                 impl_files = self.generator.implement(
@@ -1174,8 +1186,14 @@ class TddLoop:
                     "（疑似瞬时故障，回传后重试）" if transient else "",
                     model_error,
                 )
-                if attempts > self.config.max_repairs:
-                    self.store.implement_failed(req_id, f"{req_id} 实现失败: {model_error}")
+                # ★ 环境错误独立计费：网关/DNS/配额重试再多也不会成功，
+                #   让它占用实现预算等于用一个不可控因素压低模型能力评估。
+                _kind, _can_retry = budget.charge("ENVIRONMENT", model_error)
+                if not _can_retry:
+                    self.store.implement_failed(
+                        req_id,
+                        f"{req_id} 实现失败（{_kind} 预算 {budget.budget(_kind)} 次已耗尽）: {model_error}",
+                    )
                     result.state = "FAILED"
                     result.note = f"实现失败（{attempts} 次尝试）: {model_error}"
                     logger.error(result.note)
@@ -1209,8 +1227,10 @@ class TddLoop:
                     f"{item['file']} 引用 {item['specifier']}" for item in broken_modules[:5]
                 )
                 logger.error("[实现审计] %s 引用了不存在的模块: %s", req_id, detail)
-                if attempts > self.config.max_repairs:
-                    self.store.implement_failed(req_id, f"{req_id} 实现引用了不存在的模块: {detail}")
+                _kind, _can_retry = budget.charge("IMPLEMENTATION_REGRESSION", detail)
+                if not _can_retry:
+                    self.store.implement_failed(
+                        req_id, f"{req_id} 实现引用了不存在的模块: {detail}")
                     result.state = "FAILED"
                     result.note = f"实现引用了不存在的模块（{attempts} 次尝试）: {detail}"
                     result.attempts = attempts
@@ -1292,7 +1312,14 @@ class TddLoop:
                     ) + (";" if dep_audit.violations and mock_audit.violations else "")
                     + "; ".join(f"{u.upstream}=UNVERIFIED_DEPENDENCY" for u in mock_audit.violations),
                 )
-                if attempts > self.config.max_repairs:
+                # 依赖违规按**具体判定**计费（NOT_USED / MISMATCH / MISSING 各有预算）
+                _verdicts = ([u.verdict for u in dep_audit.violations]
+                             + [c["reason"] for c in result.contract_violations])
+                _kind, _can_retry = budget.charge(
+                    _verdicts[0] if _verdicts else "DEPENDENCY_NOT_USED",
+                    "; ".join(_verdicts),
+                )
+                if not _can_retry:
                     break
                 continue
 
@@ -1320,7 +1347,9 @@ class TddLoop:
                 # 实测 E2 给了 5 次预算却只用了 1 次重写，预算变量完全失效。
                 # 同时把「上次重写把测试改坏了」这一信息回传给模型，
                 # 否则它会重复同一种改法。
-                if attempts > self.config.max_repairs:
+                _kind, _can_retry = budget.charge(
+                    "IMPLEMENTATION_REGRESSION", "测试被改坏并已回退")
+                if not _can_retry:
                     break
                 failures = [
                     "上一次重写把测试从通过改成了失败，已回退。"
@@ -1335,12 +1364,14 @@ class TddLoop:
                 continue
 
             failures = list(outcome.failures) or [outcome.stderr[-2000:] or "测试失败（无结构化输出）"]
-            if attempts <= self.config.max_repairs:
+            # 主修复路径：测试有效但实现没过 —— 记在**实现类**预算上
+            _kind, _can_retry = budget.charge("TEST_FAILED", " ".join(failures)[:200])
+            if _can_retry:
                 logger.warning(
                     "[修复] %s 第 %d 次修复（剩余 %d 次）",
                     req_id,
                     attempts,
-                    self.config.max_repairs - attempts + 1,
+                    budget.left(_kind),
                 )
 
         result.attempts = attempts
@@ -1359,10 +1390,42 @@ class TddLoop:
             or not self.config.warn_injection_bypass
             or not self.config.block_injection_bypass   # 默认警告级，不阻断
         )
+        # 冻结合同完整性：需求**声明了** cross_module_calls 时必须存在冻结件且一致。
+        # 未声明时 check_contract 返回 ok（可选能力的默认关闭语义）。
+        contract_ok_raw, contract_checks = check_contracts(self.output_dir, [requirement])
+        result.contract_violations = [c.to_dict() for c in contract_checks if not c.ok]
+
+        # ---- 第五道门：UI 门禁（P0-3）----
+        # 四道既有门禁全部面向后端逻辑；UI 此前**无门禁**，
+        # 于是声明了 ui_contracts 也没人检查测试是否覆盖了那些元素。
+        # 未声明 ui_contracts 的需求返回 ok（可选语义，行为不变）。
+        _e2e_src, _planned_e2e = e2e_sources_of(self.output_dir, plan)
+        ui_check = check_ui(
+            requirement, e2e_sources=_e2e_src, planned_e2e=_planned_e2e,
+            # RED 阶段是否失败：只有真跑过 E2E 才知道。用 outcome 判定 ——
+            # 若需求走到这里且 outcome.passed，说明当前实现已让测试通过，
+            # 无法从这里反推 RED。故传 None（不做 WEAK 判定）以免误报。
+            red_failed=None,
+        )
+        ui_ok_raw = ui_check.ok
+        result.ui_violations = [v.to_dict() for v in ui_check.violations]
+
         dep_ok, mock_ok, bypass_ok = dep_ok_raw, mock_ok_raw, bypass_ok_raw
-        dep_ok = dep_ok and mock_ok and bypass_ok
+        # 四道门全部参与，**不短路** —— 任一门禁为假都不放行
+        # 五道门全部参与，**不短路** —— 任一门禁为假都不放行
+        dep_ok = dep_ok and mock_ok and bypass_ok and contract_ok_raw and ui_ok_raw
         result.gate_audits = {
             "dep_ok": dep_ok_raw, "mock_ok": mock_ok_raw, "bypass_ok": bypass_ok_raw,
+            "contract_ok": contract_ok_raw,
+            "ui_ok": ui_ok_raw,
+            "ui_element_coverage": ui_check.element_coverage,
+            "ui_message_coverage": ui_check.message_coverage,
+            # ★ 分类预算账本必须在**门禁赋值之后**再写。
+            #   实测 bug：初版写在循环结束处，而下面这个 `result.gate_audits = {...}`
+            #   会**整体覆盖**它 —— 于是真实运行里 6 个需求的账本全部丢失，
+            #   而 REQ-11 明明消费了 4 次 DEPENDENCY_NOT_USED / 3 次回归。
+            #   机制在正确工作，可观测性却为零。
+            "repair_budget": budget.to_dict(),
             "combined_ok": dep_ok,
             "enforce_dependency_usage": self.config.enforce_dependency_usage,
             "enforce_mock_check": self.config.enforce_mock_check,
@@ -1391,16 +1454,29 @@ class TddLoop:
                 parts += [
                     f"{f.upstream}=INJECTION_BYPASS({f.parameter})" for f in bypass_audit.findings
                 ]
-            reason = "; ".join(parts) or "依赖未通过使用审计"
+            # 冻结合同违规单独成段：它是**编译期**问题（合同缺失/未冻结/漂移），
+            # 与「实现不符合同」性质不同，混在一句里会让归因含糊。
+            contract_parts = [
+                f"{c['req_id']}={c['reason']}" for c in result.contract_violations
+            ] + [f"{v['verdict']}" for v in result.ui_violations]
+            reason = "; ".join(parts + contract_parts) or "依赖未通过使用审计"
             self.store.test_failed(req_id, f"{req_id} 依赖未真实验证: {reason}")
             self.store.set_state(req_id, "FAILED", "test")
             self.store.commit(f"{req_id} (blocked): {requirement.name} 依赖未验证")
             result.state = "FAILED"
-            result.note = (
-                f"测试通过但依赖未被真实验证（{reason}）："
-                f"重写 {attempts} 次仍未满足依赖使用要求"
-            )
-            logger.error("[依赖门禁] %s BLOCK -> FAILED（%s）", req_id, reason)
+            if result.contract_violations and not parts:
+                # 纯合同问题：理由是**可执行**的（见 contracts.describe）
+                result.note = (
+                    "冻结合同不成立（"
+                    + "; ".join(contract_parts)
+                    + "）：" + describe_contracts(contract_checks).replace("\n", " ")
+                )
+            else:
+                result.note = (
+                    f"测试通过但依赖未被真实验证（{reason}）："
+                    f"重写 {attempts} 次仍未满足依赖使用要求"
+                )
+            logger.error("[门禁] %s BLOCK -> FAILED（%s）", req_id, reason)
         else:
             self.store.test_failed(
                 req_id, f"{req_id} 测试失败（{attempts} 次尝试）: {outcome.summary()}"

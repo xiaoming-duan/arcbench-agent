@@ -1,0 +1,186 @@
+schema_version: "1.0"
+project:
+  id: workbook-ui-probe
+  name: 工作簿 UI 契约探针（REQ-1-1-1）
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  为什么有这个规格
+# ═══════════════════════════════════════════════════════════════════════════
+#  closure6 是 6 个**纯后端**需求（全部 type: unit），没有 UI 需求 ——
+#  于是 UI 契约扩展（ui_contracts）、E2E 生成、第五道 UI 门禁
+#  三项 P0 **没有验证对象**。
+#
+#  本规格提供该对象：REQ-1-1-1 = 工作簿首页 + 编辑器的 UI 需求。
+#  它是唯一一个能检验「声明 → 验证 → 门禁」闭环的用例。
+#
+#  `page` 字段在此为**实现自定义**（需求原文即如此），
+#  故用占位符并在 title 里说明；门禁按「测试中是否引用了该路径」检查，
+#  不假定具体 URL。
+# ═══════════════════════════════════════════════════════════════════════════
+
+requirements:
+  - id: REQ-1-1-1
+    name: 工作簿首页与编辑器
+    description: >-
+      用户在工作簿首页查看可用工作簿。每条记录显示
+      "Last updated: <last updated value>"，并提供一个可访问名等于
+      工作簿名的链接。点击链接后，编辑器显示同样的
+      "Last updated: <last updated value>"、对应的工作簿名、
+      工作表标签及其顺序、当前活动工作表、行列结构与网格值、
+      公式栏内容、筛选视图、校验入口、以及透视表结果；
+      **另一个工作簿的数据不得出现在当前网格中**。
+      编辑器页入口在浏览器中必须可直接访问，刷新后仍指向同一工作簿；
+      在同一或更晚的浏览器会话中访问该确切工作簿状态，
+      必须恢复该工作簿**最近一次成功**的状态，且无需经过首页。
+      入口格式为实现自定义。
+    depends_on: []
+    acceptance:
+      - 首页列出工作簿，每条显示 "Last updated: <值>" 与可访问名为工作簿名的链接
+      - 点击链接后编辑器显示同一 "Last updated: <值>" 与对应工作簿名
+      - 编辑器显示工作表标签及其顺序、当前活动工作表
+      - 编辑器显示行列结构与网格值
+      - 编辑器显示公式栏内容、筛选视图、校验入口、透视表结果
+      - 另一工作簿的数据不得出现在当前网格中
+      - 编辑器入口可直接访问，刷新后仍指向同一工作簿
+      - 同一或更晚的浏览器会话访问该状态时恢复最近一次成功状态，且无需经过首页
+    scenarios:
+      - id: REQ-1-1-1-SCN-1
+        name: 从首页进入编辑器
+        steps:
+          - keyword: GIVEN
+            content: 首页存在至少一个工作簿记录
+          - keyword: WHEN
+            content: 点击可访问名为该工作簿名的链接
+          - keyword: THEN
+            content: "编辑器显示同一 \"Last updated: <值>\" 与对应工作簿名"
+      - id: REQ-1-1-1-SCN-2
+        name: 工作簿数据隔离
+        steps:
+          - keyword: GIVEN
+            content: 存在两个不同的工作簿
+          - keyword: WHEN
+            content: 打开其中一个的编辑器
+          - keyword: THEN
+            content: 网格中不出现另一个工作簿的数据
+      - id: REQ-1-1-1-SCN-3
+        name: 入口可直达与刷新保持
+        steps:
+          - keyword: GIVEN
+            content: 已知某工作簿的编辑器入口
+          - keyword: WHEN
+            content: 直接访问该入口并刷新
+          - keyword: THEN
+            content: 仍指向同一工作簿，且不经首页
+      - id: REQ-1-1-1-SCN-4
+        name: 会话恢复最近成功状态
+        steps:
+          - keyword: GIVEN
+            content: 某工作簿已成功保存过状态
+          - keyword: WHEN
+            content: 在同一或更晚的浏览器会话中访问该确切状态
+          - keyword: THEN
+            content: 恢复最近一次成功状态
+
+    # ═══════════════════════════════════════════════════════════════════════
+    #  ★ UI 契约：声明页面上必须存在什么、有什么行为
+    #  P0-1 新增字段。未声明的需求不生成、不校验，行为逐位不变。
+    # ═══════════════════════════════════════════════════════════════════════
+    ui_contracts:
+      - page: "/(实现自定义：工作簿首页)"
+        title: "Workbooks"
+        elements:
+          - id: workbook-list
+            type: list
+            label: "Workbooks"
+            validation: "至少列出 1 条工作簿记录"
+          - id: last-updated
+            type: text
+            label: "Last updated:"
+            validation: "每条记录都显示 'Last updated: <值>'"
+          - id: workbook-link
+            type: link
+            label: "<workbook name>"
+            validation: "可访问名（accessible name）必须等于工作簿名"
+        error_display: "首页无错误显示要求"
+        state_preservation: "首页无状态保留要求"
+        invariants:
+          - "首页每条记录都含 'Last updated: <last updated value>'"
+          - "链接的可访问名等于工作簿名"
+
+      - page: "/(实现自定义：编辑器入口)"
+        title: "<workbook name>"
+        elements:
+          - id: last-updated
+            type: text
+            label: "Last updated:"
+            validation: "与首页显示的 <last updated value> 一致"
+          - id: workbook-name
+            type: text
+            label: "<workbook name>"
+            validation: "显示对应工作簿名"
+          - id: worksheet-tabs
+            type: tabs
+            label: "Worksheets"
+            validation: "标签存在且顺序正确"
+          - id: active-worksheet
+            type: tab
+            label: "Active worksheet"
+            validation: "当前活动工作表被标识"
+          - id: grid
+            type: grid
+            label: "Grid"
+            validation: "行列结构与网格值正确"
+          - id: formula-bar
+            type: textbox
+            label: "Formula bar"
+            validation: "显示当前单元格的公式内容"
+          - id: filter-views
+            type: control
+            label: "Filter views"
+            validation: "筛选视图入口存在"
+          - id: validation-entry
+            type: control
+            label: "Data validation"
+            validation: "数据校验入口存在"
+          - id: pivot-table
+            type: table
+            label: "Pivot table"
+            validation: "透视表结果正确"
+        error_display: "无（本需求不涉及表单错误）"
+        state_preservation: >-
+          编辑器入口可直接访问；刷新后仍指向同一工作簿；
+          同一或更晚的浏览器会话访问该确切状态时，
+          恢复该工作簿**最近一次成功**的状态，且无需经过首页
+        invariants:
+          - "编辑器显示的 'Last updated: <值>' 与首页一致"
+          - "**另一工作簿的数据不得出现在当前网格中**"
+          - "编辑器入口可直接访问（不经首页）"
+          - "刷新后仍指向同一工作簿"
+          - "同一或更晚的会话恢复最近一次成功状态，无需经过首页"
+
+    interfaces: []
+    tests:
+      - test_id: REQ-1-1-1.T1
+        type: e2e
+        intent: "首页每条记录显示 Last updated 与可访问名等于工作簿名的链接"
+        file_path: backend/test-e2e/req-1-1-1.spec.js
+      - test_id: REQ-1-1-1.T2
+        type: e2e
+        intent: "点击链接后编辑器显示同一 Last updated 与对应工作簿名"
+        file_path: backend/test-e2e/req-1-1-1.spec.js
+      - test_id: REQ-1-1-1.T3
+        type: e2e
+        intent: "编辑器显示工作表标签与顺序、活动工作表、网格、公式栏、筛选视图、校验入口、透视表"
+        file_path: backend/test-e2e/req-1-1-1.spec.js
+      - test_id: REQ-1-1-1.T4
+        type: e2e
+        intent: "另一个工作簿的数据不出现在当前网格中"
+        file_path: backend/test-e2e/req-1-1-1.spec.js
+      - test_id: REQ-1-1-1.T5
+        type: e2e
+        intent: "编辑器入口可直接访问，刷新后仍指向同一工作簿（不经首页）"
+        file_path: backend/test-e2e/req-1-1-1.spec.js
+      - test_id: REQ-1-1-1.T6
+        type: e2e
+        intent: "同一或更晚的会话访问该状态时恢复最近一次成功状态"
+        file_path: backend/test-e2e/req-1-1-1.spec.js

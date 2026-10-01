@@ -258,9 +258,14 @@ class LLMGenerator:
 
     name = "llm"
 
-    def __init__(self, client: ModelClient, test_dialect: str) -> None:
+    def __init__(self, client: ModelClient, test_dialect: str,
+                 contracts_dir: Path | None = None) -> None:
         self.client = client
         self.test_dialect = test_dialect
+        # 冻结合同所在目录（`.arc/contracts`）。设置后提示词**只读冻结件**，
+        # 不读需求 YAML —— 合同是验收依据，不能让生成阶段看到"可变的那份"。
+        # 未设置（如单元测试直接构造）时回退到内存声明。
+        self.contracts_dir = contracts_dir
 
     # ---- 内部 ----
 
@@ -309,6 +314,65 @@ class LLMGenerator:
             lines.extend(
                 f"  {i.interface_id} [{i.type}] {i.content}" for i in requirement.interfaces
             )
+        # ---- UI 契约（P0-1；未声明时本段完全不出现在提示词里）----
+        #
+        # 为什么必须在提示词里：`cross_module_calls` 只覆盖 API 签名，
+        # 对 UI 一无所知。表单字段、校验规则、错误消息、初始状态
+        # 全在需求描述的自由文本里 —— 模型只能「自由发挥」。
+        # 于是 UI 需求不是「生成失败」，而是**从未真正进入生成路径**。
+        if requirement.ui_contracts:
+            lines.append("")
+            lines.append("★ 本需求含 **UI 契约**（每个页面上必须存在什么、如何行为）:")
+            for c in requirement.ui_contracts:
+                head = f"  页面: {c.page}"
+                if c.title:
+                    head += f"   标题: {c.title}"
+                lines.append(head)
+                if c.elements:
+                    lines.append("    必须存在的元素:")
+                    for e in c.elements:
+                        seg = f"      - {e.element_id} [{e.type}]"
+                        if e.label:
+                            seg += f"  可访问名/可见文本: {e.label!r}"
+                        lines.append(seg)
+                        if e.validation:
+                            lines.append(f"        校验: {e.validation}")
+                        if e.initial:
+                            lines.append(f"        初始状态: {e.initial}")
+                        for k, v in e.error_messages:
+                            lines.append(f"        错误消息[{k}]: {v!r}")
+                if c.error_display:
+                    lines.append(f"    错误显示: {c.error_display}")
+                if c.state_preservation:
+                    lines.append(f"    状态保留: {c.state_preservation}")
+                if c.invariants:
+                    lines.append("    **不变量**（必须成立，违反即不合格）:")
+                    lines.extend(f"      - {x}" for x in c.invariants)
+            lines.append("  实现要求: 元素的可访问名/文本/校验/错误消息必须与上表**逐字一致**；")
+            lines.append("            不变量必须成立（含「不得出现」这类否定式要求）。")
+
+            # ---- P0-2：E2E 测试生成指引（仅当声明了 UI 契约）----
+            lines.append("")
+            lines.append("★ 本需求含 UI 契约 -> 必须生成 **Playwright E2E 测试**（下称 E2E）:")
+            lines.append("  框架: `import { test, expect } from '@playwright/test';`；")
+            lines.append("  位置: 由测试计划声明的路径（模板约定 `backend/test-e2e/`）。")
+            lines.append("  **覆盖要求**（缺一不可）:")
+            lines.append("    ① 每个 ui_contracts 元素**可见**（用 getByLabel / getByRole(accessible name)）")
+            lines.append("    ② 每条校验规则触发时，错误消息显示在**对应字段旁**且文本逐字一致")
+            lines.append("    ③ 多个错误**同时**显示")
+            lines.append("    ④ state_preservation 生效")
+            lines.append("    ⑤ 每条不变量都有对应断言（含否定式：如「另一工作簿的数据不得出现」）")
+            lines.append("    ⑥ 成功路径完整走通")
+            lines.append("  示例:")
+            lines.append("    import { test, expect } from '@playwright/test';")
+            lines.append("    test('registration form has all required elements', async ({ page }) => {")
+            lines.append("      await page.goto('/register');")
+            lines.append("      await expect(page.getByLabel('Username')).toBeVisible();")
+            lines.append("      await expect(page.getByRole('button', { name: 'Create account' })).toBeVisible();")
+            lines.append("    });")
+            lines.append("  ★ 注意: E2E 在 RED 阶段**必须失败**（应用尚未实现）——")
+            lines.append("    导入/导航失败也是有效 RED；不要为了让它在 RED 阶段通过而写空断言。")
+
         # 根节点用例数上限（默认关闭 -> 返回空串 -> 提示词逐字不变）
         from .testplan import root_case_limit_prompt
         _limit_note = root_case_limit_prompt(requirement)
@@ -326,10 +390,28 @@ class LLMGenerator:
         # 而上游 REQ-7 实现的是 `updateQuantity(sku, from, to)`（区间变更语义）。
         # 模型被告知「你没 import 上游」时，**无法推断出正确的参数语义** ——
         # 它只知道要调，不知道按什么调。
-        if requirement.cross_module_calls:
+        # 契约来源：**只读冻结合同**，不再回退到需求 YAML 的 cross_module_calls。
+        #
+        # 为什么删掉回退（P0-1 不可编辑化）：
+        #   保留回退等于留了一条旁路 —— 合同缺失时提示词仍会拿到「内存声明」，
+        #   于是表面正常、实际「冻结」未生效。上一轮的真实 bug 就是这个形态
+        #   （读路径因 parent 链失效 -> 静默回退 -> 提示词内容恰好相同）。
+        #   现在合同缺失就是缺失：提示词里没有契约段，门禁判 CONTRACT_MISSING 阻断。
+        #
+        # 未设置 contracts_dir（单元测试直接构造）时不注入契约段 ——
+        # 这也不构成旁路，因为那种构造方式不在生产链路上。
+        frozen = None
+        if self.contracts_dir is not None:
+            from .contracts import load_frozen_calls
+            frozen = load_frozen_calls(self.contracts_dir, requirement.req_id)
+        _declared = frozen or ()
+
+        if _declared:
             lines.append("")
-            lines.append("★ 本需求对上游的**跨模块调用契约**（必须真实调用，不得用参数注入绕过）:")
-            for call in requirement.cross_module_calls:
+            lines.append("★ 本需求对上游的**跨模块调用契约**"
+                         + ("（**已冻结·只读**，实现阶段不可修改）" if frozen else "")
+                         + "（必须真实调用，不得用参数注入绕过）:")
+            for call in _declared:
                 head = f"  - {call.upstream} / {call.symbol}"
                 if call.signature:
                     head += f"  签名: {call.signature}"
@@ -575,6 +657,7 @@ def build_generator(
     fixture_root: Path,
     test_dialect: str,
     model_client: ModelClient | None = None,
+    contracts_dir: Path | None = None,
 ) -> Generator:
     if kind == "llm":
         client = model_client or ModelClient()
@@ -584,7 +667,7 @@ def build_generator(
                 "OPENAI_API_KEY / OPENAI_BASE_URL / MODEL 三个变量。"
             )
         logger.info("使用 LLMGenerator (model=%s)", client.model)
-        return LLMGenerator(client, test_dialect)
+        return LLMGenerator(client, test_dialect, contracts_dir=contracts_dir)
     if test_dialect == "vitest":
         logger.warning(
             "StubGenerator 的 fixture 是 node 测试方言，vitest 环境下不会被执行。"

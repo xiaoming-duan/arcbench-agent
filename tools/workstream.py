@@ -112,6 +112,11 @@ def cmd_snapshot(args: argparse.Namespace) -> int:
             shutil.copytree(src, tgt,
                             ignore=shutil.ignore_patterns("__pycache__", "node_modules", "*.pyc"))
     manifest = build_manifest(dest)
+    # ★ 记录**快照的来源根**：陈旧判定必须与「快照是从哪份工作区冻结的」比，
+    # 而不是与当前进程的 ROOT 比 —— 两者可能不同（例如 `--store` 指向别处，
+    # 或测试用 with_root 临时切换）。初版用模块级 ROOT，导致
+    # 现有断言 ⑥（guard 检出副本被改动）误判为陈旧而回归。
+    manifest["source_root"] = str(ROOT)
     (dest / "MANIFEST.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"✅ 快照已冻结: {dest}")
@@ -197,6 +202,53 @@ def cmd_guard(args: argparse.Namespace) -> int:
     manifest = load_manifest(label)
     if manifest is None:
         return 1
+
+    # ★ 陈旧快照守卫：**静默复用**会把上次的旧代码当成这次的被测对象。
+    #
+    # 实测事故：修复分支后重跑 `guard --label contractfreeze`，它复用了 16:07
+    # 那次失败留下的快照（含跨 worktree 污染代码），于是**修复完仍然 ImportError**。
+    # 更早还有一次：同名快照复用导致测量跑在旧代码上，报告却看起来正常。
+    #
+    # 静默复用是「验证基础设施失效但伪装成正常」的又一变体 ——
+    # 所以这里**默认拒绝**，要求显式 --refresh 或换 label。
+    stale = _stale_owned_files(label, manifest)
+    if stale and not args.refresh:
+        print(f"❌ 快照 `{label}` 已陈旧 —— 它冻结的是**旧代码**，不能用于本次测量。")
+        print(f"   快照: {dest}")
+        print(f"   与本工作流当前代码不一致的文件（{len(stale)} 个）:")
+        for rel in stale[:8]:
+            print(f"     - {rel}")
+        if len(stale) > 8:
+            print(f"     ...（共 {len(stale)} 个）")
+        print("   修法：加 `--refresh` 让 guard 重新冻结，或换一个 label。")
+        print("   （这不是警告 —— 复用旧快照会让整轮测量结论指向错误的代码。）")
+        return 2
+    return _guard_run(args, dest, manifest)
+
+
+def _stale_owned_files(label: str, manifest: dict) -> list[str]:
+    """返回「本工作流拥有、且与快照不一致」的相对路径。
+
+    基准是 manifest 里记录的 `source_root`（快照的来源工作区），
+    不是当前进程的 ROOT —— 二者可能不同（`--store` / with_root 切换）。
+    缺失 `source_root` 的旧快照回退到 ROOT（并因此可能保守误判，可接受）。
+    """
+    base = Path(manifest.get("source_root") or ROOT)
+    stale: list[str] = []
+    for entry in manifest.get("files", []):
+        rel = entry.get("path", "")
+        if not str(rel).startswith(OWNED_PREFIXES):
+            continue
+        cur = base / rel
+        if not cur.is_file():
+            stale.append(f"{rel}（已删除）")
+            continue
+        if sha256(cur) != entry.get("sha256"):
+            stale.append(rel)
+    return stale
+
+
+def _guard_run(args: argparse.Namespace, dest: Path, manifest: dict) -> int:
 
     if not args.command:
         print("❌ guard 需要命令，例如：-- python3 main.py ...")

@@ -1,0 +1,404 @@
+"""契约冻结（Contract Freeze）：把跨模块调用契约从「提示词建议」升级为**验收合同**。
+
+═══════════════════════════════════════════════════════════════════════════
+ 为什么要冻结
+═══════════════════════════════════════════════════════════════════════════
+`cross_module_calls` 此前只是注入提示词的一段文字 —— **模型可以忽略**。
+
+实测证据（closure6）：
+  REQ-11 拿到 **3 次** `[依赖门禁·归因]` 提示 + 1 次阻断理由，
+  仍然没有真实 import 上游 REQ-7，4 轮耗尽后失败。
+  → 提示词的约束力**不够**。
+
+借鉴 Consort / Agentic Foundry 的「冻结验收合同」：
+  合同在编译前从需求 YAML 生成，落到 `.arc/contracts/<req_id>.yaml`；
+  实现阶段**只读**，模型改不动；门禁校验合同存在性与一致性。
+
+三方一致模型：
+    需求 YAML（人写的声明）
+        │  编译前生成（本模块 generate）
+        ▼
+    .arc/contracts/<req_id>.yaml   ← frozen: true，实现阶段只读
+        │  生成时读取（本模块 load，供 prompt 用）
+        ▼
+    模型产出的实现 / 测试
+        │  门禁校验（本模块 verify）
+        ▼
+    一致 -> 放行 ; 缺失或不一致 -> CONTRACT_MISSING 阻断
+
+═══════════════════════════════════════════════════════════════════════════
+ 与 CONTRACT_MISMATCH 的分工
+═══════════════════════════════════════════════════════════════════════════
+  CONTRACT_MISSING   —— **合同本身**缺失/未冻结/与 YAML 漂移（编译期问题）
+  CONTRACT_MISMATCH  —— 合同在，但**实现/调用**不符合它（运行期问题）
+
+两者互补：前者保证「有约定的合同」，后者保证「按合同做」。
+═══════════════════════════════════════════════════════════════════════════
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Iterable, Sequence
+
+import yaml
+
+from .models import CrossModuleCall, Requirement
+
+logger = logging.getLogger("factory.contracts")
+
+CONTRACTS_SUBDIR = Path(".arc") / "contracts"
+#: 合同文件里标记冻结的字段。缺失或不为真 -> 视为未冻结。
+FROZEN_FIELD = "frozen"
+
+
+def contracts_dir(output_dir: Path) -> Path:
+    return Path(output_dir) / CONTRACTS_SUBDIR
+
+
+def contract_path(output_dir: Path, req_id: str) -> Path:
+    return contracts_dir(output_dir) / f"{req_id}.yaml"
+
+
+# ---------------------------------------------------------------------------
+# 生成（编译前）
+# ---------------------------------------------------------------------------
+
+
+#: 合同文件权限：**只读**。写入后 chmod 0444。
+#:
+#: 注意这是**纵深防御的一层，不是安全边界** ——
+#: 同一进程/同一用户仍可 chmod 回来。真正的保证来自哈希校验（见 check_contract）：
+#: 即使有人改了文件，门禁也会发现并阻断。权限位的作用是**让改动不容易被忽略**
+#: （编辑器/工具链遇到只读文件会报错而不是静默覆盖）。
+CONTRACT_MODE = 0o444
+
+#: 拒绝默认的「无身份」记录 —— 冻结必须能追溯到谁冻的。
+DEFAULT_AGENT_ID = "factory"
+
+
+def hash_of(path: Path) -> str:
+    """合同文件的 sha256（与 workstream 的 sha256 同口径）。"""
+    import hashlib
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def hash_of_body(payload: dict[str, Any]) -> str:
+    """**正文哈希**：排除 `hash` 与 `integrity` 两个自指字段后的序列化哈希。
+
+    生成与门禁**必须共用本函数** —— 两边各写一套口径是这类校验最经典的失效方式
+    （生成时算 A、校验时算 B，于是永远不等或永远相等）。
+    """
+    import hashlib
+    body = {k: v for k, v in (payload or {}).items() if k not in ("hash", "integrity")}
+    return hashlib.sha256(
+        yaml.safe_dump(body, allow_unicode=True, sort_keys=False).encode("utf-8")
+    ).hexdigest()
+
+
+def hash_record_path(output_dir: Path, req_id: str) -> Path:
+    """哈希记录文件：`.arc/contracts/<req_id>.sha256`。"""
+    return contracts_dir(output_dir) / f"{req_id}.sha256"
+
+
+def contract_payload(
+    requirement: Requirement,
+    *,
+    generated_at: str | None = None,
+    frozen_by: str = DEFAULT_AGENT_ID,
+    body_hash: str = "",
+) -> dict[str, Any]:
+    """产出一个需求的合同内容。
+
+    只包含 `cross_module_calls` 非空的需求 —— 没有跨模块约定的需求不需要合同，
+    门禁对它们也不做校验（**可选能力的默认关闭语义**）。
+
+    `hash` 字段记录**除它自身以外**的正文哈希（自指哈希不可能）——
+    门禁以 `.sha256` 侧车文件为准，这个字段供人读与追溯。
+    """
+    stamp = generated_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return {
+        "req_id": requirement.req_id,
+        FROZEN_FIELD: True,
+        "frozen_at": stamp,
+        "frozen_by": frozen_by,
+        # `integrity` 内嵌指纹：**不含 integrity 块本身**的正文哈希。
+        # 为什么不能覆盖自身：哈希写进文件后再算哈希，值会变 —— 自指无解。
+        # 所以权威完整性仍由**侧车**（覆盖含 integrity 的完整文件）保证；
+        # 内嵌字段的价值是**可移植**：合同文件单独拿走也能自证正文未被改。
+        "integrity": {"sha256": body_hash, "algorithm": "sha256"},
+        "hash": body_hash,
+        "generated_at": stamp,
+        "cross_module_calls": [c.to_dict() for c in requirement.cross_module_calls],
+    }
+
+
+def write_contracts(output_dir: Path, requirements: Iterable[Requirement]) -> list[Path]:
+    """为所有声明了 `cross_module_calls` 的需求写冻结合同。返回写出的路径列表。
+
+    幂等：目录已存在则复用；同名合同**覆盖重写**（每次编译重新冻结，
+    保证合同与当次需求 YAML 一致 —— 否则会拿上一轮的旧合同跑）。
+    """
+    import os
+
+    target = contracts_dir(output_dir)
+    written: list[Path] = []
+    stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    frozen_by = os.environ.get("FACTORY_AGENT_ID") or DEFAULT_AGENT_ID
+    for req in requirements:
+        if not req.cross_module_calls:
+            continue
+        target.mkdir(parents=True, exist_ok=True)
+        path = contract_path(output_dir, req.req_id)
+        # 重写前先解除只读。**两个文件都要解** ——
+        # 合同与侧车上一轮都被置成 0444，只解合同会让第二轮冻结在写侧车时
+        # PermissionError 失败（test_regeneration_overwrites_stale_contract 抓到）。
+        rec_path = hash_record_path(output_dir, req.req_id)
+        for _stale in (path, rec_path):
+            if _stale.exists():
+                try:
+                    _stale.chmod(0o644)
+                except OSError:
+                    pass
+        body = contract_payload(req, generated_at=stamp, frozen_by=frozen_by)
+        # `hash` 字段记录**不含该字段的正文哈希**（自指哈希不可能）。
+        # 权威哈希是**侧车**（覆盖含 hash 字段的完整文件）；这个字段
+        # 是给人看的"内容指纹"，用于人眼比对两份合同是否同源。
+        # 与门禁**共用同一口径**（见 hash_of_body 的注释）
+        _digest = hash_of_body(body)
+        body["hash"] = _digest
+        body["integrity"] = {"sha256": _digest, "algorithm": "sha256"}
+        text = yaml.safe_dump(body, allow_unicode=True, sort_keys=False)
+        path.write_text(text, encoding="utf-8")
+        # ★ 冻结 = 写侧车哈希 + 置只读。
+        # 哈希记录的是**刚写下的字节**，门禁之后逐字节比对。
+        digest = hash_of(path)
+        rec = hash_record_path(output_dir, req.req_id)
+        rec.write_text(
+            f"{digest}\n{stamp}\n{frozen_by}\n",
+            encoding="utf-8",
+        )
+        try:
+            rec.chmod(CONTRACT_MODE)
+        except OSError:
+            pass
+        try:
+            path.chmod(CONTRACT_MODE)          # 0444，只读
+        except OSError:
+            logger.warning("[合同冻结] %s 置只读失败（文件系统可能不支持）", path)
+        written.append(path)
+    if written:
+        logger.info("[合同冻结] 已生成 %d 份**只读**冻结合同（0444 + sha256 侧车）-> %s",
+                    len(written), target)
+    return written
+
+
+# ---------------------------------------------------------------------------
+# 读取（供提示词使用 —— 只读冻结件，不读需求 YAML）
+# ---------------------------------------------------------------------------
+
+
+def _calls_from_payload(payload: dict[str, Any]) -> tuple[CrossModuleCall, ...]:
+    out: list[CrossModuleCall] = []
+    for item in payload.get("cross_module_calls") or []:
+        if not isinstance(item, dict):
+            continue
+        upstream = str(item.get("upstream") or "").strip()
+        symbol = str(item.get("symbol") or "").strip()
+        if not upstream or not symbol:
+            continue
+        effects = item.get("side_effects") or ()
+        if isinstance(effects, str):
+            effects = [effects]
+        out.append(CrossModuleCall(
+            upstream=upstream,
+            symbol=symbol,
+            signature=str(item.get("signature") or "").strip(),
+            semantics=str(item.get("semantics") or "").strip(),
+            side_effects=tuple(str(x) for x in effects if str(x).strip()),
+        ))
+    return tuple(out)
+
+
+def load_frozen_calls(contracts_path: Path, req_id: str) -> tuple[CrossModuleCall, ...] | None:
+    """读冻结合同里的 `cross_module_calls`。
+
+    ★ 参数是**合同目录**（`<out>/.arc/contracts`），不是 output_dir。
+
+    为什么显式区分（实测 bug）：初版此函数收 output_dir 并在内部拼 `.arc/contracts`，
+    而生成器侧已经把 `contracts_dir(output_dir)` 算好了，于是调用方写
+    `load_frozen_calls(self.contracts_dir.parent, ...)` —— 路径变成
+    `<out>/.arc/.arc/contracts/REQ-11.yaml`，**永远读不到**，
+    然后静默回退到内存声明。
+    后果：合同写出来了、门禁也过了，但**提示词从未读过冻结件**，
+    「冻结」这一性质实际未生效 —— 而表面上一切正常（内容恰好相同）。
+    改成收目录本身，消除这条隐式的 parent 链。
+
+    返回 None 表示**合同不存在或不可用** —— 调用方（提示词层）应据此
+    回退到内存声明并记警告，而不是静默用错的内容。
+    """
+    path = Path(contracts_path) / f"{req_id}.yaml"
+    if not path.is_file():
+        return None
+    try:
+        payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[合同冻结] %s 读取失败: %s", path, exc)
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return _calls_from_payload(payload)
+
+
+# ---------------------------------------------------------------------------
+# 校验（门禁）
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ContractCheck:
+    """单个需求的合同完整性结论。"""
+
+    req_id: str
+    ok: bool
+    reason: str = ""
+    detail: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"req_id": self.req_id, "ok": self.ok,
+                "reason": self.reason, "detail": self.detail}
+
+
+def check_contract(
+    output_dir: Path,
+    requirement: Requirement,
+) -> ContractCheck:
+    """校验单个需求的冻结合同。
+
+    只有在需求**声明了** `cross_module_calls` 时才需要合同 ——
+    未声明时返回 ok（可选能力的默认关闭语义）。
+
+    三项检查（任一不过即 not ok）：
+      ① 合同文件存在
+      ② `frozen` 字段为真
+      ③ 合同内容与需求 YAML 的声明一致（逐条比对 upstream/symbol/signature）
+    """
+    declared = requirement.cross_module_calls
+    if not declared:
+        return ContractCheck(req_id=requirement.req_id, ok=True, reason="NO_CONTRACT_DECLARED")
+
+    path = contract_path(output_dir, requirement.req_id)
+    if not path.is_file():
+        return ContractCheck(
+            req_id=requirement.req_id, ok=False, reason="CONTRACT_MISSING",
+            detail=f"合同文件不存在: {path.relative_to(output_dir) if output_dir in path.parents else path}",
+        )
+    try:
+        payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception as exc:  # noqa: BLE001
+        return ContractCheck(req_id=requirement.req_id, ok=False,
+                             reason="CONTRACT_MISSING", detail=f"合同无法解析: {exc}")
+    if not isinstance(payload, dict):
+        return ContractCheck(req_id=requirement.req_id, ok=False,
+                             reason="CONTRACT_MISSING", detail="合同内容不是映射")
+
+    if payload.get(FROZEN_FIELD) is not True:
+        return ContractCheck(
+            req_id=requirement.req_id, ok=False, reason="CONTRACT_MISSING",
+            detail=f"合同未冻结（{FROZEN_FIELD} != true）—— 实现阶段不得使用未冻结的合同",
+        )
+
+    # ★ 篡改校验（两路，互补）：
+    #   ① **内嵌 integrity.sha256** —— 可移植：合同单独拿走也能自证正文未被改
+    #   ② **侧车 .sha256** —— 权威：覆盖含 integrity 块的**完整文件字节**，
+    #      连「有人只改了 integrity 字段」也能发现
+    # 权限位（0444）只是纵深防御，不构成这两条之外的保证。
+    body_digest = hash_of_body(payload)
+    declared_integrity = (payload.get("integrity") or {})
+    if isinstance(declared_integrity, dict):
+        want_body = str(declared_integrity.get("sha256") or "").strip()
+        algo = str(declared_integrity.get("algorithm") or "sha256").strip()
+        if algo != "sha256":
+            return ContractCheck(
+                req_id=requirement.req_id, ok=False, reason="CONTRACT_TAMPERED",
+                detail=f"integrity.algorithm 不是 sha256（{algo!r}）—— 无法校验",
+            )
+        frozen_at_meta = str(payload.get("frozen_at") or "未知")
+        if want_body and want_body != body_digest:
+            return ContractCheck(
+                req_id=requirement.req_id, ok=False, reason="CONTRACT_TAMPERED",
+                detail=(f"合同**正文**在冻结后被修改 —— 期望哈希 {want_body[:16]}… / "
+                        f"实际哈希 {body_digest[:16]}…（冻结于 {frozen_at_meta}）。"
+                        "合同是验收依据，实现阶段不得改动它"),
+            )
+    rec = hash_record_path(output_dir, requirement.req_id)
+    if rec.is_file():
+        try:
+            recorded = rec.read_text(encoding="utf-8").splitlines()
+            expected = (recorded[0] if recorded else "").strip()
+            frozen_at = (recorded[1] if len(recorded) > 1 else "").strip()
+        except OSError as exc:  # noqa: BLE001
+            return ContractCheck(req_id=requirement.req_id, ok=False,
+                                 reason="CONTRACT_MISSING",
+                                 detail=f"哈希记录读取失败: {exc}")
+        actual = hash_of(path)
+        if expected and actual != expected:
+            return ContractCheck(
+                req_id=requirement.req_id, ok=False, reason="CONTRACT_TAMPERED",
+                detail=(f"合同在冻结后被修改 —— 期望哈希 {expected[:16]}… / "
+                        f"实际哈希 {actual[:16]}…（冻结于 {frozen_at or '未知'}）。"
+                        "合同是验收依据，实现阶段不得改动它"),
+            )
+    frozen = _calls_from_payload(payload)
+    # 逐条比对：把声明与冻结件都归一成可比较的元组再比集合
+    def key(c: CrossModuleCall) -> tuple[str, str, str]:
+        return (c.upstream, c.symbol, c.signature)
+
+    want = {key(c) for c in declared}
+    got = {key(c) for c in frozen}
+    if want != got:
+        missing = want - got
+        extra = got - want
+        parts = []
+        if missing:
+            parts.append("冻结件缺少: " + ", ".join(f"{u}/{s}({g})" for u, s, g in sorted(missing)))
+        if extra:
+            parts.append("冻结件多出: " + ", ".join(f"{u}/{s}({g})" for u, s, g in sorted(extra)))
+        return ContractCheck(
+            req_id=requirement.req_id, ok=False, reason="CONTRACT_MISSING",
+            detail="合同与需求声明不一致（漂移）—— " + "；".join(parts),
+        )
+
+    return ContractCheck(req_id=requirement.req_id, ok=True, reason="CONTRACT_FROZEN_OK",
+                         detail=f"{len(frozen)} 条调用契约已冻结且一致")
+
+
+def check_contracts(
+    output_dir: Path,
+    requirements: Sequence[Requirement],
+) -> tuple[bool, list[ContractCheck]]:
+    """批量校验。返回 (是否全过, 逐条结论)。"""
+    checks = [check_contract(output_dir, r) for r in requirements]
+    return all(c.ok for c in checks), checks
+
+
+def describe(checks: Sequence[ContractCheck]) -> str:
+    """把未通过的合同检查渲染成**可执行**的拒绝理由。"""
+    bad = [c for c in checks if not c.ok]
+    if not bad:
+        return ""
+    lines = ["需求**声明了**跨模块调用契约，但冻结合同不完整:"]
+    for c in bad:
+        lines.append(f"  - [{c.reason}] {c.req_id}: {c.detail}")
+    lines.append("  合同是**验收合同**：它在编译前由需求 YAML 生成，"
+                 "写入后置 0444 只读，并记录 sha256 侧车（`.arc/contracts/<req>.sha256`）。")
+    if any(c.reason == "CONTRACT_TAMPERED" for c in bad):
+        lines.append("  **检测到篡改**：合同被改过。不要编辑合同文件 —— "
+                     "它是门禁的比对基准，改它等于改考卷。"
+                     "若确需变更契约，请改需求 YAML 后重新编译（会重新冻结并重算哈希）。")
+    lines.append("  **修正指令**：不要改合同；应使代码符合合同里的签名与语义。")
+    lines.append("  若确属需求变更，请改需求 YAML 的 cross_module_calls 后重新编译（会重新冻结）。")
+    return "\n".join(lines)

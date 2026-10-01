@@ -284,15 +284,30 @@ def validate_requirement_plan(
 ) -> list[str]:
     """返回违规列表；空列表表示通过。"""
     violations: list[str] = []
-    test_prefix = f"{backend_dir}/tests/"
+    # 路径白名单**按测试类型分流**：
+    #   unit / integration -> backend/tests/
+    #   **e2e             -> backend/test-e2e/**（Playwright 的 testDir，见
+    #                        template/backend/playwright.config.js）
+    # 分流的理由：vitest 的 include 是 `tests/**`，而 playwright 的 testDir 是
+    # `test-e2e/` —— 两者是不同的运行器与目录约定。此前白名单只认
+    # `backend/tests/`，于是 E2E 计划**必然被计划门禁拒绝** ——
+    # UI 需求连测试计划都过不了，自然「从未进入生成路径」。
+    unit_prefix = f"{backend_dir}/tests/"
+    e2e_prefix = f"{backend_dir}/test-e2e/"
+
+    def _expected_prefix(spec_type: str) -> str:
+        return e2e_prefix if spec_type == "e2e" else unit_prefix
 
     if not entry.test_files:
         violations.append("test_files 为空：计划必须至少声明一个测试文件")
 
     seen: set[str] = set()
     for spec in entry.test_files:
-        if not spec.path.startswith(test_prefix):
-            violations.append(f"{spec.path}: 必须位于 {test_prefix} 下")
+        expect_prefix = _expected_prefix(spec.type)
+        if not spec.path.startswith(expect_prefix):
+            violations.append(
+                f"{spec.path}: type={spec.type} 的测试必须位于 {expect_prefix} 下"
+            )
         if not spec.path.endswith(_TEST_SUFFIXES):
             violations.append(f"{spec.path}: 不是测试文件后缀")
         if spec.path in seen:
@@ -461,10 +476,21 @@ def root_case_limit_prompt(requirement: Any, *, limit: int | None = None) -> str
     eff = root_test_limit() if limit is None else max(0, int(limit))
     if eff == 0 or not is_root_requirement(requirement):
         return ""
+    # 提示词必须**可执行**：具体数字 + 理由 + 示例。
+    # 只说「不超过 N」是抽象约束，模型无从判断"哪几个该留"——
+    # 这与「拒绝理由必须可执行」是同一条教训：
+    #   把理由写到能让对方知道**下一步做什么**，而不只是知道**做错了**。
     return (
-        f"\n★ 本需求是**根节点**（无上游依赖），测试用例数**不超过 {eff} 个**。\n"
-        "  理由：根节点缺集成约束，容易把场景铺开写；用例越多，实现难度越高，\n"
-        "  而通过率并不随用例数上升。请把最关键的行为写扎实，而不是求全。\n"
+        f"\n★ 本需求是**根节点**（无上游依赖）。\n"
+        f"  测试用例数**不超过 {eff} 个**。\n"
+        "\n"
+        "  理由：根节点没有上游契约约束，容易把场景铺开写；\n"
+        "  而每个用例都会抬高实现难度 —— 用例数与通过率**不成正比**。\n"
+        "  实测：同一需求写 6 个用例时实现 4 轮未通过；写 2 个用例时 1 轮通过。\n"
+        "\n"
+        f"  示例：{eff} 个之内覆盖核心场景即可 —— "
+        "1 个正常路径 + 1 个边界/异常 + 1 个副作用验证。\n"
+        "  把最关键的行为写**扎实**（断言具体值），而不是把场景写**全**。\n"
     )
 
 

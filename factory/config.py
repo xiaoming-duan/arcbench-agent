@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from typing import ClassVar
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -83,6 +84,36 @@ class FactoryConfig:
     #
     # 默认关闭，保证既有行为逐位不变。
     root_test_limit: int = 0
+
+    # ---- 分类型错误重试预算（P0-2）----
+    # 按**错误信号**分配重试预算，每类**独立计数**，互不共用。
+    # 关键动机：环境错误（网关/DNS/配额）重试再多也不会成功，
+    # 让它占用实现预算等于用一个不可控因素压低模型能力评估。
+    # 实测：一次 DNS 失败（[Errno -3]）让 REQ-11 连设计都没做完。
+    #
+    # 与 gateway_retries 的关系：网关层早已把「瞬时重试」独立计数，
+    # 本映射是把**同样的思路**应用到实现重试上。
+    # 类常量，不是 dataclass 字段（可变默认值会被 dataclass 拒绝）
+    RETRY_BUDGET: ClassVar[dict[str, int]] = {
+        "TEST_FAILED": 3,
+        "DEPENDENCY_NOT_USED": 3,
+        "CONTRACT_MISMATCH": 2,
+        "CONTRACT_MISSING": 1,
+        "CONTRACT_TAMPERED": 1,
+        "TEST_BROKEN": 2,
+        "WEAK_TEST": 2,
+        "ENVIRONMENT": 1,
+    }
+
+    # ---- 分类重试预算（P0-2，四类兜底）----
+    # 四类错误**各自独立计数**，互不挤占。
+    # 关键：环境错误只给 1 次 —— 网关/DNS/配额问题重试再多也不会成功，
+    # 让它占用实现预算等于用一个不可控因素压低模型能力的评估。
+    # 默认值见 factory/errors.DEFAULT_BUDGETS。
+    repair_budget_design: int = 2
+    repair_budget_implementation: int = 3
+    repair_budget_test: int = 2
+    repair_budget_environment: int = 1
     # 跨模块调用契约的**签名校验**（仅在需求声明了 cross_module_calls 时生效）。
     # 关闭后仍会注入提示词，但不按声明比对调用形状 —— 用于对照实验区分
     # 「提示词的效果」与「门禁的效果」。
@@ -136,6 +167,10 @@ class FactoryConfig:
             enforce_upstream_gate=os.environ.get("FACTORY_UPSTREAM_GATE", "1") not in {"0", "false", "False"},
             enforce_contract_signature=os.environ.get("FACTORY_CONTRACT_SIG", "1") not in {"0", "false", "False"},
             root_test_limit=max(0, int(os.environ.get("FACTORY_ROOT_TEST_LIMIT", "0") or 0)),
+            repair_budget_design=int(os.environ.get("FACTORY_BUDGET_DESIGN", "2")),
+            repair_budget_implementation=int(os.environ.get("FACTORY_BUDGET_IMPL", "3")),
+            repair_budget_test=int(os.environ.get("FACTORY_BUDGET_TEST", "2")),
+            repair_budget_environment=int(os.environ.get("FACTORY_BUDGET_ENV", "1")),
             require_red_first=os.environ.get("FACTORY_REQUIRE_RED_FIRST", "1") not in {"0", "false", "False"},
             install_deps=os.environ.get("FACTORY_INSTALL_DEPS", "auto"),
             install_timeout_s=int(os.environ.get("FACTORY_INSTALL_TIMEOUT", "900")),

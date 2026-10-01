@@ -388,6 +388,9 @@ DEP_UNCERTAIN = "DEPENDENCY_CHECK_UNCERTAIN"
 # 与 DEPENDENCY_NOT_USED 的区别：后者是「没调」，前者是「调了但调错」——
 # 单模块测试无法暴露后者（同名不同语义），只有声明式契约能。
 DEP_CONTRACT_MISMATCH = "CONTRACT_MISMATCH"
+# 冻结合同本身缺失/未冻结/与需求声明漂移（编译期问题）——
+# 与 CONTRACT_MISMATCH（运行期：合同在但实现不符）互补。
+DEP_CONTRACT_MISSING = "CONTRACT_MISSING"
 
 # 判定为违规（阻断）的
 DEP_VIOLATIONS = frozenset({DEP_NOT_USED, DEP_FAKE, DEP_UPSTREAM_MISSING,
