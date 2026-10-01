@@ -28,7 +28,19 @@ EXCLUDED_DIRS = {"backups", ".workstreams", "dist", ".arc", ".npm-cache",
                  ".apidoc",
                  # git worktree（另一条工作流为分支隔离建的检出副本）——
                  # 里面是**同一份源码的第二份拷贝**，进包会让文件数翻倍
-                 ".wt"}
+                 ".wt",
+                 # pytest 运行缓存（跑一次测试就会生成）
+                 ".pytest_cache"}
+
+# 仅**顶层**的游离物。必须限定在顶层：同名文件在子目录里是正式文件 ——
+#   factory/loop.py、tools/test_gates.py、arcbench-agent-runtime/src 都是本体。
+# 这几项是实测检出的历史遗留（v7 打包时发现）：
+EXCLUDED_ROOT_NAMES = {
+    "loop.py",                      # factory/loop.py 的陈旧副本（hash 不同、时间更早）
+    "test_gates.py",                # tools/test_gates.py 的陈旧副本
+    "src",                          # 游离的 src/services/inventoryService.js
+    "agent-blank-based (1).zip",    # 嵌套的 baseline agent 包（119KB，53 条目）
+}
 EXCLUDED_PREFIXES = (".verify-", ".probe-", ".zipcheck", ".zipv", ".bkcheck")
 EXCLUDED_SUFFIXES = (".log", ".pyc", ".pyo")
 
@@ -41,6 +53,9 @@ def is_excluded(rel: str) -> bool:
         return True
     # out-v2 / out-probe 这类运行输出目录（仅限顶层）
     if parts[0].startswith("out") and len(parts) > 1:
+        return True
+    # 仅顶层的游离物（见 EXCLUDED_ROOT_NAMES 的说明）
+    if parts[0] in EXCLUDED_ROOT_NAMES:
         return True
     if rel.endswith(EXCLUDED_SUFFIXES):
         return True
