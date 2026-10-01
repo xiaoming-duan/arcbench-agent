@@ -36,7 +36,7 @@ SUITES = (
     ("Playwright E2E", "tests/test_playwright_e2e.py", "11 项：模板已备/路径按类型分流/提示词指引"),
     ("UI 门禁", "tests/test_ui_gate.py", "20 项：第五道门四判定 + matcher 三级防误报"),
     ("WEAK_TEST 分型", "tests/test_weak_test_classification.py",
-     "11 项：unit/integration 用 import 判据，e2e 用 UI 断言判据（含 scoped 包与类型键坐标）"),
+     "18 项：unit/integration 用 import 判据，e2e 用 UI 断言判据；空测试文件两种方言都拦"),
     ("UI_TEST_WEAK 判据", "tests/test_ui_test_weak.py",
      "14 项：判据不再依赖 RED；两门禁共用同一实现（单一定义由测试锁死）"),
     ("UI 探针 error_messages", "tests/test_ui_probe.py",

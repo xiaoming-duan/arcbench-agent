@@ -431,7 +431,37 @@ class TddLoop:
     ) -> None:
         logger.error("%s", self._broken_test_diagnostics(test_paths, outcome, head_lines))
 
-    def _broken_test_reason(self, outcome: TestOutcome) -> str:
+    def _empty_test_paths(self, test_paths: Sequence[str]) -> list[str]:
+        """实际落盘的测试文件里，哪些是**空的**（或只有空白）。"""
+        empties: list[str] = []
+        for rel in test_paths:
+            for candidate in (
+                self.output_dir / rel,
+                self.output_dir / self.config.backend_dir / rel,
+            ):
+                if not candidate.is_file():
+                    continue
+                try:
+                    if not candidate.read_text(encoding="utf-8").strip():
+                        empties.append(rel)
+                except OSError:
+                    pass
+                break
+        return empties
+
+    def _broken_test_reason(
+        self, outcome: TestOutcome, test_paths: Sequence[str] = ()
+    ) -> str:
+        # ★先判"文件是空的"：否则模型会去修一个并不存在的语法错误。
+        empties = self._empty_test_paths(test_paths)
+        if empties:
+            return (
+                "测试文件**是空的**（没有任何有效字符）: "
+                + ", ".join(empties[:3])
+                + " —— 既没有 import 也没有断言，当然收集不到测试。"
+                "这**不是**语法错误，也不是 import 失败。\n"
+                f"运行器输出:\n{self._runner_excerpt(outcome, 18)}"
+            )
         excerpt = self._runner_excerpt(outcome, 18)
         return (
             "测试文件无法被收集/执行（0 个测试被发现）——"
@@ -440,8 +470,19 @@ class TddLoop:
             f"运行器输出:\n{excerpt}"
         )
 
-    def _weak_reason(self, outcome: TestOutcome, audit: ImportAudit) -> str:
+    def _weak_reason(
+        self, outcome: TestOutcome, audit: ImportAudit, test_paths: Sequence[str] = ()
+    ) -> str:
         """WEAK_TEST 的成因。**必须带 verdict**，否则下次仍然看不出是哪一类。"""
+        # ★node 方言下空文件会被计为 1 个通过的测试 -> 走到这里。
+        #   若只报「整组测试在实现前就通过」，模型会去加强断言，
+        #   而真正该做的是**把文件写出来**。
+        empties = self._empty_test_paths(test_paths)
+        if empties and outcome.passed:
+            return (
+                "测试文件**是空的**: " + ", ".join(empties[:3])
+                + "（node 方言把空文件计为 1 个通过的测试，并不代表断言有效）"
+            )
         if outcome.passed:
             return "整组测试在实现前就通过（无 RED 证据）"
         weak = audit.weak_files
@@ -599,12 +640,40 @@ class TddLoop:
         TEST_BROKEN 往返，并让反馈在模型还「记得上下文」时立刻给出。
 
         只在 vitest 方言下生效——node 方言里 `require('node:test')` 是正确写法。
+
+        ★另有一条**与方言无关**的拦截：测试文件是空的。
+        实测两种方言都把空文件报成完全不同的东西，就是不说"它是空的"：
+
+            vitest: 「No test suite found in file …」+ `Tests no tests`
+                    -> 0 个测试 -> 判 TEST_BROKEN，
+                       理由却是「多半是语法错误、import 失败…」—— 误导
+            node  : `node --test <空文件>` **把文件本身计为 1 个通过的测试**
+                    -> passed=True -> 判 WEAK_TEST
+                       「整组测试在实现前就通过（无 RED 证据）」—— 更误导：
+                       模型会以为自己的断言太弱，而真实原因是**文件根本没内容**
+
+        静态拦在跑之前，既不浪费一轮收集，也让反馈说准原因。
         """
-        if getattr(self.runner, "dialect", "") != "vitest":
-            return []
+        dialect = getattr(self.runner, "dialect", "")
         violations: list[dict[str, Any]] = []
         for item in files:
             content = item.content or ""
+            path = item.path.lstrip("./")
+            if not content.strip():
+                violations.append(
+                    {
+                        "code": "EMPTY_TEST_FILE",
+                        "path": path,
+                        "detail": (
+                            "测试文件是**空的**（没有任何有效字符）—— 这不是语法错误、"
+                            "也不是 import 失败，而是根本没有内容。"
+                            "请写出含 import 与真实断言的完整测试文件。"
+                        ),
+                    }
+                )
+                continue
+            if dialect != "vitest":
+                continue
             if _CJS_REQUIRE.search(content):
                 violations.append(
                     {
@@ -1073,8 +1142,8 @@ class TddLoop:
                 "[门禁] %s %s（%s），回退到写测试阶段重写（%d/%d）",
                 req_id,
                 "TEST_BROKEN" if broken_test else "WEAK_TEST",
-                (self._broken_test_reason(red)[:80] if broken_test
-                 else self._weak_reason(red, audit)),
+                (self._broken_test_reason(red, test_paths)[:80] if broken_test
+                 else self._weak_reason(red, audit, test_paths)),
                 rewrites,
                 self.config.max_test_rewrites,
             )
@@ -1139,7 +1208,8 @@ class TddLoop:
         result.broken_test = broken_test
         if weak:
             # 阻断：不进入实现阶段
-            reason = self._broken_test_reason(red) if broken_test else self._weak_reason(red, audit)
+            reason = (self._broken_test_reason(red, test_paths) if broken_test
+                      else self._weak_reason(red, audit, test_paths))
             code = "TEST_BROKEN" if broken_test else "WEAK_TEST"
             note = f"{code}（{reason}）：重写 {rewrites} 次仍无效，未进入实现"
             logger.error("[门禁] %s BLOCK -> FAILED（%s）", req_id, code)

@@ -217,3 +217,92 @@ def test_unknown_type_falls_back_to_import_rule(ws):
     """没有类型信息时退回原判据（宁可判弱，也不放行未经验证的测试）。"""
     _write(ws, UNIT_REL, UNIT_NO_IMPORT)
     assert _verdict(ws, UNIT_REL, {}) == V_NO_IMPORT
+
+
+# ---------------------------------------------------------------------------
+# ④ 空测试文件：两种方言都不说"它是空的"（实测缺陷）
+# ---------------------------------------------------------------------------
+
+class _Runner:
+    dialect = "node"
+
+
+def _bare_loop(tmp_path, dialect="node"):
+    loop = object.__new__(TddLoop)
+    loop.config = _Cfg()
+    loop.output_dir = tmp_path
+    loop.runner = type("R", (), {"dialect": dialect})()
+    return loop
+
+
+@pytest.mark.parametrize("content", ["", "\n", "   \n\t\n"])
+def test_empty_test_file_is_intercepted_statically(tmp_path, content):
+    """★空文件必须**跑之前**就被拦下，且两种方言都要拦。
+
+    实测缺陷：`_invalid_test_syntax` 原先只在 vitest 方言下生效，且只查
+    `require('vitest')` —— node 方言下空文件完全无人管。
+    而两种方言对空文件的反应都是**误导性的**：
+        vitest: 0 个测试 -> TEST_BROKEN，理由说「多半是语法错误…」
+        node  : 把空文件计为 1 个**通过**的测试 -> WEAK_TEST
+                「整组测试在实现前就通过」—— 模型会去加强断言，
+                而真实原因是文件根本没有内容
+    """
+    from factory.models import GeneratedFile
+
+    loop = _bare_loop(tmp_path, "node")
+    out = loop._invalid_test_syntax(
+        [GeneratedFile(path="backend/tests/x.test.js", content=content)]
+    )
+    assert [v["code"] for v in out] == ["EMPTY_TEST_FILE"], out
+
+
+def test_empty_check_applies_to_vitest_too(tmp_path):
+    """vitest 方言同样要拦（原先至少还检查了 require('vitest')，空文件却没人管）。"""
+    from factory.models import GeneratedFile
+
+    loop = _bare_loop(tmp_path, "vitest")
+    out = loop._invalid_test_syntax(
+        [GeneratedFile(path="backend/tests/x.spec.js", content="")]
+    )
+    assert [v["code"] for v in out] == ["EMPTY_TEST_FILE"], out
+
+
+def test_nonempty_test_file_not_flagged(tmp_path):
+    """反向：有内容的文件不得被空检查误伤。"""
+    from factory.models import GeneratedFile
+
+    loop = _bare_loop(tmp_path, "node")
+    out = loop._invalid_test_syntax(
+        [GeneratedFile(path="backend/tests/x.test.js", content="t('a',()=>{});")]
+    )
+    assert out == [], out
+
+
+def test_reason_says_empty_not_syntax_error(tmp_path):
+    """★理由必须说"是空的"，而不是把锅甩给语法错误。"""
+    from factory.models import TestOutcome
+
+    (tmp_path / "backend/tests").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "backend/tests/x.test.js").write_text("", encoding="utf-8")
+    loop = _bare_loop(tmp_path)
+    outcome = TestOutcome(passed=False, command="node --test", exit_code=1, total=0)
+    reason = loop._broken_test_reason(outcome, ["tests/x.test.js"])
+    assert "是空的" in reason, reason
+    assert "多半是语法错误" not in reason, "空文件仍被归因成语法错误"
+
+
+def test_weak_reason_says_empty_when_node_counts_it_passed(tmp_path):
+    """node 方言下空文件 passed=True -> 走 WEAK_TEST 分支，理由也要说"是空的"。"""
+    from factory.models import TestOutcome
+
+    (tmp_path / "backend/tests").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "backend/tests/x.test.js").write_text("  \n", encoding="utf-8")
+    loop = _bare_loop(tmp_path)
+    outcome = TestOutcome(passed=True, command="node --test", exit_code=0, total=1)
+    from factory.testaudit import audit_imports
+
+    audit = audit_imports(tmp_path, ["backend/tests/x.test.js"],
+                          implementation_root="backend/src")
+    reason = loop._weak_reason(outcome, audit, ["tests/x.test.js"])
+    assert "是空的" in reason, reason
+    assert "实现前就通过" not in reason, "空文件仍被说成'实现前就通过'"
