@@ -965,6 +965,16 @@ class TddLoop:
                 )
                 continue
 
+            # 根节点测试用例数上限（默认关闭 -> 两个调用都是恒等操作）
+            from .testplan import apply_root_test_limit, count_test_cases
+            test_files = apply_root_test_limit(
+                requirement, tuple(test_files),
+                limit=self.config.root_test_limit,
+            )
+            result.test_case_count = sum(
+                count_test_cases(f.content) for f in test_files
+            )
+
             test_files, violations = self._enforce_test_whitelist(
                 requirement, test_files, allowed_paths
             )

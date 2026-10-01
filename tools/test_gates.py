@@ -1572,6 +1572,142 @@ def t38_implementation_module_graph_audit() -> None:
           tpl_broken == [], str(tpl_broken[:3]))
 
 
+def t39_backend_accounting_parity() -> None:
+    """★两条后端必须记同一本账 —— 同一场景跑两遍，CallStats 必须逐字段相等。
+
+    为什么值得单独立一条：SDK 路径**已经两次**悄悄落后于 HTTP 路径，
+    而且两次都只能在平台日志里被发现：
+      ① 只调 create 就返回 -> 成本恒为「调用 0 次 / token 0」
+         （platform 2026-09-30 14:42: prompt 69276 字符但调用 0 次）
+      ② 补了 calls/tokens，却漏了重试归集 ->
+         「网关重试 6 次（成功 0 / 耗尽 0）」（platform 2026-10-01 01:50）
+    两次都是「改一条路径、忘了另一条」。参数化对比是唯一能自动拦住它的办法。
+    """
+    import json as _json
+    import urllib.request as _urlreq
+
+    from factory.llm import MAX_RETRIES, CallStats, ModelCallError, ModelClient
+
+    def resp_obj(content='{"ok":1}', finish="stop", usage=(11, 7, 18)):
+        class _R:
+            def __init__(self):
+                self._d = {"choices": [{"finish_reason": finish,
+                                        "message": {"content": content,
+                                                    "reasoning_content": None}}],
+                           "usage": {"prompt_tokens": usage[0], "completion_tokens": usage[1],
+                                     "total_tokens": usage[2]}}
+            def model_dump(self):
+                return self._d
+        return _R()
+
+    class _SdkComp:
+        def __init__(self, script):
+            self.script = list(script)
+
+        def create(self, **payload):  # noqa: ANN003
+            item = self.script.pop(0) if self.script else resp_obj()
+            if isinstance(item, Exception):
+                raise item
+            return item
+
+    class _FakeHTTPResp:
+        def __init__(self, payload):
+            self._b = _json.dumps(payload).encode()
+
+        def read(self):
+            return self._b
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):  # noqa: ANN002
+            return False
+
+    class _SdkBoom(Exception):
+        """SDK 侧：openai 的异常层次不可控，用带 status_code 的通用异常即可。"""
+        status_code = 503
+
+    def _http_boom():
+        """HTTP 侧必须抛真正的 HTTPError —— _post_chat 只认 urllib 的异常类型。"""
+        return _urlreq.HTTPError("http://x/chat/completions", 503, "Service Unavailable", None, None)
+
+    def http_payload():
+        return {"choices": [{"finish_reason": "stop",
+                             "message": {"content": '{"ok":1}', "reasoning_content": None}}],
+                "usage": {"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18}}
+
+    def make(backend, script):
+        c = object.__new__(ModelClient)
+        c.stats = CallStats()
+        c.api_key, c.model, c.base_url = "k", "m", "http://x"
+        c.temperature, c.max_tokens, c.timeout_s = 0.2, 1500, 5
+        if backend == "sdk":
+            c._sdk = type("S", (), {"chat": type("C", (), {"completions": _SdkComp(script)})()})()
+            return c, c._sdk_chat
+        # HTTP：替换 urlopen，脚本按"第几次调用"决定抛错还是返回
+        calls = {"n": 0}
+
+        def fake_urlopen(request, timeout=None):  # noqa: ANN001, ARG001
+            calls["n"] += 1
+            item = script.pop(0) if script else None
+            if isinstance(item, Exception):
+                raise item
+            return _FakeHTTPResp(http_payload())
+
+        _urlreq.urlopen = fake_urlopen  # type: ignore[assignment]
+        return c, c._post_chat
+
+    scenarios = {
+        "一次成功": [],
+        f"重试后成功（{MAX_RETRIES} 次内）": None,   # 下面单独构造
+        "重试耗尽后失败": None,
+    }
+
+    results = {}
+    for backend in ("sdk", "http"):
+        # ① 一次成功：两条后端记账必须一致
+        c, call = make(backend, [])
+        out = call({"model": "m", "messages": []})
+        results[(backend, "ok")] = (out, c.stats.to_dict())
+
+        # ② 重试一次后成功
+        boom = _SdkBoom("503") if backend == "sdk" else _http_boom()
+        c, call = make(backend, [boom, resp_obj()])
+        out = call({"model": "m", "messages": []})
+        results[(backend, "retry_ok")] = (out, c.stats.to_dict())
+
+        # ③ 一直失败：重试耗尽
+        c, call = make(backend, [(_SdkBoom("503") if backend == "sdk" else _http_boom())]
+                       * (MAX_RETRIES + 2))
+        err = ""
+        try:
+            call({"model": "m", "messages": []})
+        except ModelCallError as exc:
+            err = str(exc)
+        results[(backend, "exhausted")] = (err, c.stats.to_dict())
+
+    for label in ("ok", "retry_ok", "exhausted"):
+        sdk_out, sdk_stats = results[("sdk", label)]
+        http_out, http_stats = results[("http", label)]
+        keys = sorted(set(sdk_stats) | set(http_stats))
+        diff = {k: (sdk_stats.get(k), http_stats.get(k)) for k in keys
+                if sdk_stats.get(k) != http_stats.get(k)}
+        check(f"T39 两条后端记账一致（{label}）", not diff, str(diff))
+
+    # 具体到那次线上事故：重试 6 次必须落到 succeeded/exhausted 之一
+    _, stats = results[("sdk", "retry_ok")]
+    check("T39 重试后成功的调用把重试计入 retries_succeeded（不是悬空）",
+          stats["gateway_retries"] >= 1 and stats["retries_succeeded"] == stats["gateway_retries"]
+          and stats["retries_exhausted"] == 0, str(stats))
+    _, stats = results[("sdk", "exhausted")]
+    check("T39 重试耗尽的调用把重试计入 retries_exhausted",
+          stats["retries_exhausted"] == stats["gateway_retries"] > 0
+          and stats["retries_succeeded"] == 0, str(stats))
+    from factory.llm import CallStats as _CS
+    rate = _CS(retries_succeeded=1, retries_exhausted=0).retry_success_rate
+    check("T39 成功率不再恒为 n/a", rate == 1.0, str(rate))
+
+
 def t23_uncollectable_test_rolls_back_to_test_stage() -> None:
     """测试文件跑不起来（0 个测试被收集）-> 判 TEST_BROKEN 并回退到写测试阶段，
     而不是把 4 轮实现预算浪费在一个坏掉的测试文件上。
@@ -1895,6 +2031,7 @@ def main() -> int:
         t35_transient_model_failure_does_not_kill_requirement,
         t37_quota_exhaustion_is_terminal_and_fails_fast,
         t38_implementation_module_graph_audit,
+        t39_backend_accounting_parity,
     ):
         try:
             fn()

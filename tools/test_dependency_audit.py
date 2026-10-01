@@ -370,6 +370,66 @@ def main() -> int:
     check("C6 未声明契约时不做签名比对（行为不变）", got == "DEPENDENCY_USED", f"实际 {got}")
     shutil.rmtree(cws, ignore_errors=True)
 
+    # ==================== test_usecase_limit 骨架（默认关闭）====================
+    print()
+    print("=" * 78)
+    print("test_usecase_limit 骨架：默认关闭时必须逐位不变")
+    print("=" * 78)
+    import os as _os
+    from factory.models import Requirement as _Req
+    from factory.testplan import (
+        apply_root_test_limit as _apply,
+        count_test_cases as _count,
+        is_root_requirement as _is_root,
+        root_case_limit_prompt as _prompt,
+    )
+
+    root = _Req(req_id="R1", name="n", description="d")
+    child = _Req(req_id="R2", name="n", description="d", dependencies=("R1",))
+    files = ("backend/tests/a.test.js", "backend/tests/b.test.js",
+             "backend/tests/c.test.js", "backend/tests/d.test.js")
+
+    saved = _os.environ.pop("FACTORY_ROOT_TEST_LIMIT", None)
+    try:
+        check("U1 根节点判定：无依赖为根，有依赖非根",
+              _is_root(root) and not _is_root(child))
+        check("U2 关闭（0）时裁剪为恒等 —— 根节点也不裁",
+              _apply(root, files, limit=0) == files)
+        check("U3 关闭时提示词为空串（提示词逐字不变）",
+              _prompt(root, limit=0) == "")
+        check("U4 关闭时环境变量缺省也为 0",
+              _apply(root, files) == files and _prompt(root) == "")
+        check("U5 开启后**非根节点不受限**",
+              _apply(child, files, limit=3) == files and _prompt(child, limit=3) == "")
+        check("U6 开启后根节点的文件清单被裁到上限",
+              _apply(root, files, limit=3) == files[:3])
+        check("U7 开启后根节点提示词含上限，且含'根节点'字样",
+              "不超过 3 个" in _prompt(root, limit=3) and "根节点" in _prompt(root, limit=3))
+        check("U8 上限大于文件数时不报错、不补齐",
+              _apply(root, files, limit=99) == files)
+        check("U9 用例计数口径与 measure_source 一致",
+              _count("it('a',()=>{});\nit('b',()=>{});") == 2
+              and _count("test('x',()=>{});") == 1
+              and _count("const a=1;") == 0)
+        # 非法环境变量不应炸
+        _os.environ["FACTORY_ROOT_TEST_LIMIT"] = "not_a_number"
+        check("U10 非法环境变量回退到 0（不抛错）",
+              _apply(root, files) == files and _prompt(root) == "")
+        _os.environ["FACTORY_ROOT_TEST_LIMIT"] = "-5"
+        check("U11 负值被归一为 0（关闭）",
+              _apply(root, files) == files)
+    finally:
+        _os.environ.pop("FACTORY_ROOT_TEST_LIMIT", None)
+        if saved is not None:
+            _os.environ["FACTORY_ROOT_TEST_LIMIT"] = saved
+
+    import factory.models as _M
+    check("U12 RequirementResult 有 test_case_count 可观测字段，且进了序列化字段清单",
+          "test_case_count" in _M.REQUIREMENT_RESULT_FIELDS
+          and _M.RequirementResult(req_id="R", state="PASSED").test_case_count == 0)
+    check("U13 配置默认关闭（root_test_limit == 0）",
+          __import__("factory.config", fromlist=["x"]).FactoryConfig().root_test_limit == 0)
+
     print()
     print("=" * 78)
     failed = [n for n, ok, _ in RESULTS if not ok]

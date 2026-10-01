@@ -245,6 +245,17 @@ class ModelClient:
 
     # ---- 后端 1: openai SDK ----
 
+    @staticmethod
+    def _retry_allowance(exc: Exception) -> int:
+        """这次失败最多允许再试几次（**两条后端共用同一个口径**）。
+
+        此前两条路径各写各的：HTTP 用 `attempt < MAX_RETRIES`（最多 2 次重试），
+        而 SDK 用 `attempt <= retry_cap`（最多 3 次），同一次线上运行里
+        两条路径的重试次数根本不一样 —— 记账自然也对不上。
+        现在统一成「已重试次数 < 允许次数」，同时消掉 off-by-one。
+        """
+        return MAX_SLOW_RETRIES if _is_timeout_error(exc) else MAX_RETRIES - 1
+
     def _complete_sdk(self, *, system: str, user: str, json_mode: bool) -> str:
         """SDK 后端（openai 包）。
 
@@ -365,27 +376,41 @@ class ModelClient:
             self._sdk = OpenAI(**kwargs)
 
         last_error: Exception | None = None
-        for attempt in range(1, MAX_RETRIES + 1):
-            try:
-                response = self._sdk.chat.completions.create(**payload)
-            except Exception as exc:  # noqa: BLE001 —— SDK 异常层次视版本而异
-                # ★配额耗尽优先判定：它也带 429，但重试永远不会成功。
-                if _is_quota_exhausted(exc):
-                    raise ModelQuotaExhaustedError(f"模型配额/余额耗尽: {exc}") from exc
-                last_error = ModelCallError(f"openai SDK 调用失败: {exc}")
-                retry_cap = MAX_SLOW_RETRIES if _is_timeout_error(exc) else MAX_RETRIES
-                if _is_retryable_sdk_error(exc) and attempt <= retry_cap:
-                    self.stats.gateway_retries += 1
-                    _sleep_backoff(attempt)
-                    continue
-                raise last_error from exc
-            data = _sdk_response_to_dict(response)
-            # ★记账与校验：这两步此前在 SDK 路径上完全缺席，
-            #   导致平台上成本恒为 0、截断永不告警。
-            self._record_usage(data)
-            self.stats.calls += 1
-            return _extract_content(data)
-        raise last_error or ModelCallError("openai SDK 调用失败")
+        retries_used = 0
+        succeeded = False
+        try:
+            for attempt in range(1, MAX_RETRIES + 1):
+                try:
+                    response = self._sdk.chat.completions.create(**payload)
+                except Exception as exc:  # noqa: BLE001 —— SDK 异常层次视版本而异
+                    # ★配额耗尽优先判定：它也带 429，但重试永远不会成功。
+                    if _is_quota_exhausted(exc):
+                        raise ModelQuotaExhaustedError(f"模型配额/余额耗尽: {exc}") from exc
+                    last_error = ModelCallError(f"openai SDK 调用失败: {exc}")
+                    if (_is_retryable_sdk_error(exc)
+                            and retries_used < self._retry_allowance(exc)):
+                        self.stats.gateway_retries += 1
+                        retries_used += 1
+                        _sleep_backoff(attempt)
+                        continue
+                    raise last_error from exc
+                data = _sdk_response_to_dict(response)
+                # ★记账与校验：这两步此前在 SDK 路径上完全缺席，
+                #   导致平台上成本恒为 0、截断永不告警。
+                self._record_usage(data)
+                self.stats.calls += 1
+                succeeded = True
+                return _extract_content(data)
+            raise last_error or ModelCallError("openai SDK 调用失败")
+        finally:
+            # 与 HTTP 后端同一套归集，且同样放在 finally 里 ——
+            # 循环内 raise 会绕过"循环末尾归集"，那正是 exhausted 恒为 0 的老 bug。
+            # 实测（平台 2026-10-01 01:50）：「网关重试 6 次（成功 0 / 耗尽 0）」
+            # 就是因为我上次移植记账时只补了 gateway_retries、漏了这一对。
+            if succeeded:
+                self.stats.retries_succeeded += retries_used
+            else:
+                self.stats.retries_exhausted += retries_used
 
     def _post_chat(self, payload: dict[str, Any]) -> str:
         url = f"{self.base_url}/chat/completions"
@@ -423,7 +448,8 @@ class ModelClient:
                         ) from exc
                     message = f"HTTP {exc.code} {exc.reason}: {detail}"
                     last_error = ModelCallError(message)
-                    if exc.code in RETRYABLE_STATUS and attempt < MAX_RETRIES:
+                    if (exc.code in RETRYABLE_STATUS
+                            and retries_used < self._retry_allowance(exc)):
                         self.stats.gateway_retries += 1
                         retries_used += 1
                         _sleep_backoff(attempt)
@@ -431,7 +457,7 @@ class ModelClient:
                     raise last_error from exc
                 except urllib.error.URLError as exc:
                     last_error = ModelCallError(f"网络错误: {exc.reason}")
-                    if attempt < MAX_RETRIES:
+                    if retries_used < self._retry_allowance(exc):
                         self.stats.gateway_retries += 1
                         retries_used += 1
                         _sleep_backoff(attempt)
@@ -440,8 +466,8 @@ class ModelClient:
                 except TimeoutError as exc:
                     # 注意：TimeoutError 是 OSError 子类，必须排在下面的 OSError 之前
                     last_error = ModelCallError(f"读取超时（>{self.timeout_s}s）")
-                    # 超时只再试一次：原样重发大概率再等满一次（见 MAX_SLOW_RETRIES）
-                    if attempt <= MAX_SLOW_RETRIES:
+                    # 超时只再试一次（见 MAX_SLOW_RETRIES 与 _retry_allowance）
+                    if retries_used < self._retry_allowance(exc):
                         self.stats.gateway_retries += 1
                         retries_used += 1
                         _sleep_backoff(attempt)
@@ -454,7 +480,7 @@ class ModelClient:
                     # 既不重试也不计入 gateway_retries。
                     # 表现是"网关不稳"，实质是客户端根本没重试。
                     last_error = ModelCallError(f"连接异常（{type(exc).__name__}）: {exc}")
-                    if attempt < MAX_RETRIES:
+                    if retries_used < self._retry_allowance(exc):
                         self.stats.gateway_retries += 1
                         retries_used += 1
                         _sleep_backoff(attempt)
