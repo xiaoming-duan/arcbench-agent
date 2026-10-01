@@ -385,6 +385,97 @@ def check_baseline(
     return None
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# 根节点测试用例数上限（骨架，默认关闭）
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# 【假说】根节点（无上游依赖）无集成约束，模型倾向把场景铺开写；
+#         深层节点围绕上游契约写、更聚焦。用例数越多，实现难度越高。
+#
+# 【实测 n=1】run2 的 REQ-5（根节点）= 6 用例 -> FAILED(4 轮)
+#             run1/run3 的 REQ-5        = 2 用例 -> PASSED(1 轮)
+#
+# 【诚实限定】失败样本只有 1 个。不能排除「那次恰好实现较弱」。
+#             本骨架**默认关闭**，等基线样本补齐后做对照实验再决定。
+#
+# 【实现要点 —— 与最初设想的差异，必须记录】
+# 最初设想是 `test_cases[:LIMIT]` 切片。**在本代码库里这不成立**：
+#   `TestFileSpec` 只有 path/type/covers/notes，**没有用例数字段**；
+#   用例数（`it(` 块个数）是在**写测试阶段**由模型产出源码时才确定的，
+#   由 `measure_source()` 事后数出来。
+# 真正能起作用的杠杆是**提示词**：在计划与写测试之前告诉模型"这是根节点，
+# 用例数不超过 N"。切片只能作用于计划里的**文件清单**（通常只有 1 个文件，
+# 上限 3-4 不会咬合），所以切片是**辅助**、提示词是**主机制**。
+#
+# 可观测：`RequirementResult.test_case_count` 记录每个需求实际写出的用例数。
+
+
+def is_root_requirement(requirement: Any) -> bool:
+    """根节点 = 未声明任何上游依赖。"""
+    return not tuple(getattr(requirement, "dependencies", ()) or ())
+
+
+def root_test_limit(default: int = 0) -> int:
+    """读取当前上限。0 表示关闭。
+
+    优先用环境变量（便于实验时不改配置对象），否则用传入的默认值。
+    """
+    import os as _os
+    raw = _os.environ.get("FACTORY_ROOT_TEST_LIMIT")
+    if raw is None:
+        return max(0, int(default or 0))
+    try:
+        return max(0, int(raw))
+    except (TypeError, ValueError):
+        return max(0, int(default or 0))
+
+
+def apply_root_test_limit(
+    requirement: Any,
+    test_files: tuple[str, ...],
+    *,
+    limit: int | None = None,
+) -> tuple[str, ...]:
+    """按上限裁剪**根节点**的计划内测试文件清单。
+
+    关闭（limit == 0）时**原样返回** —— 既有行为逐位不变。
+    非根节点原样返回（只约束根节点）。
+
+    注意：本函数作用在**文件清单**上；用例数上限由
+    `root_case_limit_prompt()` 通过提示词施加（见上文实现要点）。
+    """
+    eff = root_test_limit() if limit is None else max(0, int(limit))
+    if eff == 0:
+        return test_files
+    if not is_root_requirement(requirement):
+        return test_files
+    return tuple(test_files[:eff])
+
+
+def root_case_limit_prompt(requirement: Any, *, limit: int | None = None) -> str:
+    """给根节点注入用例数上限指令；关闭或非根节点时返回空串。
+
+    返回空串时调用方不应在提示词里留下任何痕迹 —— 保证关闭状态下
+    提示词与从前逐字一致。
+    """
+    eff = root_test_limit() if limit is None else max(0, int(limit))
+    if eff == 0 or not is_root_requirement(requirement):
+        return ""
+    return (
+        f"\n★ 本需求是**根节点**（无上游依赖），测试用例数**不超过 {eff} 个**。\n"
+        "  理由：根节点缺集成约束，容易把场景铺开写；用例越多，实现难度越高，\n"
+        "  而通过率并不随用例数上升。请把最关键的行为写扎实，而不是求全。\n"
+    )
+
+
+def count_test_cases(source: str) -> int:
+    """数出源码里的用例块个数（`it(` / `test(`）。
+
+    与 `measure_source` 的用例计数口径一致 —— 不另立第二套口径。
+    """
+    return measure_source(source)[1]
+
+
 def plan_json_schema_hint() -> str:
     """给 LLM 的回报格式提示。"""
     return json.dumps(

@@ -246,6 +246,11 @@ class RequirementResult:
     test_plan_baselines: dict[str, Any] = field(default_factory=dict)
     # 测试重写轮次（WEAK_TEST 回退次数）
     test_rewrites: int = 0
+    # 该需求**实际写出**的测试用例数（`it(` / `test(` 块个数，取写测试阶段的总和）。
+    # 存在的理由：`test_usecase_limit` 假说（根节点用例过度生成）需要可观测数据 ——
+    # 没有这个字段，就只能事后翻产物目录数文件，无法在报告里做方差对比。
+    # 口径与 `testplan.measure_source` 一致，不另立第二套。
+    test_case_count: int = 0
     # 写测试阶段的尝试次数（白名单拒绝导致的重试）。
     # 必须与 test_rewrites 分开：D2 造成的额外调用发生在这里，不在重写轮次里——
     # 只看 test_rewrites 会把这类浪费完全掩盖掉。
@@ -304,6 +309,7 @@ REQUIREMENT_RESULT_FIELDS: tuple[str, ...] = (
     "red_first_ok",
     "note",
     "test_rewrites",
+    "test_case_count",
     "write_attempts",
     "cost",
     "test_plan_files",
@@ -410,6 +416,7 @@ class RunReport:
                     "red_first_ok": r.red_first_ok,
                     "note": r.note,
                     "test_rewrites": r.test_rewrites,
+                    "test_case_count": r.test_case_count,
                     "write_attempts": r.write_attempts,
                     "cost": dict(r.cost),
                     "test_plan_files": list(r.test_plan_files),

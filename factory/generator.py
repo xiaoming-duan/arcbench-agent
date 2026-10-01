@@ -309,6 +309,12 @@ class LLMGenerator:
             lines.extend(
                 f"  {i.interface_id} [{i.type}] {i.content}" for i in requirement.interfaces
             )
+        # 根节点用例数上限（默认关闭 -> 返回空串 -> 提示词逐字不变）
+        from .testplan import root_case_limit_prompt
+        _limit_note = root_case_limit_prompt(requirement)
+        if _limit_note:
+            lines.append(_limit_note)
+
         if requirement.tests:
             lines.append("已声明测试:")
             lines.extend(f"  {t.test_id} [{t.type}] {t.intent}" for t in requirement.tests)

@@ -1,0 +1,14 @@
+{
+  "outcome": "QUOTA_RECOVERED",
+  "cycles": 1,
+  "baselines_done": 0,
+  "history": [
+    {
+      "cycle": 1,
+      "at": "2026-10-01 15:18:56",
+      "ok": true,
+      "reason": "ok"
+    }
+  ],
+  "updated": "2026-10-01 15:18:56"
+}
