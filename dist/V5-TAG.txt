@@ -42,3 +42,48 @@ arcbench-agent v5 —— 交付标签（诚实标注）
 门禁状态：check_all 11 类 / 350 项全部通过
 
 诚实声明：无任何推算或补全的数据。
+
+════════════════════════════════════════════════════════════
+补充：契约冻结的真实运行验证（第 5 次 closure6）
+════════════════════════════════════════════════════════════
+运行: factory-verify @ b0f4bf1，FACTORY_ROOT_TEST_LIMIT=0，guard 隔离
+结果: 4 通过 / 1 失败 / 1 跳过（REQ-11 TEST_FAILED 1/2），网关重试 0，token 145,280
+
+✅ 生成：1 份 .arc/contracts/REQ-11.yaml（frozen: true）
+✅ 门禁：contract_ok=True，**CONTRACT_MISSING 触发 0 次**（无误报）
+✅ 门禁：CONTRACT_MISMATCH 触发 0 次
+❌ **读取：读路径从未生效**（本次真实运行发现）
+
+  按决策树「检查提示词注入」复验时发现：
+    不接合同 765 字符 / 接合同 765 字符（差 0），含「已冻结」False
+  根因：generator 传 `contracts_dir.parent`，而 load_frozen_calls 内部
+        又拼一次 .arc/contracts -> 路径多一层 .arc/.arc/ -> 永远读不到
+        -> **静默回退到内存声明**。
+  欺骗性：合同写出来了、门禁过了、提示词里也**有**合同内容（来自内存声明），
+          表面上一切正常，唯独「冻结」这一性质未生效。
+
+已修（commit 2de0494）：load_frozen_calls 改收合同目录本身。
+  修复后复验：不接 765 / 接 786 字符，含「已冻结」True ✅
+  新增防回归断言 2 条；test_contract_freeze 14 项全过
+
+★ 结论：契约冻结 = **partial**
+    生成 ✅ / 门禁 ✅ / 读取 ❌已修但**尚未重跑验证**
+  REQ-11 本次失败原因是 TEST_FAILED（1/2），与合同门禁无关。
+
+────────────────────────────────────────────────────────────
+本轮另修两个使运行无法启动的阻塞（均非任务预期）
+────────────────────────────────────────────────────────────
+① **跨 worktree 复制污染**：b062436/008e10b/c43bcf9/7dd9394 四个提交
+   **均不可导入** —— loop.py/pipeline.py/test_gates.py 被从主树复制，
+   引用了本分支 llm.py 不具备的 ModelQuotaExhaustedError。
+   而 check_all 一直在主树跑，分支上的从未执行 -> 一路「绿色」。
+   已修（commit b0f4bf1），并新增 tools/test_imports.py 冒烟守卫
+   （反向验证过：故意破坏符号 -> 正确报红）。
+
+② **快照静默复用**：guard 同名 label 复用 16:07 的旧快照（含污染代码），
+   导致修复后重跑仍 ImportError。改用 --force / 新 label。
+
+③ 一次 DNS 环境失败（[Errno -3] name resolution）使 REQ-11 死在 DESIGNING，
+   该次运行**判为无效样本**，已排除并重跑。
+
+诚实声明：REQ-11 在**本次**运行中 FAILED；契约冻结的读取修复**未经真实运行验证**。
