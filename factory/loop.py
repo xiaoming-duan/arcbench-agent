@@ -29,6 +29,7 @@ from .testaudit import (
     InjectionAudit,
     MockAudit,
     audit_imports,
+    audit_relative_imports,
     audit_injection_bypass,
     audit_mocked_dependencies,
     audit_requirement_dependencies,
@@ -1180,6 +1181,41 @@ class TddLoop:
             impl_files = self._guard_implementation_files(requirement, impl_files, result)
             apply_generated_files(self.output_dir, impl_files)
             self._record_impl_files(requirement, impl_files)
+
+            # ---- 实现侧模块图审计 ----
+            # ★必须**独立于测试**：测试 import 的是服务层，不会因为 app.js 里
+            #   多了一行 require('./routes/xxx') 而失败 —— 但平台会 `npm start`
+            #   验证产物，那一行会让启动直接崩溃。
+            #   实测（平台 2026-10-01 01:50）：模型在 app.js 的
+            #   「// route modules imports」后插入 require('./routes/branchRoutes')，
+            #   却从未创建该文件 -> 启动即
+            #     Error: Cannot find module './routes/branchRoutes'
+            #   整次提交死在启动阶段，而我们的门禁一路绿灯。
+            impl_dir = self.output_dir / self.config.implementation_root
+            impl_paths = sorted(p for p in impl_dir.rglob("*.js") if p.is_file()) if impl_dir.is_dir() else []
+            broken_modules = audit_relative_imports(self.output_dir, impl_paths)
+            if broken_modules:
+                detail = "; ".join(
+                    f"{item['file']} 引用 {item['specifier']}" for item in broken_modules[:5]
+                )
+                logger.error("[实现审计] %s 引用了不存在的模块: %s", req_id, detail)
+                if attempts > self.config.max_repairs:
+                    self.store.implement_failed(req_id, f"{req_id} 实现引用了不存在的模块: {detail}")
+                    result.state = "FAILED"
+                    result.note = f"实现引用了不存在的模块（{attempts} 次尝试）: {detail}"
+                    result.attempts = attempts
+                    logger.error(result.note)
+                    return result
+                failures = [
+                    "你的实现里 import/require 了**并不存在**的模块，应用启动会直接崩溃：\n"
+                    + "\n".join(
+                        f"  - {item['file']} 引用 {item['specifier']}（文件不存在）"
+                        for item in broken_modules[:8]
+                    )
+                    + "\n请**补写这些文件**（放在引用它的相对位置），或去掉这些引用。"
+                    "注意平台会执行 `npm start` 验证，启动失败即整次提交失败。"
+                ]
+                continue
 
             outcome = self.runner.run(test_paths)
 

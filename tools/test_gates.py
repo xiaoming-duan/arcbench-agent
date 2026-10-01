@@ -1492,6 +1492,86 @@ def t37_quota_exhaustion_is_terminal_and_fails_fast() -> None:
 
 
 
+def t38_implementation_module_graph_audit() -> None:
+    """实现引用了不存在的相对模块 -> 必须拦下并回传（平台会 `npm start` 验证）。
+
+    实测（平台 2026-10-01 01:50）：
+        Error: Cannot find module './routes/branchRoutes'
+        requireStack: ['/workspace/template/backend/src/app.js', .../src/index.js]
+    模型在 app.js 的「// route modules imports」锚点后插入了
+    require('./routes/branchRoutes')，却**从未创建**该文件。
+
+    我们的门禁此前一路绿灯，原因很具体：**测试 import 的是服务层**，
+    不会因为 app.js 多一行 require 而失败；而平台会 `npm start`，启动即崩。
+    所以这个审计必须**独立于测试**。
+    """
+    from factory.models import GeneratedFile
+
+    TEST_JS = (
+        "const t=require('node:test'),a=require('node:assert');\n"
+        "const {value}=require('../src/widget');\n"
+        "t('w',()=>{a.equal(value(),1)});\n"
+    )
+    APP_BROKEN = "const express=require('express');\nrequire('./routes/branchRoutes');\n"
+    APP_FIXED = "const express=require('express');\n"
+    WIDGET = "module.exports = { value: () => 1 };\n"
+
+    class ScriptedGen(FakeGenerator):
+        """按脚本返回实现文件集；记录每次收到的 failures。"""
+
+        def __init__(self, sets, **kw):
+            super().__init__(**kw)
+            self.sets = list(sets)
+            self.impl_failures: list[list] = []
+
+        def implement(self, requirement, plan, failures, test_context=""):  # noqa: ANN001
+            self.impl_failures.append(list(failures))
+            spec = self.sets.pop(0) if self.sets else []
+            return [GeneratedFile(path=path, content=content, mode="write")
+                    for path, content in spec]
+
+    # ① 一直写坏：必须在预算内拦下，且理由点名缺失模块
+    ws = make_workspace()
+    gen = ScriptedGen([[("backend/src/app.js", APP_BROKEN), ("backend/src/widget.js", WIDGET)]],
+                      write_script=[TEST_JS], design=sample_design(), plan=sample_plan())
+    res = build_loop(ws, gen, max_repairs=2).run(sample_requirement())
+    check("T38a 引用不存在的模块 -> 最终判失败（不再一路绿灯）",
+          res.state == "FAILED", f"state={res.state}")
+    check("T38b 失败理由点名缺失的模块",
+          "不存在的模块" in (res.note or "") and "branchRoutes" in (res.note or ""),
+          (res.note or "")[:80])
+    check("T38c 重试时的反馈带上了缺失模块清单（提示词因此不同）",
+          any("branchRoutes" in " ".join(fs) for fs in gen.impl_failures[1:]),
+          str(gen.impl_failures[1:])[:90])
+    shutil.rmtree(ws, ignore_errors=True)
+
+    # ② 第二次补齐缺失文件 -> 审计放行、需求正常通过
+    ws = make_workspace()
+    gen = ScriptedGen(
+        [
+            [("backend/src/app.js", APP_BROKEN), ("backend/src/widget.js", WIDGET)],
+            [("backend/src/app.js", APP_FIXED), ("backend/src/widget.js", WIDGET),
+             ("backend/src/routes/branchRoutes.js", "module.exports = {};\n")],
+        ],
+        write_script=[TEST_JS], design=sample_design(), plan=sample_plan())
+    res2 = build_loop(ws, gen, max_repairs=2).run(sample_requirement())
+    check("T38d 补齐缺失模块后放行并通过",
+          res2.state == "PASSED", f"state={res2.state} note={(res2.note or '')[:60]}")
+    check("T38e 审计确实拦过第一次（否则②不能证明它在工作）",
+          len(gen.impl_failures) >= 2 and any("branchRoutes" in " ".join(fs)
+                                              for fs in gen.impl_failures[1:]),
+          f"implement 调用 {len(gen.impl_failures)} 次")
+    shutil.rmtree(ws, ignore_errors=True)
+
+    # ③ 模板自身必须干净：模板 app.js 不得引用不存在的模块
+    from factory.testaudit import audit_relative_imports
+
+    tpl = ROOT / "template" / "backend" / "src"
+    tpl_broken = audit_relative_imports(ROOT / "template", sorted(tpl.rglob("*.js")))
+    check("T38f 出厂模板的实现模块图是完整的（否则应用永远起不来）",
+          tpl_broken == [], str(tpl_broken[:3]))
+
+
 def t23_uncollectable_test_rolls_back_to_test_stage() -> None:
     """测试文件跑不起来（0 个测试被收集）-> 判 TEST_BROKEN 并回退到写测试阶段，
     而不是把 4 轮实现预算浪费在一个坏掉的测试文件上。
@@ -1814,6 +1894,7 @@ def main() -> int:
         t34_sdk_backend_parity_and_summary_arithmetic,
         t35_transient_model_failure_does_not_kill_requirement,
         t37_quota_exhaustion_is_terminal_and_fails_fast,
+        t38_implementation_module_graph_audit,
     ):
         try:
             fn()
