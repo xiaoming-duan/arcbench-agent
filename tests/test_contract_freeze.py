@@ -111,16 +111,66 @@ def test_regeneration_overwrites_stale_contract(tmp_path, reqs):
 
 def test_prompt_layer_reads_frozen_copy(frozen):
     """提示词层从冻结件读取，且能拿到声明的元数据。"""
-    calls = load_frozen_calls(frozen, "REQ-11")
+    calls = load_frozen_calls(contracts_dir(frozen), "REQ-11")
     assert calls is not None
     by_symbol = {c.symbol: c for c in calls}
     assert by_symbol["updateQuantity"].declared_arity == 4
     assert by_symbol["listItems"].semantics == "查询库存项列表"
 
 
+def test_prompt_layer_uses_contracts_dir_not_output_dir(tmp_path, reqs):
+    """★ 防回归：读函数收的是**合同目录**，不是 output_dir。
+
+    实测 bug：初版 load_frozen_calls 收 output_dir 并内部拼 `.arc/contracts`，
+    而调用方传了 `contracts_dir(output_dir).parent` -> 路径多一层 `.arc/.arc/`
+    -> 永远读不到 -> **静默回退到内存声明**。
+    症状极具欺骗性：合同写出来了、门禁过了、提示词里也**有**合同内容
+    （来自内存声明），只有「已冻结」这一性质没生效。
+
+    本条同时钉住三个位置：
+      ① 传合同目录 -> 读得到
+      ② 传 output_dir（旧口径）-> 读不到（证明参数语义已改变）
+      ③ 生成器实际传的就是合同目录
+    """
+    write_contracts(tmp_path, reqs)          # ★ 先写合同再断言读得到
+    cdir = contracts_dir(tmp_path)
+    assert load_frozen_calls(cdir, "REQ-11") is not None, "传合同目录应读得到"
+    assert load_frozen_calls(tmp_path, "REQ-11") is None, (
+        "传 output_dir 应读不到 —— 若这里读到了，说明参数语义又变回旧口径"
+    )
+    # ③ 生成器接线检查（源码级，防有人改回 .parent）
+    import inspect
+    from factory.generator import LLMGenerator
+    src = inspect.getsource(LLMGenerator._requirement_brief)
+    assert "load_frozen_calls(self.contracts_dir," in src, (
+        "生成器必须直接传 self.contracts_dir，不得再出现 .parent"
+    )
+    assert "load_frozen_calls(self.contracts_dir.parent" not in src
+
+
+def test_prompt_marks_contract_as_frozen(tmp_path, reqs):
+    """接了冻结合同时，提示词必须显式标注「已冻结」—— 这是与内存声明的可观测差别。"""
+    from factory.generator import LLMGenerator
+    from factory.contracts import contracts_dir as cdir_of
+
+    class _C:
+        model = "x"
+
+        def is_available(self):  # noqa: ANN201
+            return True
+
+    write_contracts(tmp_path, reqs)
+    req11 = [r for r in reqs if r.req_id == "REQ-11"][0]
+    off = LLMGenerator(_C(), "vitest", contracts_dir=None)._requirement_brief(req11)
+    on = LLMGenerator(_C(), "vitest", contracts_dir=cdir_of(tmp_path))._requirement_brief(req11)
+    assert "已冻结" not in off
+    assert "已冻结" in on, "接了冻结合同却没标注「已冻结」—— 读路径可能又断了"
+    assert len(on) > len(off), "冻结合同的提示词应比内存声明更长（多了冻结标注）"
+
+
 def test_prompt_layer_returns_none_when_contract_absent(tmp_path):
     """合同不存在时返回 None（调用方据此回退并告警，而不是静默用错的内容）。"""
-    assert load_frozen_calls(tmp_path, "REQ-NOPE") is None
+    assert load_frozen_calls(contracts_dir(tmp_path), "REQ-NOPE") is None
 
 
 # ═══════════════════════════════════════════════════════════════════════════

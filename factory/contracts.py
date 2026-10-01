@@ -134,13 +134,24 @@ def _calls_from_payload(payload: dict[str, Any]) -> tuple[CrossModuleCall, ...]:
     return tuple(out)
 
 
-def load_frozen_calls(output_dir: Path, req_id: str) -> tuple[CrossModuleCall, ...] | None:
+def load_frozen_calls(contracts_path: Path, req_id: str) -> tuple[CrossModuleCall, ...] | None:
     """读冻结合同里的 `cross_module_calls`。
+
+    ★ 参数是**合同目录**（`<out>/.arc/contracts`），不是 output_dir。
+
+    为什么显式区分（实测 bug）：初版此函数收 output_dir 并在内部拼 `.arc/contracts`，
+    而生成器侧已经把 `contracts_dir(output_dir)` 算好了，于是调用方写
+    `load_frozen_calls(self.contracts_dir.parent, ...)` —— 路径变成
+    `<out>/.arc/.arc/contracts/REQ-11.yaml`，**永远读不到**，
+    然后静默回退到内存声明。
+    后果：合同写出来了、门禁也过了，但**提示词从未读过冻结件**，
+    「冻结」这一性质实际未生效 —— 而表面上一切正常（内容恰好相同）。
+    改成收目录本身，消除这条隐式的 parent 链。
 
     返回 None 表示**合同不存在或不可用** —— 调用方（提示词层）应据此
     回退到内存声明并记警告，而不是静默用错的内容。
     """
-    path = contract_path(output_dir, req_id)
+    path = Path(contracts_path) / f"{req_id}.yaml"
     if not path.is_file():
         return None
     try:

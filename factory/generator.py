@@ -336,7 +336,7 @@ class LLMGenerator:
         frozen = None
         if self.contracts_dir is not None:
             from .contracts import load_frozen_calls
-            frozen = load_frozen_calls(self.contracts_dir.parent, requirement.req_id)
+            frozen = load_frozen_calls(self.contracts_dir, requirement.req_id)
         _declared = frozen if frozen is not None else requirement.cross_module_calls
 
         if _declared:
