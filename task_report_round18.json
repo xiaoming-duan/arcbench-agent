@@ -1,0 +1,99 @@
+{
+  "run": {
+    "scope": "closure6（REQ-12 的完整传递闭包，6 个需求）",
+    "isolation": "guard 隔离，输出目录 out-valid1（唯一）",
+    "isolation_verified": "✅ 冻结副本逐文件未变 —— 本次测量可证明跑在冻结的那份代码上",
+    "gateway_health_before": "5/5 成功（18.1s / 9.3s / 14.2s / 11.8s / 18.8s）",
+    "exit_code": 0,
+    "wall_clock": "23:34:06 → 00:09:42 = 35 分 36 秒",
+    "report_completeness": "6/6 —— **第一份完整报告**（此前的崩溃/假阳性问题未再出现）",
+    "crash_free": "guard 的 git 缺陷修复生效：全程无 'The following paths are ignored' 报错"
+  },
+
+  "result": {
+    "passed": 4, "failed": 1, "upstream_failed": 1, "attempted": 5,
+    "pass_rate": "4/5 = 80%",
+    "per_requirement": {
+      "REQ-1":  {"state": "PASSED", "attempts": 1, "test_rewrites": 0, "tokens": 10548, "gw_retries": 0, "dep_violations": 0},
+      "REQ-5":  {"state": "PASSED", "attempts": 1, "test_rewrites": 0, "tokens": 13149, "gw_retries": 0, "dep_violations": 0},
+      "REQ-3":  {"state": "PASSED", "attempts": 2, "test_rewrites": 0, "tokens": 16721, "gw_retries": 0, "dep_violations": 0,
+                 "note": "TEST_BROKEN ×1 → 依赖门禁触发（REQ-1=DEPENDENCY_NOT_USED）→ 重写后满足"},
+      "REQ-7":  {"state": "PASSED", "attempts": 2, "test_rewrites": 0, "tokens": 27300, "gw_retries": 0, "dep_violations": 0,
+                 "note": "**首次干净通过** —— TEST_BROKEN ×1 → 依赖门禁触发（REQ-1/REQ-5=DEPENDENCY_NOT_USED）→ 重写后满足"},
+      "REQ-11": {"state": "FAILED", "attempts": 4, "test_rewrites": 1, "tokens": 62240, "gw_retries": 1, "dep_violations": 0,
+                 "note": "实现失败（4 次尝试）: 读取超时（>300.0s）"},
+      "REQ-12": {"state": "UPSTREAM_FAILED", "attempts": 0, "tokens": 0,
+                 "note": "上游未通过，未进入 TDD 循环（REQ-11=FAILED）"}
+    },
+    "totals": {"calls": 25, "total_tokens": 129958, "reasoning_tokens": 86767,
+               "gateway_retries": 1, "retries_succeeded": 0, "retries_exhausted": 1},
+    "evidence": ["evidence/valid1-report.json", "evidence/valid1-run.log"]
+  },
+
+  "milestones": [
+    "**REQ-7 首次干净通过** —— v1 四轮从未通过、v2 仅走到「测试通过 + 依赖门禁拦截」，本轮真正 PASSED",
+    "**REQ-11 首次进入 TDD 循环** —— 历史各轮均因上游失败而被跳过",
+    "**第一份完整的 6/6 报告** —— 未再出现崩溃或部分报告",
+    "**零 WEAK_TEST** —— 无空转测试"
+  ],
+
+  "critical_finding": {
+    "title": "依赖累积存在实现层缺陷 —— 且当前依赖门禁**结构上无法检出这一类**",
+    "what_happened": "REQ-11 的测试要求「调用 REQ-7 的 updateQuantity 后，listMovements 能查到流水」，但两个模块从未连接，该期望在结构上不可能满足",
+    "evidence": {
+      "REQ_7_impl": "src/services/inventoryService.js: `async function updateQuantity(sku, from, to)` —— 语义是「区间变更 from→to」，不改流水",
+      "REQ_11_impl": "src/services/movementsService.js: `const movements = []` 模块内内存数组 + `recordMovement({sku,from,to,reason})` + `listMovements(sku)`；**require/import 语句 0 条**，完全不引用 REQ-1 或 REQ-7",
+      "REQ_11_test": "`await updateQuantity('SKU-1001', 10, 5)`（3 参数，期望第 2 个是 quantity）+ `listMovements('SKU-1001')` 应返回含 `from` 字段的记录",
+      "mismatch": "REQ-7 的 updateQuantity 第 2/3 参数是 from/to；REQ-11 的测试按 (sku, quantity, from) 调用 —— **同名函数、不同语义**"
+    },
+    "why_the_gate_missed_it": {
+      "mechanism": "依赖使用门禁位于 `if outcome.passed:` 之内（factory/loop.py:1159 起）—— 只有测试通过后才评估依赖",
+      "consequence": "REQ-11 的测试从未通过，**门禁从未运行**，因此 dependency_violations=0 并不代表「依赖用对了」，而代表「依赖根本没被评估」",
+      "structural_flaw": "**门禁在测试门禁的下游** —— 一个永远无法让测试通过的需求，其依赖使用永远不会被检查。而这恰恰是最需要检查的情形（跨模块集成失败）。",
+      "subsidiary": "即便门禁运行了，它检查的是**静态调用**（是否 import 并调用上游导出）；movementsService.js 有 0 条 import，本应被判 DEPENDENCY_NOT_USED。所以问题纯粹是**执行顺序**，不是检测逻辑。"
+    },
+    "secondary_failure": "REQ-11 的最后一次实现调用 `读取超时（>300.0s）` —— 4 次尝试中至少 1 次死于环境；这放大了失败，但不是根因",
+    "test_broken_note": "REQ-11 早期版本的测试确实 import 了未安装的 `better-sqlite3`（模板依赖里只有 `sqlite3`），被 TEST_BROKEN 正确拦截；回退后的版本改用动态 import，不再有该问题 —— 说明 TEST_BROKEN 机制工作正常"
+  },
+
+  "gate_activity": {
+    "TEST_BROKEN": "触发 2 次（REQ-3、REQ-11），均回退写测试阶段",
+    "依赖使用门禁": "触发 2 次（REQ-3、REQ-7），**均在重写后满足** —— 门禁有效",
+    "上游失败传播": "触发 1 次（REQ-11 失败 → REQ-12 跳过）",
+    "RED 门禁": "全部通过",
+    "WEAK_TEST": "0 次"
+  },
+
+  "answers": {
+    "依赖累积是否有实现层问题": "**有。** 且本轮第一次拿到了直接证据（而非推测）：REQ-11 需要与 REQ-7 集成，两侧模块各自「实现完整」，但从未连接。",
+    "REQ-12 是否进入 TDD": "**否** —— 因 REQ-11 失败而跳过。最深链末端仍无数据。",
+    "多模块串行是否工作": "**工作** —— 拓扑序执行、上游失败传播、菱形共享节点只执行一次，全部按设计运行。问题不在调度层，在**跨模块契约**。"
+  },
+
+  "actionable_next": [
+    {
+      "priority": "高",
+      "action": "把依赖使用门禁从 `if outcome.passed` 内**移出**，或增加一条「测试通过前也做一次静态依赖检查」的路径",
+      "rationale": "当前结构让「测试过不去」的需求免于依赖检查，而这类需求恰恰最可能有依赖问题。这是一行位置问题，不是新检测器。",
+      "expected": "REQ-11 这类情形会被判 DEPENDENCY_NOT_USED 并回传理由，而不是空耗 4 轮实现"
+    },
+    {
+      "priority": "高",
+      "action": "在需求规格里显式声明跨模块调用契约（如「REQ-11 必须调用 REQ-7 的 updateQuantity」并写进测试计划）",
+      "rationale": "同名函数、不同语义（updateQuantity 的 from/to vs quantity）是模型无法自行发现的 —— 两个需求的单模块测试都无法暴露它"
+    },
+    {
+      "priority": "中",
+      "action": "DAG 设计中的两个缺口（悬空依赖 / 环）本轮**未被触发** —— 可作为低优先级",
+      "rationale": "本轮没有出现悬空依赖或环；closure6 是闭包，调度层正常工作"
+    }
+  ],
+
+  "check_all": {"assertions_passed": "257/257（8 类）", "all_pass": true},
+
+  "not_done": {
+    "REQ-12_data": "仍无 —— 依赖 REQ-11",
+    "dag_implementation": "未实施（本轮聚焦跑通 closure6）",
+    "commit": "本轮结果尚未提交到 factory-verify 分支（evidence 与 task_report 需提交）"
+  }
+}
