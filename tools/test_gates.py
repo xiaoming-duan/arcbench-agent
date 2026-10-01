@@ -736,7 +736,8 @@ def t28_verdict_judgment_is_unified() -> None:
     check("T28d 强/弱/豁免三集互补，无重叠",
           not (MEANINGFUL_VERDICTS & EXEMPT_VERDICTS)
           and not (WEAK_VERDICTS & EXEMPT_VERDICTS)
-          and len(MEANINGFUL_VERDICTS) + len(WEAK_VERDICTS) + len(EXEMPT_VERDICTS) == 8)
+          # 9 = 2 强 + 4 弱 + 2 豁免 + 1 新增的 V_E2E_NO_ASSERTION（算弱）
+          and len(MEANINGFUL_VERDICTS) + len(WEAK_VERDICTS) + len(EXEMPT_VERDICTS) == 9)
 
     ws = _Path(tempfile.mkdtemp(prefix="verdict-check-"))
     try:

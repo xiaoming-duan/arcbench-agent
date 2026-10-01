@@ -20,6 +20,10 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+# ★「断言是否有意义」只有一份实现，放在 uigate（UI 语义所在）。
+#   e2e 判据与 UI 门禁共用它，避免两处各写一套后静默分叉。
+from .uigate import has_meaningful_ui_assertions
+
 # import ... from 'x' / import 'x'
 _IMPORT_FROM = re.compile(r"""\bimport\s+(?:[\w*{},\s$]+\s+from\s+)?['"]([^'"]+)['"]""")
 # require('x')
@@ -52,6 +56,9 @@ V_DYNAMIC_UNRESOLVED = "DYNAMIC_IMPORT_UNRESOLVED"
 V_ALIAS = "ALIAS_UNRESOLVED"
 V_MISSING = "MISSING_FILE"
 V_E2E = "E2E_EXEMPT"
+#: 声明为 e2e，但源码里**没有任何真实 UI 断言**（只跑流程 / 空断言）。
+#: 与 UI 门禁的 UI_TEST_WEAK 同一判据 —— 两边共用 has_meaningful_ui_assertions()。
+V_E2E_NO_ASSERTION = "E2E_NO_UI_ASSERTION"
 V_HELPER = "HELPER_EXEMPT"
 
 # ★ 单一定义：什么算「引用了实现」。
@@ -60,7 +67,8 @@ V_HELPER = "HELPER_EXEMPT"
 #   一个放行、一个阻断，而且不报错（这正是上一版 DYNAMIC_IMPORT 的坑）。
 #   MEANINGFUL / WEAK / EXEMPT 三者互补，恰好划分全部 verdict。
 MEANINGFUL_VERDICTS = frozenset({V_IMPORTS, V_DYNAMIC_LITERAL})
-WEAK_VERDICTS = frozenset({V_NO_IMPORT, V_DYNAMIC_UNRESOLVED, V_ALIAS, V_MISSING})
+WEAK_VERDICTS = frozenset({V_NO_IMPORT, V_DYNAMIC_UNRESOLVED, V_ALIAS, V_MISSING,
+                           V_E2E_NO_ASSERTION})
 EXEMPT_VERDICTS = frozenset({V_E2E, V_HELPER})
 
 
@@ -85,9 +93,22 @@ def is_helper_file(path: str) -> bool:
     return any(pattern in lowered for pattern in HELPER_PATTERNS)
 
 
-def looks_like_alias(specifier: str) -> bool:
-    """`@/x`、`~/x` 这类多半是路径别名；真外部包（express、vitest）不会这样开头。"""
-    return specifier.startswith("@") or specifier.startswith("~")
+def looks_like_alias(specifier: str, aliases: dict[str, str] | None = None) -> bool:
+    """`@/x`、`~/x` 这类多半是路径别名。
+
+    ★修正（P0）：**不能只看首字符 `@`**。`@playwright/test`、
+    `@testing-library/react`、`@vitest/expect` 这些 **scoped npm 包**同样以 `@`
+    开头，会被误判成别名；别名未配置时判 ALIAS_UNRESOLVED -> 进 WEAK_VERDICTS
+    -> **WEAK_TEST 误报**。实测这就是 E2E（必用 `@playwright/test`）被判空转的
+    直接原因之一 —— 而它本该是外部依赖，直接跳过。
+
+    仍判为别名的：`@/...`、`~/...`，以及**确实配置过前缀**的别名（如 `@app/`）。
+    """
+    if specifier.startswith("@/") or specifier.startswith("~/"):
+        return True
+    if aliases:
+        return any(specifier.startswith(prefix) for prefix in aliases)
+    return False
 
 
 def extract_specifiers(source: str) -> list[str]:
@@ -234,10 +255,21 @@ def audit_imports(
             record.detail = f"读取失败: {exc}"
             continue
 
-        # 纯 E2E：显式声明 type: e2e 才允许不 import 实现
+        # 纯 E2E：**不要求 import 实现**（Playwright 不会 import 后端实现），
+        # 但也不能无条件豁免 —— 改为与 UI 门禁**共用同一套判据**：
+        # 测试是否真的断言了 UI 元素的存在与状态。
+        # 否则一个空的 .spec.js（只 goto/click、无断言）也会被当成有效证据。
         if types and all(t.lower() == "e2e" for t in types):
-            record.verdict = V_E2E
-            record.detail = "声明为 e2e，豁免 import 要求"
+            assertion_ok, assertion_why = has_meaningful_ui_assertions(source)
+            if assertion_ok:
+                record.verdict = V_E2E
+                record.detail = f"声明为 e2e，豁免 import 要求；{assertion_why}"
+            else:
+                record.verdict = V_E2E_NO_ASSERTION
+                record.detail = (
+                    f"声明为 e2e，但{assertion_why} —— 测不出东西"
+                    "（与 UI 门禁 UI_TEST_WEAK 同一判据）"
+                )
             continue
 
         specifier_kinds = extract_specifier_kinds(source)
@@ -247,7 +279,7 @@ def audit_imports(
         resolved_dynamic: list[str] = []
 
         for spec, is_dynamic in specifier_kinds:
-            if looks_like_alias(spec):
+            if looks_like_alias(spec, aliases):
                 matched = next((p for p in aliases if spec.startswith(p)), None)
                 if matched is None:
                     unresolved_alias = spec

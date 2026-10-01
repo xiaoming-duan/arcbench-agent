@@ -231,22 +231,44 @@ class TddLoop:
         normalized = path.lstrip("./")
         return normalized if normalized.startswith(prefix) else f"{prefix}{normalized}"
 
-    def _declared_types(self, plan: DesignPlan) -> dict[str, tuple[str, ...]]:
-        """测试文件 -> 声明的类型集合（用于 e2e 豁免）。"""
+    def _declared_types(self, req_id: str, plan: DesignPlan) -> dict[str, tuple[str, ...]]:
+        """测试文件 -> 声明的类型集合（用于 e2e 豁免）。
+
+        ★键的**坐标空间必须与查找键一致**（都是 output_dir 相对）。
+
+        实测 bug：本函数原来只读 `DesignPlan.tests[].file_path`，而设计产物的
+        file_path 是 **backend 相对**（如 `tests/x.spec.js`），审计的查找键却是
+        output 相对（`backend/tests/x.spec.js`）—— 键对不上 -> `types` 为空 ->
+        e2e **拿不到豁免**，落回 import 判据 -> WEAK_TEST 误报。
+        （而「E2E 不 import 后端实现」本来完全正确。）
+
+        现在优先用**测试计划**：`TestFileSpec.path` 的注释明确写着
+        「output_dir 相对」，与查找键同一坐标空间，且自带 type；
+        设计产物仅作补充。两者都同时登记原样键与归一化键，
+        以免任一方的约定变化再次造成静默不匹配。
+        """
         mapping: dict[str, tuple[str, ...]] = {}
-        for spec in plan.tests:
-            if not spec.file_path:
-                continue
-            key = spec.file_path.lstrip("./")
-            mapping[key] = mapping.get(key, ()) + ((spec.type or "unit"),)
+
+        def register(raw_path: str, kind: str) -> None:
+            if not raw_path:
+                return
+            normalized = str(raw_path).lstrip("./")
+            for key in {normalized, self._to_output_relative(normalized)}:
+                mapping[key] = mapping.get(key, ()) + ((kind or "unit"),)
+
+        entry = self._plans.get(req_id)
+        for spec in (getattr(entry, "test_files", ()) or ()):
+            register(str(getattr(spec, "path", "") or ""), str(getattr(spec, "type", "")))
+        for spec in (getattr(plan, "tests", ()) or ()):
+            register(str(getattr(spec, "file_path", "") or ""), str(getattr(spec, "type", "")))
         return mapping
 
-    def _audit(self, test_paths: Sequence[str], plan: DesignPlan) -> ImportAudit:
+    def _audit(self, req_id: str, test_paths: Sequence[str], plan: DesignPlan) -> ImportAudit:
         return audit_imports(
             self.output_dir,
             [self._to_output_relative(p) for p in test_paths],
             implementation_root=self.config.implementation_root,
-            declared_types=self._declared_types(plan),
+            declared_types=self._declared_types(req_id, plan),
             aliases=self.config.import_aliases,
         )
 
@@ -1033,7 +1055,7 @@ class TddLoop:
 
         # ---- 阶段 4: RED 门禁（逐文件判定 + 白名单 + 基线守卫） ----
         red = self.runner.run(test_paths)
-        audit = self._audit(test_paths, plan)
+        audit = self._audit(req_id, test_paths, plan)
         rewrites = 0
         last_violations: list[dict[str, Any]] = []
         broken_test = False
@@ -1109,7 +1131,7 @@ class TddLoop:
             test_paths = self._run_paths(allowed_paths, rewritten)
 
             red = self.runner.run(test_paths)
-            audit = self._audit(test_paths, plan)
+            audit = self._audit(req_id, test_paths, plan)
 
         weak = self._is_weak(red, audit) or self._is_uncollectable(red)
         broken_test = self._is_uncollectable(red)
@@ -1310,8 +1332,6 @@ class TddLoop:
                 _e2e_src, _planned_e2e = e2e_sources_of(self.output_dir, _test_plan)
                 ui_check = check_ui(
                     requirement, e2e_sources=_e2e_src, planned_e2e=_planned_e2e,
-                    # RED 是否失败无法从「现在测试通过了」反推，传 None 以免误报
-                    red_failed=None,
                 )
                 ui_ok_raw = ui_check.ok
                 result.ui_violations = [v.to_dict() for v in ui_check.violations]
