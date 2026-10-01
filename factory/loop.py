@@ -1374,8 +1374,6 @@ class TddLoop:
                 )
 
         result.attempts = attempts
-        # 分类预算的可观测账本（哪一类花了几次、还剩几次）
-        result.gate_audits["repair_budget"] = budget.to_dict()
         result.dependency_violations = [u.to_dict() for u in dep_audit.violations]
         result.dependency_violations += [u.to_dict() for u in mock_audit.violations]
         result.dependency_uncertain = [u.to_dict() for u in dep_audit.uncertain]
@@ -1402,6 +1400,12 @@ class TddLoop:
         result.gate_audits = {
             "dep_ok": dep_ok_raw, "mock_ok": mock_ok_raw, "bypass_ok": bypass_ok_raw,
             "contract_ok": contract_ok_raw,
+            # ★ 分类预算账本必须在**门禁赋值之后**再写。
+            #   实测 bug：初版写在循环结束处，而下面这个 `result.gate_audits = {...}`
+            #   会**整体覆盖**它 —— 于是真实运行里 6 个需求的账本全部丢失，
+            #   而 REQ-11 明明消费了 4 次 DEPENDENCY_NOT_USED / 3 次回归。
+            #   机制在正确工作，可观测性却为零。
+            "repair_budget": budget.to_dict(),
             "combined_ok": dep_ok,
             "enforce_dependency_usage": self.config.enforce_dependency_usage,
             "enforce_mock_check": self.config.enforce_mock_check,

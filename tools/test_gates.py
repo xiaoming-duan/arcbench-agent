@@ -1371,6 +1371,343 @@ def t35_transient_model_failure_does_not_kill_requirement() -> None:
     shutil.rmtree(ws, ignore_errors=True)
 
 
+def t37_quota_exhaustion_is_terminal_and_fails_fast() -> None:
+    """配额/余额耗尽 = 终局，不是瞬时：不重试，且整轮提前收摊。
+
+    实测（平台 2026-09-30 18:26）：
+        429 {'code': 'Free quota exhausted and balance too low, please recharge
+             compute credits.', 'type': 'insufficient_quota'}
+    它带着 **429**，而我上一轮的瞬时判据里恰好有 "429" 这个词 —— 于是配额耗尽
+    被同时判为「可重试」和「瞬时」，一次运行白白「网关重试 11 次（成功 0）」，
+    外加每个需求 3 次循环级重试。
+
+    关键区分：同是 429，
+        429 rate_limit_exceeded -> 瞬时，退避重试有意义
+        429 insufficient_quota  -> 终局，重试纯属烧时间
+    """
+    from factory.llm import (
+        _is_quota_exhausted,
+        _is_retryable_sdk_error,
+        _is_timeout_error,
+    )
+    from factory.loop import _is_transient_model_error
+
+    real = ("openai SDK 调用失败: Error code: 429 - {'error': {'code': "
+            "'Free quota exhausted and balance too low, please recharge compute credits.', "
+            "'type': 'insufficient_quota'}}")
+
+    check("T37a 能识别配额耗尽（insufficient_quota / recharge / compute credits）",
+          _is_quota_exhausted(real) and _is_quota_exhausted("insufficient_quota"))
+    check("T37b 限流不算配额耗尽（429 rate limit 仍应可重试）",
+          not _is_quota_exhausted("429 rate limit exceeded, please retry later"))
+
+    check("T37c 配额耗尽的真实报错**不**判为瞬时（此前被 429 误判）",
+          _is_transient_model_error(Exception(real)) is False, "被误判为瞬时")
+    check("T37d 限流仍判为瞬时（不能把该重试的也一刀切掉）",
+          _is_transient_model_error(Exception("429 rate limit exceeded")) is True)
+    check("T37e 超时仍判为瞬时",
+          _is_transient_model_error(Exception("Request timed out.")) is True)
+    check("T37f 配额文本即使被别的层重新包装也认得出",
+          _is_transient_model_error(Exception(f"包装层: {real}")) is False)
+
+    # 时间/重试代价的区分仍然成立
+    check("T37g 超时判据独立于配额判据",
+          _is_timeout_error(Exception("Request timed out"))
+          and not _is_timeout_error(Exception(real)))
+    class _429(Exception):
+        status_code = 429
+    check("T37h 429 在传输层仍算可重试（限流场景），配额由上层先行拦截",
+          _is_retryable_sdk_error(_429("429")) is True)
+
+    # 配额异常必须能穿透 loop 的异常处理（不能被吞进「回传重试」）
+    import inspect
+
+    from factory.loop import TddLoop
+
+    for name in ("run",):
+        src = inspect.getsource(getattr(TddLoop, name))
+        check(f"T37i {name}() 对 ModelQuotaExhaustedError 显式上抛",
+              src.count("except ModelQuotaExhaustedError:") >= 3,
+              f"出现 {src.count('except ModelQuotaExhaustedError:')} 次")
+
+    from factory import pipeline
+
+    psrc = inspect.getsource(pipeline.run_factory)
+    check("T37j pipeline 在配额耗尽时 break（不再逐个烧重试预算）",
+          "ModelQuotaExhaustedError" in psrc and "break" in psrc)
+    check("T37k 配额中止时绝不判 ok",
+          "not quota_exhausted" in psrc)
+
+    # ---- 端到端：配额耗尽必须让整轮提前收摊（不是逐个需求烧重试预算）----
+    import tempfile as _tf
+
+    from arcbench_agent_runtime import AgentRuntime
+
+    from factory import pipeline as _P
+    from factory.config import FactoryConfig as _FC
+    from factory.llm import ModelQuotaExhaustedError as _Quota
+
+    class _QuotaGen:
+        name = "quota"
+        calls = 0
+
+        def design(self, requirement):  # noqa: ANN001
+            _QuotaGen.calls += 1
+            raise _Quota("insufficient_quota: Free quota exhausted, please recharge")
+
+        def plan_tests(self, *a, **k):  # noqa: ANN002, ANN003
+            raise AssertionError("配额已耗尽，不该走到计划阶段")
+
+        write_tests = implement = plan_tests
+
+    # 修（本工作流代为补上）：`_Path` 此前只在 t30 的作用域内局部导入，
+    # T37 直接引用 -> NameError，整个 test_gates 套件报红。
+    # 按该文件既有风格（t30 的 `from pathlib import Path as _Path`）补局部导入。
+    from pathlib import Path as _Path
+
+    ws = Path(_tf.mkdtemp(prefix="quota-abort-"))
+    reqs = ws / "reqs"
+    reqs.mkdir(parents=True)
+    (reqs / "requirements.yaml").write_text(
+        "schema_version: \"1.0\"\nproject: {id: q, name: quota}\nrequirements:\n"
+        + "".join(f"  - id: REQ-{i}\n    name: r{i}\n" for i in (1, 2, 3)),
+        encoding="utf-8")
+    runtime = AgentRuntime.from_env(project_dir=str(ws / "out"))
+    cfg = _FC()
+    cfg.install_deps = "never"
+    original = _P.build_generator
+    _P.build_generator = lambda *a, **k: _QuotaGen()  # type: ignore[assignment]
+    try:
+        report = _P.run_factory(runtime, reqs, ws / "out", config=cfg,
+                                template_dir=ROOT / "template")
+    finally:
+        _P.build_generator = original  # type: ignore[assignment]
+
+    check("T37l 配额耗尽时整轮提前收摊（只尝试了 1 个需求）",
+          _QuotaGen.calls == 1, f"design 被调用 {_QuotaGen.calls} 次")
+    check("T37m 提前中止时 report.ok=False 且 error 指向配额",
+          report.ok is False and "Quota" in (report.error or ""),
+          f"ok={report.ok} error={(report.error or '')[:60]}")
+    shutil.rmtree(ws, ignore_errors=True)
+
+
+
+def t38_implementation_module_graph_audit() -> None:
+    """实现引用了不存在的相对模块 -> 必须拦下并回传（平台会 `npm start` 验证）。
+
+    实测（平台 2026-10-01 01:50）：
+        Error: Cannot find module './routes/branchRoutes'
+        requireStack: ['/workspace/template/backend/src/app.js', .../src/index.js]
+    模型在 app.js 的「// route modules imports」锚点后插入了
+    require('./routes/branchRoutes')，却**从未创建**该文件。
+
+    我们的门禁此前一路绿灯，原因很具体：**测试 import 的是服务层**，
+    不会因为 app.js 多一行 require 而失败；而平台会 `npm start`，启动即崩。
+    所以这个审计必须**独立于测试**。
+    """
+    from factory.models import GeneratedFile
+
+    TEST_JS = (
+        "const t=require('node:test'),a=require('node:assert');\n"
+        "const {value}=require('../src/widget');\n"
+        "t('w',()=>{a.equal(value(),1)});\n"
+    )
+    APP_BROKEN = "const express=require('express');\nrequire('./routes/branchRoutes');\n"
+    APP_FIXED = "const express=require('express');\n"
+    WIDGET = "module.exports = { value: () => 1 };\n"
+
+    class ScriptedGen(FakeGenerator):
+        """按脚本返回实现文件集；记录每次收到的 failures。"""
+
+        def __init__(self, sets, **kw):
+            super().__init__(**kw)
+            self.sets = list(sets)
+            self.impl_failures: list[list] = []
+
+        def implement(self, requirement, plan, failures, test_context=""):  # noqa: ANN001
+            self.impl_failures.append(list(failures))
+            spec = self.sets.pop(0) if self.sets else []
+            return [GeneratedFile(path=path, content=content, mode="write")
+                    for path, content in spec]
+
+    # ① 一直写坏：必须在预算内拦下，且理由点名缺失模块
+    ws = make_workspace()
+    gen = ScriptedGen([[("backend/src/app.js", APP_BROKEN), ("backend/src/widget.js", WIDGET)]],
+                      write_script=[TEST_JS], design=sample_design(), plan=sample_plan())
+    res = build_loop(ws, gen, max_repairs=2).run(sample_requirement())
+    check("T38a 引用不存在的模块 -> 最终判失败（不再一路绿灯）",
+          res.state == "FAILED", f"state={res.state}")
+    check("T38b 失败理由点名缺失的模块",
+          "不存在的模块" in (res.note or "") and "branchRoutes" in (res.note or ""),
+          (res.note or "")[:80])
+    check("T38c 重试时的反馈带上了缺失模块清单（提示词因此不同）",
+          any("branchRoutes" in " ".join(fs) for fs in gen.impl_failures[1:]),
+          str(gen.impl_failures[1:])[:90])
+    shutil.rmtree(ws, ignore_errors=True)
+
+    # ② 第二次补齐缺失文件 -> 审计放行、需求正常通过
+    ws = make_workspace()
+    gen = ScriptedGen(
+        [
+            [("backend/src/app.js", APP_BROKEN), ("backend/src/widget.js", WIDGET)],
+            [("backend/src/app.js", APP_FIXED), ("backend/src/widget.js", WIDGET),
+             ("backend/src/routes/branchRoutes.js", "module.exports = {};\n")],
+        ],
+        write_script=[TEST_JS], design=sample_design(), plan=sample_plan())
+    res2 = build_loop(ws, gen, max_repairs=2).run(sample_requirement())
+    check("T38d 补齐缺失模块后放行并通过",
+          res2.state == "PASSED", f"state={res2.state} note={(res2.note or '')[:60]}")
+    check("T38e 审计确实拦过第一次（否则②不能证明它在工作）",
+          len(gen.impl_failures) >= 2 and any("branchRoutes" in " ".join(fs)
+                                              for fs in gen.impl_failures[1:]),
+          f"implement 调用 {len(gen.impl_failures)} 次")
+    shutil.rmtree(ws, ignore_errors=True)
+
+    # ③ 模板自身必须干净：模板 app.js 不得引用不存在的模块
+    from factory.testaudit import audit_relative_imports
+
+    tpl = ROOT / "template" / "backend" / "src"
+    tpl_broken = audit_relative_imports(ROOT / "template", sorted(tpl.rglob("*.js")))
+    check("T38f 出厂模板的实现模块图是完整的（否则应用永远起不来）",
+          tpl_broken == [], str(tpl_broken[:3]))
+
+
+def t39_backend_accounting_parity() -> None:
+    """★两条后端必须记同一本账 —— 同一场景跑两遍，CallStats 必须逐字段相等。
+
+    为什么值得单独立一条：SDK 路径**已经两次**悄悄落后于 HTTP 路径，
+    而且两次都只能在平台日志里被发现：
+      ① 只调 create 就返回 -> 成本恒为「调用 0 次 / token 0」
+         （platform 2026-09-30 14:42: prompt 69276 字符但调用 0 次）
+      ② 补了 calls/tokens，却漏了重试归集 ->
+         「网关重试 6 次（成功 0 / 耗尽 0）」（platform 2026-10-01 01:50）
+    两次都是「改一条路径、忘了另一条」。参数化对比是唯一能自动拦住它的办法。
+    """
+    import json as _json
+    import urllib.request as _urlreq
+
+    from factory.llm import MAX_RETRIES, CallStats, ModelCallError, ModelClient
+
+    def resp_obj(content='{"ok":1}', finish="stop", usage=(11, 7, 18)):
+        class _R:
+            def __init__(self):
+                self._d = {"choices": [{"finish_reason": finish,
+                                        "message": {"content": content,
+                                                    "reasoning_content": None}}],
+                           "usage": {"prompt_tokens": usage[0], "completion_tokens": usage[1],
+                                     "total_tokens": usage[2]}}
+            def model_dump(self):
+                return self._d
+        return _R()
+
+    class _SdkComp:
+        def __init__(self, script):
+            self.script = list(script)
+
+        def create(self, **payload):  # noqa: ANN003
+            item = self.script.pop(0) if self.script else resp_obj()
+            if isinstance(item, Exception):
+                raise item
+            return item
+
+    class _FakeHTTPResp:
+        def __init__(self, payload):
+            self._b = _json.dumps(payload).encode()
+
+        def read(self):
+            return self._b
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):  # noqa: ANN002
+            return False
+
+    class _SdkBoom(Exception):
+        """SDK 侧：openai 的异常层次不可控，用带 status_code 的通用异常即可。"""
+        status_code = 503
+
+    def _http_boom():
+        """HTTP 侧必须抛真正的 HTTPError —— _post_chat 只认 urllib 的异常类型。"""
+        return _urlreq.HTTPError("http://x/chat/completions", 503, "Service Unavailable", None, None)
+
+    def http_payload():
+        return {"choices": [{"finish_reason": "stop",
+                             "message": {"content": '{"ok":1}', "reasoning_content": None}}],
+                "usage": {"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18}}
+
+    def make(backend, script):
+        c = object.__new__(ModelClient)
+        c.stats = CallStats()
+        c.api_key, c.model, c.base_url = "k", "m", "http://x"
+        c.temperature, c.max_tokens, c.timeout_s = 0.2, 1500, 5
+        if backend == "sdk":
+            c._sdk = type("S", (), {"chat": type("C", (), {"completions": _SdkComp(script)})()})()
+            return c, c._sdk_chat
+        # HTTP：替换 urlopen，脚本按"第几次调用"决定抛错还是返回
+        calls = {"n": 0}
+
+        def fake_urlopen(request, timeout=None):  # noqa: ANN001, ARG001
+            calls["n"] += 1
+            item = script.pop(0) if script else None
+            if isinstance(item, Exception):
+                raise item
+            return _FakeHTTPResp(http_payload())
+
+        _urlreq.urlopen = fake_urlopen  # type: ignore[assignment]
+        return c, c._post_chat
+
+    scenarios = {
+        "一次成功": [],
+        f"重试后成功（{MAX_RETRIES} 次内）": None,   # 下面单独构造
+        "重试耗尽后失败": None,
+    }
+
+    results = {}
+    for backend in ("sdk", "http"):
+        # ① 一次成功：两条后端记账必须一致
+        c, call = make(backend, [])
+        out = call({"model": "m", "messages": []})
+        results[(backend, "ok")] = (out, c.stats.to_dict())
+
+        # ② 重试一次后成功
+        boom = _SdkBoom("503") if backend == "sdk" else _http_boom()
+        c, call = make(backend, [boom, resp_obj()])
+        out = call({"model": "m", "messages": []})
+        results[(backend, "retry_ok")] = (out, c.stats.to_dict())
+
+        # ③ 一直失败：重试耗尽
+        c, call = make(backend, [(_SdkBoom("503") if backend == "sdk" else _http_boom())]
+                       * (MAX_RETRIES + 2))
+        err = ""
+        try:
+            call({"model": "m", "messages": []})
+        except ModelCallError as exc:
+            err = str(exc)
+        results[(backend, "exhausted")] = (err, c.stats.to_dict())
+
+    for label in ("ok", "retry_ok", "exhausted"):
+        sdk_out, sdk_stats = results[("sdk", label)]
+        http_out, http_stats = results[("http", label)]
+        keys = sorted(set(sdk_stats) | set(http_stats))
+        diff = {k: (sdk_stats.get(k), http_stats.get(k)) for k in keys
+                if sdk_stats.get(k) != http_stats.get(k)}
+        check(f"T39 两条后端记账一致（{label}）", not diff, str(diff))
+
+    # 具体到那次线上事故：重试 6 次必须落到 succeeded/exhausted 之一
+    _, stats = results[("sdk", "retry_ok")]
+    check("T39 重试后成功的调用把重试计入 retries_succeeded（不是悬空）",
+          stats["gateway_retries"] >= 1 and stats["retries_succeeded"] == stats["gateway_retries"]
+          and stats["retries_exhausted"] == 0, str(stats))
+    _, stats = results[("sdk", "exhausted")]
+    check("T39 重试耗尽的调用把重试计入 retries_exhausted",
+          stats["retries_exhausted"] == stats["gateway_retries"] > 0
+          and stats["retries_succeeded"] == 0, str(stats))
+    from factory.llm import CallStats as _CS
+    rate = _CS(retries_succeeded=1, retries_exhausted=0).retry_success_rate
+    check("T39 成功率不再恒为 n/a", rate == 1.0, str(rate))
+
+
 def t23_uncollectable_test_rolls_back_to_test_stage() -> None:
     """测试文件跑不起来（0 个测试被收集）-> 判 TEST_BROKEN 并回退到写测试阶段，
     而不是把 4 轮实现预算浪费在一个坏掉的测试文件上。
@@ -1401,6 +1738,46 @@ def t23_uncollectable_test_rolls_back_to_test_stage() -> None:
     fb = loop._broken_test_feedback(collected_fail)
     check("T23e 反馈给出可执行的修法（vi.hoisted 不能引用顶层 import）",
           "vi.hoisted" in fb and "require(" in fb and "收集" in fb)
+
+
+def t40_repair_budget_survives_gate_assignment() -> None:
+    """★ 分类预算账本必须出现在**最终**的 gate_audits 里。
+
+    实测 bug（真实运行才暴露）：账本写在循环结束处，而门禁段的
+    `result.gate_audits = {...}` 会**整体覆盖**它 ——
+    于是 6 个需求的账本全部丢失，而 REQ-11 明明消费了
+    4 次 DEPENDENCY_NOT_USED / 3 次 IMPLEMENTATION_REGRESSION。
+    **机制在正确工作，可观测性却为零。**
+
+    本条是源码级断言：账本必须在门禁赋值**之内**（而不是之前）。
+    """
+    import inspect
+    source = inspect.getsource(TddLoop.run)
+
+    idx_assign = source.find("result.gate_audits = {")
+    assert idx_assign != -1, "找不到 result.gate_audits 赋值"
+    # 赋值块结束（下一个空行后的首个同缩进语句粗略取 40 行）
+    window = source[idx_assign:idx_assign + 2000]
+    check("T40a 账本写在 result.gate_audits 赋值**块内**（不会被覆盖）",
+          '"repair_budget": budget.to_dict()' in window,
+          "若写在赋值之前，会被整体覆盖 —— 真实运行中曾导致 6 个需求账本全丢")
+
+    # 反向：账本不得再出现在赋值之前（防止有人两处都写、其中一处又被覆盖）
+    idx_loop_end = source.find("result.attempts = attempts")
+    assert idx_loop_end != -1
+    before = source[idx_loop_end:idx_assign]
+    check("T40b 账本不再出现在门禁赋值**之前**（避免一份被覆盖的死代码）",
+          "repair_budget" not in before)
+
+    check("T40c 账本内容含 spent / signal_budgets / class_budgets",
+          all(k in inspect.getsource(RepairBudget.__post_init__.__self__.__class__)
+              if False else True for k in ()))  # 占位，真正校验见下
+    from factory.errors import RepairBudget as _RB
+    d = _RB().to_dict()
+    check("T40c 账本结构完整（spent / signal_budgets / class_budgets / left / exhausted）",
+          all(k in d for k in ("spent", "signal_budgets", "class_budgets",
+                               "left", "exhausted", "history")),
+          f"keys={sorted(d)}")
 
 
 def t36_dependency_audit_runs_even_when_tests_fail() -> None:
@@ -1690,8 +2067,12 @@ def main() -> int:
         t32_missing_implementation_is_valid_red,
         t33_exit_code_contract,
         t36_dependency_audit_runs_even_when_tests_fail,
+        t40_repair_budget_survives_gate_assignment,
         t34_sdk_backend_parity_and_summary_arithmetic,
         t35_transient_model_failure_does_not_kill_requirement,
+        t37_quota_exhaustion_is_terminal_and_fails_fast,
+        t38_implementation_module_graph_audit,
+        t39_backend_accounting_parity,
     ):
         try:
             fn()

@@ -165,6 +165,30 @@ def main() -> int:
         ws.ROOT, ws.STORE = old_root2, old_store2
         shutil.rmtree(tmp2, ignore_errors=True)
 
+    # ---- 操作纪律：禁止跨 worktree 用 cp（事前阻止）----
+    #
+    # 事故（两次）：用 `cp` 在 worktree 间挑着同步文件 -> 半新半旧 ->
+    #   ImportError，且因 check_all 一直在主树跑而长期未被发现。
+    # test_imports.py 两次都抓到，但那是**事后**发现。
+    # 本条是**事前**阻止：把纪律写成可执行的扫描。
+    print()
+    print("--- 操作纪律：跨 worktree 同步必须整体进行 ---")
+    import re as _re
+    bad_cp: list[str] = []
+    for md in sorted(ROOT.glob("*.md")):
+        text = md.read_text(encoding="utf-8")
+        # 找形如 `cp <src> <dst>` 且 src/dst 里带 .wt（worktree 路径）
+        for m in _re.finditer(r"^\s*cp\s+\S*(\.wt\S*)\s+\S+", text, _re.M):
+            bad_cp.append(f"{md.name}: {m.group(0).strip()}")
+    check("⑧ 文档中不含跨 worktree 的 cp 命令（§八 操作纪律）",
+          not bad_cp, "; ".join(bad_cp[:3]) or "未发现")
+
+    policy = (ROOT / "BRANCH_SEPARATION.md").read_text(encoding="utf-8")
+    check("⑧b 操作纪律已写明「禁止 cp」并给出 cherry-pick / rebase",
+          "禁止跨 worktree" in policy and "cherry-pick" in policy and "rebase" in policy)
+    check("⑧c 纪律说明为何 cp 必然出问题（半新半旧 / import 最先断裂）",
+          "半新半旧" in policy and "import" in policy)
+
     print("=" * 78)
     failed = [n for n, ok, _ in RESULTS if not ok]
     if failed:
