@@ -43,6 +43,9 @@ FROZEN = (
     "factory", "tools", "schemas", "template", "skills", "examples",
     "requirements_sample", "requirements_probe", "requirements_probe_closure6",
     "requirements_probe_chain5", "requirements_probe_subset3", "requirements_probe_roots",
+    # UI 探针（REQ-1-1-1）—— 新规格必须登记，否则 guard 的快照不带它，
+    # 运行会报「未找到需求文件」。**这个坑踩过一次，加断言防复发。**
+    "requirements_probe_ui",
     "arcbench-agent-runtime/src", "arcbench-agent-runtime/pyproject.toml",
     "main.py", "requirements.txt",
 )

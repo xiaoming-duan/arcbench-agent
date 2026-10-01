@@ -189,6 +189,21 @@ def main() -> int:
     check("⑧c 纪律说明为何 cp 必然出问题（半新半旧 / import 最先断裂）",
           "半新半旧" in policy and "import" in policy)
 
+    # ---- FROZEN 必须覆盖所有 requirements_* 目录（防「快照不带规格」）----
+    #
+    # 事故：新增 requirements_probe_ui 后没登记进 FROZEN，
+    # guard 的快照不带它 -> 运行报「未找到需求文件」，白跑一轮。
+    print()
+    print("--- FROZEN 覆盖度 ---")
+    import importlib
+    _ws = importlib.import_module("workstream")
+    dirs = sorted(p.name for p in ROOT.glob("requirements_*") if p.is_dir())
+    missing = [d for d in dirs if d not in _ws.FROZEN]
+    check("⑨ 所有 requirements_* 目录都已登记进 FROZEN",
+          not missing,
+          f"未登记: {missing}（新规格必须登记，否则 guard 快照不带它）" if missing
+          else f"已覆盖 {len(dirs)} 个: {', '.join(dirs)}")
+
     print("=" * 78)
     failed = [n for n, ok, _ in RESULTS if not ok]
     if failed:
