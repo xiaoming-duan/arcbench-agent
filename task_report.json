@@ -1,157 +1,135 @@
 {
-  "headline": "**全链 6/6 通过，REQ-11 PASSED** —— 契约冻结的读路径已真实生效（提示词含「已冻结」），CONTRACT_MISSING 零误报。按决策树：冻结生效，v5 标签升为「契约冻结已完整验证」。本轮另修两个阻塞并新增两道守卫。",
+  "headline": "P0-1 契约不可编辑化 + P0-2 错误分类重试预算均已落地并验证。check_all 13 类 / 395 项通过。P1/P2 按要求未做。",
 
-  "pre_run": {
-    "branch": "factory-verify @ 05d66d6（从 `.wt/factory-verify` worktree，**未用主树**）",
-    "FACTORY_ROOT_TEST_LIMIT": 0,
-    "test_imports_passed": true,
-    "test_imports_detail": "✅ 4 项：factory 包可导入 / 14 子模块逐个导入 / 关键公开符号存在 / 第三方依赖可用",
-    "factory_py_hashes_match_sample4": false,
-    "hash_detail": "7 一致 / 8 不同。差异来自契约冻结（contracts/generator/loop/models/pipeline/testaudit）+ 骨架（config/testplan，默认关闭）。**llm.py 不在差异中** ✅",
-    "snapshot_forced": true,
-    "snapshot_detail": "用新 label `cf3` + `--refresh`，未复用同名快照",
-    "read_b_verified": "load_frozen_calls(self.contracts_dir, requirement.req_id) —— 直接传合同目录，无 .parent 链",
-    "read_c_verified": "合同目录可建可写；用样本规格实测读到 2 条；提示词含「已冻结」=True",
-    "read_e_verified": "tools/test_imports.py 存在（135 行）并通过"
+  "read_locations": {
+    "contracts_dir": "factory/contracts.py:57 `CONTRACTS_SUBDIR = .arc/contracts`；`contracts_dir()` / `contract_path()` / 新增 `hash_record_path()`",
+    "contract_read_path": "factory/generator.py:336-340 —— `load_frozen_calls(self.contracts_dir, requirement.req_id)`；**原先还有 `or requirement.cross_module_calls` 的回退，本轮已删除**",
+    "gate_judgments": [
+      "CONTRACT_MISSING（contracts.check_contract）—— 文件不存在 / 未冻结 / 与声明漂移 / 无法解析",
+      "CONTRACT_MISMATCH（testaudit.audit_dependency_usage）—— 合同在但调用签名不符",
+      "**CONTRACT_TAMPERED（本轮新增）** —— 哈希与冻结时不一致"
+    ],
+    "error_classification": "**原先不存在**。只有内联的失败信号（TEST_BROKEN / WEAK_TEST / TEST_FAILED / DESIGN_FAILED / 模型错误），没有任何统一分类器",
+    "max_repairs_usage": "factory/loop.py:1154 `while attempts <= self.config.max_repairs:` —— **四类错误共用一本账**；循环内共 5 处 `if attempts > self.config.max_repairs` 判定点（模型错误 / 引用不存在模块 / 依赖门禁 / 回归回退 / 主修复路径）",
+    "arch_doc_11_4": "软件工厂-项目架构文档.md:1140 `### 11.4 契约冻结`（v1.6 新增），在 11.3 之后、第 12 章之前"
   },
 
-  "run_result": {
-    "guard_used": true,
-    "snapshot_force": true,
-    "snapshot_label": "cf3",
-    "isolation_verified": "✅ 冻结副本逐文件未变（+ 运行期间工作区无改动）",
-    "wall_clock": "19:35:03 → 20:14:39 = 39 分 36 秒",
-    "report_completeness": "**6/6**",
-    "full_chain_result": "**6 通过 / 0 失败 / 0 上游失败跳过**（尝试 6 个）—— 全链通过",
-    "ok": true,
-    "upstream_failed": 0,
-    "gateway_retries": 0,
-    "total_token": 190244,
-    "reasoning_tokens": 132731,
-    "calls": 31,
-
-    "REQ-11": {
-      "status": "**PASSED**",
-      "attempts": 4,
-      "test_rewrites": 0,
-      "tokens": 69481,
-      "prompt_contains_frozen": "**True**（用本次运行的真实 REQ-11.yaml 复验：不接 765 / 接 786 字符，差 21）",
-      "CONTRACT_MISSING_triggered": false,
-      "CONTRACT_MISMATCH_triggered": false,
-      "gate_audits": {"dep_ok": true, "mock_ok": true, "bypass_ok": true, "contract_ok": true, "combined_ok": true},
-      "dependency_violations": 0,
-      "contract_violations": 0,
-      "note": "（空 —— 顺利通过）"
+  "contract_immutable": {
+    "chmod_0444": true,
+    "chmod_detail": "合同与侧车写后均 `chmod 0444`。**明确标注为纵深防御而非安全边界** —— 同用户仍可 chmod 回来，真正的保证来自哈希比对",
+    "hash_recorded": true,
+    "hash_record_format": "`.arc/contracts/<req_id>.sha256` 三行：sha256 / 冻结时间戳 / frozen_by",
+    "frozen_metadata_added": ["frozen_at", "frozen_by", "hash"],
+    "metadata_detail": "`hash` 字段记录**不含该字段的正文哈希**（自指哈希不可能）；权威哈希是侧车（覆盖含 hash 字段的完整文件）。初版留了字段却填空 —— 已修并补断言禁止空值",
+    "llm_generator_hardcoded_path": true,
+    "no_yaml_direct_read": true,
+    "no_yaml_direct_read_detail": "**删除了 `frozen ... else requirement.cross_module_calls` 的回退**。保留回退等于留一条旁路：合同缺失时提示词仍拿到内存声明，表面正常而「冻结」未生效 —— 这正是上一轮真实 bug 的形态。现在合同缺失就是缺失：提示词无契约段 + 门禁判 CONTRACT_MISSING 阻断",
+    "CONTRACT_TAMPERED_added": true,
+    "reason_includes": ["expected_hash", "actual_hash", "timestamp"],
+    "reason_sample": "合同在冻结后被修改 —— 期望哈希 9e34e62766d98ee8… / 实际哈希 04bb17db5e68961f…（冻结于 2026-10-01 20:39:29）。合同是验收依据，实现阶段不得改动它",
+    "judgment_ordering": "**篡改优先于漂移** —— 文件被改时报更具体、更可操作的 TAMPERED，而非笼统的「与声明不一致」",
+    "three_judgments": {
+      "CONTRACT_MISSING": "合同**不存在**（或未冻结 / 与需求声明漂移）",
+      "CONTRACT_TAMPERED": "合同**存在但被改过**（哈希与冻结时不一致）",
+      "CONTRACT_MISMATCH": "合同未被改，但**实现/调用**不符合它"
     },
+    "test_passed": "tests/test_contract_freeze.py **17 项**（12 -> 17）。新增：篡改判定 / 0444 只读生效 / 元数据齐全；漂移与篡改**分开测**（两种不同的事）",
+    "end_to_end_smoke": {
+      "generated": "[合同冻结] 已生成 1 份**只读**冻结合同（0444 + sha256 侧车）",
+      "permissions": "-r--r--r-- REQ-11.yaml / -r--r--r-- REQ-11.sha256",
+      "metadata": "frozen: true / frozen_at: '2026-10-01 20:39:29' / frozen_by: factory / hash: <64 位>",
+      "sidecar_matches": "侧车哈希 == 合同实际 sha256 ✅",
+      "tamper_detected": "chmod 644 后追加一行 -> 门禁判 **CONTRACT_TAMPERED** ✅（含期望/实际哈希与时间戳）"
+    }
+  },
 
-    "REQ-5": {"status": "PASSED", "attempts": 1, "usecase_count": 2, "tokens": 12178},
-
-    "per_requirement": {
-      "REQ-1":  {"state": "PASSED", "attempts": 1, "tokens": 11926, "usecase_count": 1},
-      "REQ-5":  {"state": "PASSED", "attempts": 1, "tokens": 12178, "usecase_count": 2},
-      "REQ-3":  {"state": "PASSED", "attempts": 2, "tokens": 20877, "usecase_count": 4},
-      "REQ-7":  {"state": "PASSED", "attempts": 2, "tokens": 38040, "usecase_count": 4},
-      "REQ-11": {"state": "PASSED", "attempts": 4, "tokens": 69481, "usecase_count": 2},
-      "REQ-12": {"state": "PASSED", "attempts": 2, "tokens": 37742, "usecase_count": 2}
+  "error_retry_budget": {
+    "classification": {"design": 2, "implementation": 3, "test": 2, "environment": 1},
+    "classifier_location": "factory/errors.py —— `classify(signal, detail)` + `RepairBudget`（独立计数账本）",
+    "signal_mapping": {
+      "测试错误": ["TEST_BROKEN", "INVALID_TEST_SYNTAX", "WEAK_TEST", "TEST_FILE_DRIFT"],
+      "实现错误": ["TEST_FAILED", "IMPLEMENTATION_REGRESSION"],
+      "设计错误": ["DESIGN_FAILED", "CONTRACT_MISSING", "CONTRACT_TAMPERED", "CONTRACT_MISMATCH", "DEPENDENCY_NOT_USED", "UNVERIFIED_DEPENDENCY"],
+      "环境错误": ["ENV_ERROR", "MODEL_ERROR", "DNS_ERROR", "QUOTA_EXHAUSTED", "GATEWAY_ERROR"]
     },
+    "text_fallback": "未登记的信号按关键字兜底判环境（name resolution / timed out / quota / 429 / 503 / network 等）—— 这是实测 DNS 与网关故障的实际文本形态",
+    "unknown_default": "未知信号保守归 **implementation**（预算最大 3）—— 宁可多给一次机会，也不要把可能的真问题当环境问题直接终止",
+    "env_error_separate_budget": true,
+    "unified_max_repairs_removed": true,
+    "unified_max_repairs_detail": "循环上界改为 `sum(budgets) + 1`，实际停止由各类预算分别决定；循环内 **5 处** `if attempts > max_repairs` 全部替换为分类计费（残留 0 处）",
+    "observability": "账本写入 `result.gate_audits[\"repair_budget\"]`（budgets / spent / left / history / exhausted）",
+    "config": "FactoryConfig 四个字段 `repair_budget_{design,implementation,test,environment}`；环境变量 FACTORY_BUDGET_{DESIGN,IMPL,TEST,ENV}",
+    "test_passed": "tests/test_retry_budget.py **30 项**（新增）",
 
-    "gate_trigger_counts_from_log": {
-      "CONTRACT_MISSING": 0,
-      "CONTRACT_MISMATCH": 0,
-      "依赖门禁·归因": 2,
-      "合同冻结生成": 1
-    },
-    "REQ-11_repair_timeline": [
-      "19:53:36 计划：白名单 1 个文件",
-      "19:55:22 RED 确认通过",
-      "19:57:18 测试未通过 + 依赖审计（REQ-1=NOT_USED）-> 第 1 次修复",
-      "20:01:16 测试未通过 + 依赖审计（REQ-1/REQ-7=NOT_USED）-> 第 2 次修复",
-      "20:03:13 **测试通过**，但依赖门禁拦截（REQ-1/REQ-7=NOT_USED）",
-      "（后续修复使其真实集成）-> PASSED"
+    "self_inflicted_bugs_caught_by_existing_assertions": [
+      {
+        "bug": "预算语义写成 `spent < budget`",
+        "effect": "budget=1 的环境错误在**首轮就判死** ——「重试 1 次」变成「重试 0 次」",
+        "caught_by": "现有断言 **T35a**（实现调用瞬时失败后会重试）",
+        "fix": "改为 `spent <= budget`（预算是「允许的重试次数」，不含首次）"
+      },
+      {
+        "bug": "`write_contracts` 重写前只解除**合同**的只读，没解除**侧车**",
+        "effect": "第二轮冻结在同一输出目录必 PermissionError",
+        "caught_by": "test_regeneration_overwrites_stale_contract",
+        "fix": "两个文件都先 chmod 0644"
+      },
+      {
+        "bug": "`hash` 字段留了却填空字符串",
+        "effect": "字段形同虚设，无法用于人眼比对两份合同是否同源",
+        "caught_by": "本轮新增断言（禁止空值 + 断言 64 位）",
+        "fix": "填入「不含 hash 字段的正文哈希」"
+      }
     ]
   },
 
-  "contract_freeze_verdict": {
-    "read_path_effective": "**✅ 是** —— 冻结合同被读到（2 条），提示词含「已冻结」",
-    "frozen_visible_in_prompt": "**✅ 是** —— 用本次运行产出的真实 `REQ-11.yaml` 复验：765 -> 786 字符（差 21），含「已冻结」",
-    "REQ_11_passed_first_try": false,
-    "REQ_11_passed": true,
-    "verdict": "**effective**",
-
-    "three_questions_answered": {
-      "① 提示词是否含「已冻结」": "**是** ✅ —— 上一轮的核心缺陷（读路径静默回退）已修复并在真实运行中生效",
-      "② REQ-11 是否通过": "**是** ✅ —— 4 次尝试通过。**非一次通过**（1 次测试通过但被依赖门禁拦截，需继续修复以真实集成）",
-      "③ CONTRACT_MISSING 是否误报": "**否** ✅ —— 真实运行 0 次。四项检查（存在/冻结/一致/可解析）均未误触发；`contract_ok=True`"
-    },
-
-    "what_this_does_and_does_not_prove": {
-      "proves": [
-        "契约冻结的**三条路径全部真实生效**：生成 ✅ / 读取 ✅ / 门禁 ✅",
-        "门禁在真实运行中**零误报**，且正确参与 combined_ok",
-        "REQ-11 在**本次**运行中通过，全链 6/6"
-      ],
-      "does_not_prove": [
-        "**不能归因**：REQ-11 4 次尝试通过，其中第二次「测试通过但依赖门禁拦截」说明模型仍需多轮才建立集成。契约冻结是否**缩短**了轮次，需要对照实验（无契约冻结的基线里 REQ-11 是 2 次通过 / 1 次失败）",
-        "**单次结果**：契约冻结运行只有 1 次，不据此声称稳定性",
-        "**不可直接对比通过率**：本次配置与基线 4 次不同（多了契约冻结）"
-      ]
-    }
-  },
-
-  "new_guards_added_this_round": {
-    "③_stale_snapshot_guard": {
-      "what": "`guard` 默认**拒绝**陈旧快照（返回码 2，要求 `--refresh` 或换 label）",
-      "why": "事故：修复分支后重跑 `guard --label contractfreeze` 复用了 16:07 那次失败留下的快照（含跨 worktree 污染代码），于是**修复完仍然 ImportError**。静默复用是「基础设施失效伪装成正常」的又一变体",
-      "bug_found_and_fixed_during_implementation": "初版 `_stale_owned_files` 用模块级 `ROOT` 作基准，而快照可能来自别的工作区（`--store` 只换 STORE 不换 ROOT）—— 现有断言 ⑥ 立刻抓到这个回归。修法：把 `source_root` 记进 manifest，判定以它为准",
-      "assertions": "tools/test_workstream.py 9 -> **15 项**（⑦a-f：新建不算陈旧 / 改动我方判陈旧 / 仅改他方不误报 / guard 拒绝陈旧 / --refresh 放行 / refresh 后不再陈旧）"
-    },
-    "④_import_smoke_guard": {
-      "what": "tools/test_imports.py（4 项）：跨模块符号一致性",
-      "why": "事故：跨 worktree 复制文件使 `b062436/008e10b/c43bcf9/7dd9394` **四个提交均不可导入**，而 check_all 一直在主树跑故未发现 —— 分支一路「绿色」",
-      "reverse_verified": "故意把 `ModelCallError` 改名 -> 守卫正确报红"
-    }
+  "arch_doc_update": {
+    "section": "11.4",
+    "doc_version": "v1.6 -> **v1.7**",
+    "immutable_control_added": true,
+    "immutable_control_detail": "**11.4.1 不可编辑控制的实现方式** —— 三层表格（权限位 / 哈希侧车 / 元数据），并明确写「权限位是纵深防御不是安全边界」",
+    "tampered_judgment_added": true,
+    "three_judgments_relationship": true,
+    "three_judgments_detail": "**11.4.2 三种判定的关系** —— 含关键澄清：MISSING 里含**漂移**（文件没动但声明变了），与 TAMPERED（文件被改）是两件不同的事，故分开判定；并记录判定顺序（篡改优先）",
+    "verification_section": "**11.4.3 验证** —— 17 项、覆盖面清单、漂移与篡改分开测的理由",
+    "module_list_updated": "9.1 目录树 + 9.2 模块表均补入 `errors.py`（架构核验断言 ⑦/⑦b 起初报红，正是核验工具在履职）"
   },
 
   "check_all": {
-    "main_tree": "**362 项 / 12 类**",
-    "branch": "**337 项 / 12 类**",
+    "assertions_passed": "**395 项 / 13 类**",
     "all_pass": true,
-    "delta": "较上轮 +6（陈旧快照守卫 ⑦a-f）"
+    "delta": "较上轮 +33（契约冻结 12 -> 17；新增错误分类预算 30 项）",
+    "suites": 13
   },
 
-  "v5_label_update": {
-    "before": "契约冻结：生成 ✅ / 门禁 ✅（真实运行 0 误报）/ 读取 ❌已修待重跑验证",
-    "after": "契约冻结：生成 ✅ / 读取 ✅ / 门禁 ✅（**真实运行完整验证**）；REQ-11 PASSED；全链 6/6；CONTRACT_MISSING 零误报",
-    "ready_to_submit": true,
-    "tag_file": "dist/V5-TAG.txt 已重写，含五次运行明细、两道新守卫、以及诚实声明（单次结果 / 不可直接对比通过率 / DNS 失败样本已排除）",
-    "package": "dist/arcbench-agent-v5.zip（745 KB / 202 文件）"
+  "gate_run": {
+    "test_imports": "✅ 4 项通过",
+    "pytest_tests_dir": "**52 passed / 10 failed**",
+    "pytest_note": "10 项失败**全部来自 `tests/test_dag.py`** —— 那是刻意保持红色的 DAG 断言套件（D1–D10），**从未登记进 check_all**（登记会破坏其全绿不变量）。这是已知且预期的状态，不是本轮引入的回归",
+    "targeted_suites": {
+      "tests/test_contract_freeze.py": "**17 passed**",
+      "tests/test_retry_budget.py": "**30 passed**"
+    }
   },
 
-  "five_run_overview": {
-    "baseline_samples": [
-      "run1 6/6  token 147,716  REQ-5 用例 2",
-      "run2 2/6  token  84,388  REQ-5 用例 6  ← 失败点 REQ-5",
-      "run3 6/6  token 144,336  REQ-5 用例 2",
-      "run4 4/6  token 123,955  REQ-5 用例 5  ← 失败点 REQ-11"
+  "not_this_round": {
+    "P1_gate_meta_verification": "未做（按要求等 P0 落地）",
+    "P1_context_layer": "未做（按要求等 P0 落地）",
+    "P2_phase_isolation": "未做（按要求等 P1 落地）",
+    "P2_dynamic_test_limit": "未做（按要求等 REQ-5 方差的进一步数据）",
+    "ch20_governance": "未写（按要求等 P1/P2 落地）",
+    "real_run_of_P0_features": "**未做** —— 两个 P0 特性只有合成 + 冒烟验证，尚未用真实模型跑过 closure6"
+  },
+
+  "next_step": {
+    "recommendation": "补跑一次 closure6 验证两个 P0 特性的真实效果",
+    "specific_questions": [
+      "契约是否真的 0444 且门禁零误报（CONTRACT_TAMPERED 不该在正常路径触发）",
+      "`repair_budget` 账本在真实运行中的分布 —— 环境类花费几次、实现类花费几次",
+      "REQ-11 的尝试次数是否因契约只读化而变化（基线 2/4/跳过，契约冻结轮 4）",
+      "分类预算是否让「环境错误」不再拖累整链（上一次 DNS 失败让 REQ-11 连设计都没做完）"
     ],
-    "baseline_pass_rate": "**2/4 全链通过**",
-    "contract_freeze_run": "cf3 **6/6 全链通过**（配置不同，不计入基线统计）",
-    "excluded": "一次 DNS 环境失败（[Errno -3] name resolution）判为无效样本并排除",
-    "stable_across_all": [
-      "网关重试 **5/5 均为 0** —— 环境稳定，方差来自模型侧",
-      "隔离验证 **5/5 通过**",
-      "报告完整性 **5/5 均为 6/6**",
-      "REQ-1、REQ-3 **5/5 全部通过**"
-    ]
-  },
-
-  "not_done": {
-    "sample_4_rerun": "未做（按要求）",
-    "dependency_graph_context": "未做（触发条件未满足，按要求）",
-    "ran_from_main_tree": "未发生（主树 llm.py=8b96cf18bbd0，分支=53b57986690c，确认不同）",
-    "fabricated_results": "无。DNS 失败那次判为无效样本并排除，未计入任何统计",
-    "controlled_experiment": "未做 —— 契约冻结的**增益**需要对照实验才能归因，本轮只有单次结果"
-  },
-
-  "honest_caveat": "**契约冻结已真实生效**（三条路径全部验证）是确凿的；但「它是否提升了通过率」**未被证明** —— 本轮是单次结果且配置与基线不同。REQ-11 在本次是 4 次尝试通过，而基线中它出现过 2 次通过、1 次失败、1 次跳过。因此标签写「契约冻结已完整验证」（功能层面），**不写**「契约冻结提升了通过率」（因果层面）。"
+    "why_worth_it": "P0-2 的核心主张（环境错误不挤占实现预算）在合成测试下成立，但其**真实收益**需要一次真实运行才能观测",
+    "estimated_cost": "约 27-40 分钟 / 约 150-190k token"
+  }
 }

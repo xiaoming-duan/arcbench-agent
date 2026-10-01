@@ -1,18 +1,76 @@
 ==============================================================================
-统一校验：12 类断言
+统一校验：13 类断言
 ==============================================================================
-✅  声称变更核查       tools/verify_changes.py      ✅ 全部 24 项声称的改动均已核实存在
-✅  import 冒烟守卫  tools/test_imports.py        ✅ 全部 4 项断言通过
-✅  门禁行为断言       tools/test_gates.py          ✅ 全部 185 项断言通过
-✅  度量函数审计       tools/test_measures.py       ✅ 全部 18 项断言通过
-✅  依赖使用审计       tools/test_dependency_audit.py ✅ 全部 46 项断言通过
-✅  D10 修复验证     tools/verify_d10.py          ✅ 全部 6 项断言通过
-✅  依赖边方向断言      tools/test_call_edges.py     ✅ 全部 11 项 call edge / node contract 断言通过
-✅  契约冻结         tests/test_contract_freeze.py ✅ 14 项断言通过（pytest）
+❌  声称变更核查       tools/verify_changes.py      ❌ 3/24 项未通过：
+      ❌     models: RunReport.to_dict 字段完整                ImportError: cannot import name 'ModelQuotaExhaustedError' from 'factory.llm' (/home/duanlinghui/dshwork/.wt/factory-verify/factory/llm.py)
+      ❌     testaudit: audit_imports + 判定齐备               ImportError: cannot import name 'ModelQuotaExhaustedError' from 'factory.llm' (/home/duanlinghui/dshwork/.wt/factory-verify/factory/llm.py)
+      ✅     config: 开关齐备                                  10 个开关齐备
+      ✅     pipeline: weak==0 纳入 ok + cost 写入             factory/pipeline.py ✓ 2 项
+      ✅     schema: test_plan.schema.yaml                 schemas/test_plan.schema.yaml ✓ 2 项
+      ✅     架构文档: 第 17 章过程发现                              软件工厂-项目架构文档.md ✓ 2 项
+      ❌     探针集: 12 需求 + 依赖 DAG                           ImportError: cannot import name 'ModelQuotaExhaustedError' from 'factory.llm' (/home/duanlinghui/dshwork/.wt/factory-verify/factory/llm.py)
+      ----------------------------------------------------------------------------------------------------
+      ❌ 3/24 项未通过：
+        - models: RunReport.to_dict 字段完整: ImportError: cannot import name 'ModelQuotaExhaustedError' from 'factory.llm' (/home/duanlinghui/dshwork/.wt/factory-verify/factory/llm.py)
+        - testaudit: audit_imports + 判定齐备: ImportError: cannot import name 'ModelQuotaExhaustedError' from 'factory.llm' (/home/duanlinghui/dshwork/.wt/factory-verify/factory/llm.py)
+        - 探针集: 12 需求 + 依赖 DAG: ImportError: cannot import name 'ModelQuotaExhaustedError' from 'factory.llm' (/home/duanlinghui/dshwork/.wt/factory-verify/factory/llm.py)
+❌  import 冒烟守卫  tools/test_imports.py        ❌ 1/1 项失败：factory 包无法导入
+          import factory
+        File "/home/duanlinghui/dshwork/.wt/factory-verify/factory/__init__.py", line 10, in <module>
+          from .pipeline import run_factory
+        File "/home/duanlinghui/dshwork/.wt/factory-verify/factory/pipeline.py", line 20, in <module>
+          from .loop import TddLoop
+        File "/home/duanlinghui/dshwork/.wt/factory-verify/factory/loop.py", line 17, in <module>
+          from .llm import ModelQuotaExhaustedError
+      ImportError: cannot import name 'ModelQuotaExhaustedError' from 'factory.llm' (/home/duanlinghui/dshwork/.wt/factory-verify/factory/llm.py)
+      ==============================================================================
+      ❌ 1/1 项失败：factory 包无法导入
+         最常见原因：某模块 import 了同项目另一模块**不存在的符号**
+         （例如跨 worktree 复制文件后，两边的 llm.py 版本不一致）
+❌  门禁行为断言       tools/test_gates.py          (无输出)
+❌  度量函数审计       tools/test_measures.py       (无输出)
+❌  依赖使用审计       tools/test_dependency_audit.py (无输出)
+❌  D10 修复验证     tools/verify_d10.py          (无输出)
+❌  依赖边方向断言      tools/test_call_edges.py     (无输出)
+❌  错误分类预算       tests/test_retry_budget.py   1 error in 0.18s
+          from factory.errors import (  # noqa: E402
+      factory/__init__.py:10: in <module>
+          from .pipeline import run_factory
+      factory/pipeline.py:20: in <module>
+          from .loop import TddLoop
+      factory/loop.py:17: in <module>
+          from .llm import ModelQuotaExhaustedError
+      E   ImportError: cannot import name 'ModelQuotaExhaustedError' from 'factory.llm' (/home/duanlinghui/dshwork/.wt/factory-verify/factory/llm.py)
+      =========================== short test summary info ============================
+      ERROR tests/test_retry_budget.py
+      !!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!
+      1 error in 0.18s
+❌  契约冻结         tests/test_contract_freeze.py 1 error in 0.19s
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+      factory/__init__.py:10: in <module>
+          from .pipeline import run_factory
+      factory/pipeline.py:20: in <module>
+          from .loop import TddLoop
+      factory/loop.py:17: in <module>
+          from .llm import ModelQuotaExhaustedError
+      E   ImportError: cannot import name 'ModelQuotaExhaustedError' from 'factory.llm' (/home/duanlinghui/dshwork/.wt/factory-verify/factory/llm.py)
+      =========================== short test summary info ============================
+      ERROR tests/test_contract_freeze.py
+      !!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!
+      1 error in 0.19s
 ✅  判据双向验证       tests/test_assertion_meta.py ✅ 4 项断言通过（pytest）
-✅  契约合成验证       tests/test_contract_mismatch.py ✅ 全部 25 项断言通过
+❌  契约合成验证       tests/test_contract_mismatch.py (无输出)
 ✅  工作流隔离        tools/test_workstream.py     ✅ 全部 15 项断言通过
 ✅  架构核验工具       tools/test_audit_architecture.py ✅ 全部 10 项断言通过
 ==============================================================================
-✅ 全部 12 类断言通过（合计 362 项）
-   任何关键改动之后都应重跑本入口，而不是靠肉眼确认。
+❌ 10/13 类断言未通过：
+  - 声称变更核查 (tools/verify_changes.py)
+  - import 冒烟守卫 (tools/test_imports.py)
+  - 门禁行为断言 (tools/test_gates.py)
+  - 度量函数审计 (tools/test_measures.py)
+  - 依赖使用审计 (tools/test_dependency_audit.py)
+  - D10 修复验证 (tools/verify_d10.py)
+  - 依赖边方向断言 (tools/test_call_edges.py)
+  - 错误分类预算 (tests/test_retry_budget.py)
+  - 契约冻结 (tests/test_contract_freeze.py)
+  - 契约合成验证 (tests/test_contract_mismatch.py)
