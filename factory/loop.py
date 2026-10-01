@@ -1159,6 +1159,9 @@ class TddLoop:
         # 信号级预算来自 config.RETRY_BUDGET（表外信号回退到四类兜底）
         _signal_budgets = dict(getattr(self.config, "RETRY_BUDGET", None)
                                or getattr(type(self.config), "RETRY_BUDGET", {}) or {})
+        # UI 门禁结果的初值（未声明 ui_contracts 时恒为 ok）
+        ui_check = check_ui(requirement)
+        ui_ok_raw = ui_check.ok
         budget = RepairBudget(signal_budgets=_signal_budgets,
                               class_budgets=budgets_from_config(self.config))
         while attempts <= sum(budget.signal_budgets.values()) + sum(
@@ -1294,6 +1297,25 @@ class TddLoop:
                 #   方案1  声明了依赖就必须真实调用上游（模块层空转）
                 #   方案2-A 测试不得 mock 未声明的上游（测试层空转）
                 #   方案2-B 实现不得用形参守卫绕过上游（仅警告）
+                # ---- 第五道门：UI 门禁（P0-3）----
+                # 位置必须**在循环内、reasons 之前**：
+                #   ① UI 违规要进 reasons，模型才能拿到「E2E 缺什么」的反馈；
+                #   ② 初版误放在循环之后（gate 段），而 reasons 在循环内用它 ->
+                #      `UnboundLocalError: ui_ok_raw`（被 t7–t11 抓出）。
+                # ★ 必须用**测试计划**（RequirementTestPlan），不是 `plan`。
+                #   实测 bug：`plan` 在本函数里是 **DesignPlan**，没有 test_files ->
+                #   e2e_sources_of 永远读不到 type=e2e -> UI_TEST_MISSING 误报，
+                #   而磁盘上明明躺着 3 个 .spec.js。
+                _test_plan = self._plans.get(req_id)
+                _e2e_src, _planned_e2e = e2e_sources_of(self.output_dir, _test_plan)
+                ui_check = check_ui(
+                    requirement, e2e_sources=_e2e_src, planned_e2e=_planned_e2e,
+                    # RED 是否失败无法从「现在测试通过了」反推，传 None 以免误报
+                    red_failed=None,
+                )
+                ui_ok_raw = ui_check.ok
+                result.ui_violations = [v.to_dict() for v in ui_check.violations]
+
                 reasons = []
                 if not dep_audit.ok:
                     reasons.append(describe_dependencies(dep_audit))
@@ -1301,6 +1323,10 @@ class TddLoop:
                     reasons.append(describe_mocked_dependencies(mock_audit))
                 if bypass_audit.findings and self.config.block_injection_bypass:
                     reasons.append(describe_injection_bypass(bypass_audit))
+                # UI 门禁违规也要进重试理由 —— 否则模型拿不到「E2E 缺什么」的反馈，
+                # 只能反复瞎试（与之前「拒绝理由必须可执行」的教训一致）。
+                if not ui_ok_raw:
+                    reasons.append(describe_ui([ui_check]))
                 if not reasons:
                     break
                 failures = reasons
@@ -1314,7 +1340,8 @@ class TddLoop:
                 )
                 # 依赖违规按**具体判定**计费（NOT_USED / MISMATCH / MISSING 各有预算）
                 _verdicts = ([u.verdict for u in dep_audit.violations]
-                             + [c["reason"] for c in result.contract_violations])
+                             + [c["reason"] for c in result.contract_violations]
+                             + [v["verdict"] for v in result.ui_violations])
                 _kind, _can_retry = budget.charge(
                     _verdicts[0] if _verdicts else "DEPENDENCY_NOT_USED",
                     "; ".join(_verdicts),
@@ -1394,21 +1421,6 @@ class TddLoop:
         # 未声明时 check_contract 返回 ok（可选能力的默认关闭语义）。
         contract_ok_raw, contract_checks = check_contracts(self.output_dir, [requirement])
         result.contract_violations = [c.to_dict() for c in contract_checks if not c.ok]
-
-        # ---- 第五道门：UI 门禁（P0-3）----
-        # 四道既有门禁全部面向后端逻辑；UI 此前**无门禁**，
-        # 于是声明了 ui_contracts 也没人检查测试是否覆盖了那些元素。
-        # 未声明 ui_contracts 的需求返回 ok（可选语义，行为不变）。
-        _e2e_src, _planned_e2e = e2e_sources_of(self.output_dir, plan)
-        ui_check = check_ui(
-            requirement, e2e_sources=_e2e_src, planned_e2e=_planned_e2e,
-            # RED 阶段是否失败：只有真跑过 E2E 才知道。用 outcome 判定 ——
-            # 若需求走到这里且 outcome.passed，说明当前实现已让测试通过，
-            # 无法从这里反推 RED。故传 None（不做 WEAK 判定）以免误报。
-            red_failed=None,
-        )
-        ui_ok_raw = ui_check.ok
-        result.ui_violations = [v.to_dict() for v in ui_check.violations]
 
         dep_ok, mock_ok, bypass_ok = dep_ok_raw, mock_ok_raw, bypass_ok_raw
         # 四道门全部参与，**不短路** —— 任一门禁为假都不放行

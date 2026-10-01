@@ -1740,6 +1740,35 @@ def t23_uncollectable_test_rolls_back_to_test_stage() -> None:
           "vi.hoisted" in fb and "require(" in fb and "收集" in fb)
 
 
+def t41_ui_gate_uses_test_plan_not_design_plan() -> None:
+    """★ UI 门禁必须拿到**测试计划**（RequirementTestPlan），不是 DesignPlan。
+
+    实测 bug（首次 UI 探针运行）：门禁处传的是 `plan`，而在 `TddLoop.run` 里
+    `plan` 是 **DesignPlan** —— 它没有 `test_files`，于是 `e2e_sources_of`
+    永远找不到 type=e2e 的测试，判 **UI_TEST_MISSING 误报**，
+    而磁盘上明明躺着 3 个 `.spec.js`。
+
+    ★ 更糟的是它**看起来像真结论**：报告写「需求声明了 ui_contracts，
+      但测试计划中没有 type=e2e 的测试文件」—— 而实际上计划里有、文件也在。
+
+    本条是源码级断言：门禁必须从 `self._plans[req_id]` 取测试计划。
+    """
+    import inspect
+    source = inspect.getsource(TddLoop.run)
+
+    check("T41a 门禁从 self._plans 取测试计划",
+          "self._plans.get(req_id)" in source,
+          "必须用 self._plans[req_id]（RequirementTestPlan）")
+    check("T41b 不再把 DesignPlan 直接传给 e2e_sources_of",
+          "e2e_sources_of(self.output_dir, plan)" not in source,
+          "传 DesignPlan 会永远读不到 e2e -> UI_TEST_MISSING 误报")
+    check("T41c UI 违规进入重试理由（模型能拿到反馈）",
+          "describe_ui([ui_check])" in source,
+          "否则模型只被告知「依赖未被验证」，不知道 E2E 缺什么")
+    check("T41d UI 违规参与预算计费",
+          'v["verdict"] for v in result.ui_violations' in source)
+
+
 def t40_repair_budget_survives_gate_assignment() -> None:
     """★ 分类预算账本必须出现在**最终**的 gate_audits 里。
 
@@ -2068,6 +2097,7 @@ def main() -> int:
         t33_exit_code_contract,
         t36_dependency_audit_runs_even_when_tests_fail,
         t40_repair_budget_survives_gate_assignment,
+        t41_ui_gate_uses_test_plan_not_design_plan,
         t34_sdk_backend_parity_and_summary_arithmetic,
         t35_transient_model_failure_does_not_kill_requirement,
         t37_quota_exhaustion_is_terminal_and_fails_fast,
