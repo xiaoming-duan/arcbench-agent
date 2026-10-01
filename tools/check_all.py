@@ -26,6 +26,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 SUITES = (
     ("声称变更核查", "tools/verify_changes.py", "24 项：每条声称的改动必须真的在代码里"),
+    ("import 冒烟守卫", "tools/test_imports.py", "4 项：跨模块符号一致性 —— 跨 worktree 复制后必跑"),
     ("门禁行为断言", "tools/test_gates.py", "30 项：白名单 / 反馈闭环 / 弱化守卫 / 依赖门禁 T7-T11"),
     ("度量函数审计", "tools/test_measures.py", "18 项：measure_source / audit_imports / red_first_ok / CallStats"),
     ("依赖使用审计", "tools/test_dependency_audit.py", "24 项：静态调用 / 假依赖 / 间接声明 / mock / 注入旁路"),

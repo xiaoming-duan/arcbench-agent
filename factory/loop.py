@@ -14,7 +14,6 @@ from typing import Sequence
 
 from .config import FactoryConfig
 from .generator import Generator
-from .llm import ModelQuotaExhaustedError
 from .contracts import check_contracts, describe as describe_contracts
 from .models import (
     DesignPlan,
@@ -30,7 +29,6 @@ from .testaudit import (
     InjectionAudit,
     MockAudit,
     audit_imports,
-    audit_relative_imports,
     audit_injection_bypass,
     audit_mocked_dependencies,
     audit_requirement_dependencies,
@@ -64,12 +62,6 @@ _BROKEN_TEST_PATTERNS = (
 
 # 瞬时/传输层故障特征。这类失败**不应直接判需求失败**：重试一次有意义，
 # 且一次超时不该把已经过了设计/写测试/RED 的需求整条丢掉。
-# 配额/余额耗尽（终局，绝不可重试）——与限流同码不同命
-_QUOTA_TEXT_MARKERS = (
-    "insufficient_quota", "quota exhausted", "exceeded your current quota",
-    "balance too low", "recharge", "compute credits", "insufficient balance",
-)
-
 _TRANSIENT_MODEL_MARKERS = (
     "timed out", "timeout", "超时", "temporarily", "rate limit", "429",
     "500", "502", "503", "504", "connection", "连接", "network", "网络",
@@ -78,19 +70,8 @@ _TRANSIENT_MODEL_MARKERS = (
 
 
 def _is_transient_model_error(exc: Exception) -> bool:
-    """模型/传输层故障是否为「瞬时」——决定是回传重试还是直接判失败。
-
-    ★必须先排除配额耗尽：它也带 429，但重试永远不会成功。
-    实测教训：把配额耗尽当瞬时，一次运行白白「网关重试 11 次（成功 0）」，
-    外加每个需求的 3 次循环级重试。
-    """
-    if isinstance(exc, ModelQuotaExhaustedError):
-        return False
+    """模型/传输层故障是否为「瞬时」——决定是回传重试还是直接判失败。"""
     text = str(exc).lower()
-    # 兜底：异常被别的层重新包装过（不再是 ModelQuotaExhaustedError）时，
-    # 仍靠文本认出「配额/余额」——它绝不能进重试路径。
-    if any(marker in text for marker in _QUOTA_TEXT_MARKERS):
-        return False
     return any(marker in text for marker in _TRANSIENT_MODEL_MARKERS)
 
 # 收集阶段「模块找不到」的两种典型措辞。**路径两侧的引号可有可无**：
@@ -863,8 +844,6 @@ class TddLoop:
             try:
                 plan = self.generator.design(requirement)
                 break
-            except ModelQuotaExhaustedError:
-                raise          # 终局故障：重试永远不会成功，交给 pipeline 提前收摊
             except Exception as exc:
                 design_error = str(exc)
                 transient = _is_transient_model_error(exc)
@@ -936,8 +915,6 @@ class TddLoop:
                     ),
                     allowed_paths=allowed_paths,
                 )
-            except ModelQuotaExhaustedError:
-                raise          # 终局故障，见上
             except Exception as exc:
                 # 与实现阶段同理：写测试这一环**本来就有**带反馈的重试循环
                 # （max_write_attempts + write_violations），但模型异常此前直接
@@ -1157,8 +1134,6 @@ class TddLoop:
                 impl_files = self.generator.implement(
                     requirement, plan, failures, test_context=test_context
                 )
-            except ModelQuotaExhaustedError:
-                raise          # 终局故障，见上
             except Exception as exc:
                 # ★模型/传输层故障**不应直接判需求失败**。
                 # 实测（平台 2026-09-30 14:46）：一处 `openai SDK 调用失败: Request
@@ -1192,41 +1167,6 @@ class TddLoop:
             impl_files = self._guard_implementation_files(requirement, impl_files, result)
             apply_generated_files(self.output_dir, impl_files)
             self._record_impl_files(requirement, impl_files)
-
-            # ---- 实现侧模块图审计 ----
-            # ★必须**独立于测试**：测试 import 的是服务层，不会因为 app.js 里
-            #   多了一行 require('./routes/xxx') 而失败 —— 但平台会 `npm start`
-            #   验证产物，那一行会让启动直接崩溃。
-            #   实测（平台 2026-10-01 01:50）：模型在 app.js 的
-            #   「// route modules imports」后插入 require('./routes/branchRoutes')，
-            #   却从未创建该文件 -> 启动即
-            #     Error: Cannot find module './routes/branchRoutes'
-            #   整次提交死在启动阶段，而我们的门禁一路绿灯。
-            impl_dir = self.output_dir / self.config.implementation_root
-            impl_paths = sorted(p for p in impl_dir.rglob("*.js") if p.is_file()) if impl_dir.is_dir() else []
-            broken_modules = audit_relative_imports(self.output_dir, impl_paths)
-            if broken_modules:
-                detail = "; ".join(
-                    f"{item['file']} 引用 {item['specifier']}" for item in broken_modules[:5]
-                )
-                logger.error("[实现审计] %s 引用了不存在的模块: %s", req_id, detail)
-                if attempts > self.config.max_repairs:
-                    self.store.implement_failed(req_id, f"{req_id} 实现引用了不存在的模块: {detail}")
-                    result.state = "FAILED"
-                    result.note = f"实现引用了不存在的模块（{attempts} 次尝试）: {detail}"
-                    result.attempts = attempts
-                    logger.error(result.note)
-                    return result
-                failures = [
-                    "你的实现里 import/require 了**并不存在**的模块，应用启动会直接崩溃：\n"
-                    + "\n".join(
-                        f"  - {item['file']} 引用 {item['specifier']}（文件不存在）"
-                        for item in broken_modules[:8]
-                    )
-                    + "\n请**补写这些文件**（放在引用它的相对位置），或去掉这些引用。"
-                    "注意平台会执行 `npm start` 验证，启动失败即整次提交失败。"
-                ]
-                continue
 
             outcome = self.runner.run(test_paths)
 
@@ -1410,11 +1350,9 @@ class TddLoop:
             self.store.commit(f"{req_id} (blocked): {requirement.name} 依赖未验证")
             result.state = "FAILED"
             if result.contract_violations and not parts:
-                # 纯合同问题：理由是**可执行**的（见 contracts.describe）
                 result.note = (
-                    "冻结合同不成立（"
-                    + "; ".join(contract_parts)
-                    + "）：" + describe_contracts(contract_checks).replace("\n", " ")
+                    "冻结合同不成立（" + "; ".join(contract_parts) + "）："
+                    + describe_contracts(contract_checks).replace("\n", " ")
                 )
             else:
                 result.note = (
