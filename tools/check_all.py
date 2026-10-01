@@ -32,6 +32,7 @@ SUITES = (
     ("依赖使用审计", "tools/test_dependency_audit.py", "24 项：静态调用 / 假依赖 / 间接声明 / mock / 注入旁路"),
     ("D10 修复验证", "tools/verify_d10.py", "6 项：mock 违规是否真的阻断（含旧判定复算）"),
     ("依赖边方向断言", "tools/test_call_edges.py", "11 项：call edge 方向(source=调用方) + node contract 落盘"),
+    ("错误分类预算", "tests/test_retry_budget.py", "30 项：四类分类 / 预算语义 / 环境不挤占实现 / 配置对接"),
     ("契约冻结", "tests/test_contract_freeze.py", "12 项：生成/只读读取/CONTRACT_MISSING 门禁/拒绝理由可执行"),
     ("判据双向验证", "tests/test_assertion_meta.py", "4 项：元测试 —— 判据本身必须双向成立"),
     ("契约合成验证", "tests/test_contract_mismatch.py", "25 项：CONTRACT_MISMATCH 门禁合成验证（含元断言与已知局限）"),

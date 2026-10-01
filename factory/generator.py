@@ -331,18 +331,26 @@ class LLMGenerator:
         # 而上游 REQ-7 实现的是 `updateQuantity(sku, from, to)`（区间变更语义）。
         # 模型被告知「你没 import 上游」时，**无法推断出正确的参数语义** ——
         # 它只知道要调，不知道按什么调。
-        # 契约来源优先级：**冻结合同 > 内存声明**。
-        # 冻结件是编译期产物，实现阶段只读 —— 提示词读它，模型无法在运行中改掉依据。
+        # 契约来源：**只读冻结合同**，不再回退到需求 YAML 的 cross_module_calls。
+        #
+        # 为什么删掉回退（P0-1 不可编辑化）：
+        #   保留回退等于留了一条旁路 —— 合同缺失时提示词仍会拿到「内存声明」，
+        #   于是表面正常、实际「冻结」未生效。上一轮的真实 bug 就是这个形态
+        #   （读路径因 parent 链失效 -> 静默回退 -> 提示词内容恰好相同）。
+        #   现在合同缺失就是缺失：提示词里没有契约段，门禁判 CONTRACT_MISSING 阻断。
+        #
+        # 未设置 contracts_dir（单元测试直接构造）时不注入契约段 ——
+        # 这也不构成旁路，因为那种构造方式不在生产链路上。
         frozen = None
         if self.contracts_dir is not None:
             from .contracts import load_frozen_calls
             frozen = load_frozen_calls(self.contracts_dir, requirement.req_id)
-        _declared = frozen if frozen is not None else requirement.cross_module_calls
+        _declared = frozen or ()
 
         if _declared:
             lines.append("")
             lines.append("★ 本需求对上游的**跨模块调用契约**"
-                         + ("（**已冻结**，实现阶段只读，不可修改）" if frozen is not None else "")
+                         + ("（**已冻结·只读**，实现阶段不可修改）" if frozen else "")
                          + "（必须真实调用，不得用参数注入绕过）:")
             for call in _declared:
                 head = f"  - {call.upstream} / {call.symbol}"

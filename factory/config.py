@@ -83,6 +83,16 @@ class FactoryConfig:
     #
     # 默认关闭，保证既有行为逐位不变。
     root_test_limit: int = 0
+
+    # ---- 分类重试预算（P0-2）----
+    # 四类错误**各自独立计数**，互不挤占。
+    # 关键：环境错误只给 1 次 —— 网关/DNS/配额问题重试再多也不会成功，
+    # 让它占用实现预算等于用一个不可控因素压低模型能力的评估。
+    # 默认值见 factory/errors.DEFAULT_BUDGETS。
+    repair_budget_design: int = 2
+    repair_budget_implementation: int = 3
+    repair_budget_test: int = 2
+    repair_budget_environment: int = 1
     # 跨模块调用契约的**签名校验**（仅在需求声明了 cross_module_calls 时生效）。
     # 关闭后仍会注入提示词，但不按声明比对调用形状 —— 用于对照实验区分
     # 「提示词的效果」与「门禁的效果」。
@@ -136,6 +146,10 @@ class FactoryConfig:
             enforce_upstream_gate=os.environ.get("FACTORY_UPSTREAM_GATE", "1") not in {"0", "false", "False"},
             enforce_contract_signature=os.environ.get("FACTORY_CONTRACT_SIG", "1") not in {"0", "false", "False"},
             root_test_limit=max(0, int(os.environ.get("FACTORY_ROOT_TEST_LIMIT", "0") or 0)),
+            repair_budget_design=int(os.environ.get("FACTORY_BUDGET_DESIGN", "2")),
+            repair_budget_implementation=int(os.environ.get("FACTORY_BUDGET_IMPL", "3")),
+            repair_budget_test=int(os.environ.get("FACTORY_BUDGET_TEST", "2")),
+            repair_budget_environment=int(os.environ.get("FACTORY_BUDGET_ENV", "1")),
             require_red_first=os.environ.get("FACTORY_REQUIRE_RED_FIRST", "1") not in {"0", "false", "False"},
             install_deps=os.environ.get("FACTORY_INSTALL_DEPS", "auto"),
             install_timeout_s=int(os.environ.get("FACTORY_INSTALL_TIMEOUT", "900")),

@@ -17,6 +17,8 @@
 
 from __future__ import annotations
 
+import os
+
 import sys
 from pathlib import Path
 
@@ -30,6 +32,7 @@ sys.path.insert(0, str(ROOT / "arcbench-agent-runtime" / "src"))
 from factory.adapter import _adapt  # noqa: E402
 from factory.contracts import (  # noqa: E402
     contract_path,
+    hash_record_path,
     contracts_dir,
     describe,
     load_frozen_calls,
@@ -52,6 +55,21 @@ SPEC = {
          ]},
     ]
 }
+
+
+def tamper(path, mutate):
+    """模拟**真实篡改**：合同被置 0444 只读，改它必须先 chmod。
+
+    这个辅助本身就说明了不可编辑控制的层次：
+      权限位（0444）让「随手改」不容易发生，
+      哈希校验（.sha256 侧车）让「改了也白改」—— 门禁一定发现。
+    """
+    import os
+    os.chmod(path, 0o644)
+    payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+    mutate(payload)
+    path.write_text(yaml.safe_dump(payload, allow_unicode=True, sort_keys=False),
+                    encoding="utf-8")
 
 
 @pytest.fixture()
@@ -98,8 +116,9 @@ def test_regeneration_overwrites_stale_contract(tmp_path, reqs):
     p = contract_path(tmp_path, "REQ-11")
     stale = yaml.safe_load(p.read_text(encoding="utf-8"))
     stale["cross_module_calls"][0]["signature"] = "updateQuantity(OLD, STALE)"
+    os.chmod(p, 0o644)                       # 合同是 0444，改它必须先解除只读
     p.write_text(yaml.safe_dump(stale, allow_unicode=True), encoding="utf-8")
-    write_contracts(tmp_path, reqs)   # 重新冻结
+    write_contracts(tmp_path, reqs)   # 重新冻结（内部会先 chmod 再覆盖）
     fresh = yaml.safe_load(p.read_text(encoding="utf-8"))
     assert "OLD" not in fresh["cross_module_calls"][0]["signature"]
 
@@ -203,31 +222,89 @@ def test_gate_blocks_when_not_frozen(frozen, reqs):
     """③ frozen != true -> 阻断（未冻结的合同不得使用）。"""
     from factory.contracts import check_contracts
     p = contract_path(frozen, "REQ-11")
-    payload = yaml.safe_load(p.read_text(encoding="utf-8"))
-    payload["frozen"] = False
-    p.write_text(yaml.safe_dump(payload, allow_unicode=True), encoding="utf-8")
+    tamper(p, lambda d: d.__setitem__("frozen", False))
     ok, checks = check_contracts(frozen, reqs)
     assert not ok
     assert any("未冻结" in c.detail for c in checks if not c.ok)
 
 
 def test_gate_blocks_on_drift_between_contract_and_declaration(frozen, reqs):
-    """④ 合同与需求声明**漂移** -> 阻断（并指出差了哪条）。"""
+    """④ **漂移**：合同文件未被动过，但需求**声明**变了 -> 阻断。
+
+    漂移与篡改是两件不同的事（见架构文档 11.4 三种判定的关系）：
+      篡改 = 合同文件被改（哈希不符）
+      漂移 = 文件没动，但需求 YAML 的声明与冻结件不一致
+    本用例构造的是**后者**：冻结件原封不动，改的是需求声明。
+    """
+    from dataclasses import replace as _replace
     from factory.contracts import check_contracts
+
+    req11 = [r for r in reqs if r.req_id == "REQ-11"][0]
+    # 声明少一条调用（合同文件保持原样、哈希仍匹配）
+    narrowed = _replace(req11, cross_module_calls=req11.cross_module_calls[:1])
+    others = [r for r in reqs if r.req_id != "REQ-11"]
+    ok, checks = check_contracts(frozen, [*others, narrowed])
+    assert not ok, "声明与冻结件不一致却放行"
+    bad = [c for c in checks if not c.ok][0]
+    assert bad.reason == "CONTRACT_MISSING", f"漂移应判 MISSING，实际 {bad.reason}"
+    assert "不一致" in bad.detail or "缺少" in bad.detail
+    assert "listItems" in bad.detail, f"应指出差了哪条: {bad.detail}"
+
+
+def test_gate_blocks_on_tampered_contract(frozen, reqs):
+    """④b **篡改**：合同文件被改（即使 chmod 解除只读）-> CONTRACT_TAMPERED。
+
+    这是「不可编辑性」的真正保证：
+      权限位 0444 只是纵深防御（同用户可 chmod 回来），
+      **哈希校验无法绕过** —— 改了就会被发现。
+    """
+    from factory.contracts import check_contracts, hash_record_path, hash_of
+
     p = contract_path(frozen, "REQ-11")
-    payload = yaml.safe_load(p.read_text(encoding="utf-8"))
-    payload["cross_module_calls"] = payload["cross_module_calls"][:1]   # 少一条
-    p.write_text(yaml.safe_dump(payload, allow_unicode=True), encoding="utf-8")
+    rec = hash_record_path(frozen, "REQ-11")
+    assert rec.is_file(), "冻结必须写 .sha256 侧车"
+    recorded = rec.read_text(encoding="utf-8").splitlines()[0]
+    assert recorded == hash_of(p), "侧车哈希应与合同当前内容一致"
+
+    # 解除只读后改一个字节
+    tamper(p, lambda d: d.__setitem__("cross_module_calls", d["cross_module_calls"][:1]))
+    assert hash_of(p) != recorded, "文件确实变了（前提成立）"
+
     ok, checks = check_contracts(frozen, reqs)
     assert not ok
     bad = [c for c in checks if not c.ok][0]
-    assert bad.reason == "CONTRACT_MISSING"
-    assert "缺少" in bad.detail and "listItems" in bad.detail
+    assert bad.reason == "CONTRACT_TAMPERED", f"应判 TAMPERED，实际 {bad.reason}"
+    assert "期望哈希" in bad.detail and "实际哈希" in bad.detail
+    assert "冻结于" in bad.detail, "理由应含冻结时间戳"
+
+
+def test_contract_file_is_readonly(frozen):
+    """冻结后合同与侧车都应为 0444 只读。"""
+    import stat as _stat
+    for path in (contract_path(frozen, "REQ-11"),
+                 hash_record_path(frozen, "REQ-11")):
+        mode = _stat.S_IMODE(path.stat().st_mode)
+        assert mode == 0o444, f"{path.name} 权限应为 0444，实际 {oct(mode)}"
+    assert not os.access(contract_path(frozen, "REQ-11"), os.W_OK), "合同应不可写"
+
+
+def test_frozen_metadata_recorded(frozen):
+    """合同应记录 frozen_at / frozen_by / hash 三个元数据字段。"""
+    payload = yaml.safe_load(contract_path(frozen, "REQ-11").read_text(encoding="utf-8"))
+    assert payload.get("frozen_at")
+    assert payload.get("frozen_by")
+    # hash 是「不含该字段的正文哈希」——不得为空，否则字段形同虚设
+    assert payload.get("hash"), "hash 字段不得为空（初版留了字段却没填）"
+    assert len(payload["hash"]) == 64
+    assert payload.get("frozen") is True
+    # 权威哈希在侧车：它覆盖含 hash 字段的完整文件
+    assert hash_record_path(frozen, "REQ-11").read_text(encoding="utf-8").splitlines()[0]
 
 
 def test_gate_blocks_on_malformed_contract(frozen, reqs):
     """⑤ 合同文件损坏 / 非映射 -> 阻断而不是崩溃。"""
     from factory.contracts import check_contracts
+    os.chmod(contract_path(frozen, "REQ-11"), 0o644)
     contract_path(frozen, "REQ-11").write_text("- 这是个列表，不是映射\n", encoding="utf-8")
     ok, checks = check_contracts(frozen, reqs)
     assert not ok

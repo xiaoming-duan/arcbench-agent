@@ -68,16 +68,52 @@ def contract_path(output_dir: Path, req_id: str) -> Path:
 # ---------------------------------------------------------------------------
 
 
-def contract_payload(requirement: Requirement, *, generated_at: str | None = None) -> dict[str, Any]:
+#: 合同文件权限：**只读**。写入后 chmod 0444。
+#:
+#: 注意这是**纵深防御的一层，不是安全边界** ——
+#: 同一进程/同一用户仍可 chmod 回来。真正的保证来自哈希校验（见 check_contract）：
+#: 即使有人改了文件，门禁也会发现并阻断。权限位的作用是**让改动不容易被忽略**
+#: （编辑器/工具链遇到只读文件会报错而不是静默覆盖）。
+CONTRACT_MODE = 0o444
+
+#: 拒绝默认的「无身份」记录 —— 冻结必须能追溯到谁冻的。
+DEFAULT_AGENT_ID = "factory"
+
+
+def hash_of(path: Path) -> str:
+    """合同文件的 sha256（与 workstream 的 sha256 同口径）。"""
+    import hashlib
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def hash_record_path(output_dir: Path, req_id: str) -> Path:
+    """哈希记录文件：`.arc/contracts/<req_id>.sha256`。"""
+    return contracts_dir(output_dir) / f"{req_id}.sha256"
+
+
+def contract_payload(
+    requirement: Requirement,
+    *,
+    generated_at: str | None = None,
+    frozen_by: str = DEFAULT_AGENT_ID,
+    body_hash: str = "",
+) -> dict[str, Any]:
     """产出一个需求的合同内容。
 
     只包含 `cross_module_calls` 非空的需求 —— 没有跨模块约定的需求不需要合同，
     门禁对它们也不做校验（**可选能力的默认关闭语义**）。
+
+    `hash` 字段记录**除它自身以外**的正文哈希（自指哈希不可能）——
+    门禁以 `.sha256` 侧车文件为准，这个字段供人读与追溯。
     """
+    stamp = generated_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     return {
         "req_id": requirement.req_id,
         FROZEN_FIELD: True,
-        "generated_at": generated_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "frozen_at": stamp,
+        "frozen_by": frozen_by,
+        "hash": body_hash,
+        "generated_at": stamp,
         "cross_module_calls": [c.to_dict() for c in requirement.cross_module_calls],
     }
 
@@ -88,22 +124,59 @@ def write_contracts(output_dir: Path, requirements: Iterable[Requirement]) -> li
     幂等：目录已存在则复用；同名合同**覆盖重写**（每次编译重新冻结，
     保证合同与当次需求 YAML 一致 —— 否则会拿上一轮的旧合同跑）。
     """
+    import os
+
     target = contracts_dir(output_dir)
     written: list[Path] = []
     stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    frozen_by = os.environ.get("FACTORY_AGENT_ID") or DEFAULT_AGENT_ID
     for req in requirements:
         if not req.cross_module_calls:
             continue
         target.mkdir(parents=True, exist_ok=True)
         path = contract_path(output_dir, req.req_id)
-        path.write_text(
-            yaml.safe_dump(contract_payload(req, generated_at=stamp),
-                           allow_unicode=True, sort_keys=False),
+        # 重写前先解除只读。**两个文件都要解** ——
+        # 合同与侧车上一轮都被置成 0444，只解合同会让第二轮冻结在写侧车时
+        # PermissionError 失败（test_regeneration_overwrites_stale_contract 抓到）。
+        rec_path = hash_record_path(output_dir, req.req_id)
+        for _stale in (path, rec_path):
+            if _stale.exists():
+                try:
+                    _stale.chmod(0o644)
+                except OSError:
+                    pass
+        body = contract_payload(req, generated_at=stamp, frozen_by=frozen_by)
+        # `hash` 字段记录**不含该字段的正文哈希**（自指哈希不可能）。
+        # 权威哈希是**侧车**（覆盖含 hash 字段的完整文件）；这个字段
+        # 是给人看的"内容指纹"，用于人眼比对两份合同是否同源。
+        import hashlib as _hl
+        body_for_hash = {k: v for k, v in body.items() if k != "hash"}
+        body["hash"] = _hl.sha256(
+            yaml.safe_dump(body_for_hash, allow_unicode=True, sort_keys=False)
+            .encode("utf-8")
+        ).hexdigest()
+        text = yaml.safe_dump(body, allow_unicode=True, sort_keys=False)
+        path.write_text(text, encoding="utf-8")
+        # ★ 冻结 = 写侧车哈希 + 置只读。
+        # 哈希记录的是**刚写下的字节**，门禁之后逐字节比对。
+        digest = hash_of(path)
+        rec = hash_record_path(output_dir, req.req_id)
+        rec.write_text(
+            f"{digest}\n{stamp}\n{frozen_by}\n",
             encoding="utf-8",
         )
+        try:
+            rec.chmod(CONTRACT_MODE)
+        except OSError:
+            pass
+        try:
+            path.chmod(CONTRACT_MODE)          # 0444，只读
+        except OSError:
+            logger.warning("[合同冻结] %s 置只读失败（文件系统可能不支持）", path)
         written.append(path)
     if written:
-        logger.info("[合同冻结] 已生成 %d 份冻结合同 -> %s", len(written), target)
+        logger.info("[合同冻结] 已生成 %d 份**只读**冻结合同（0444 + sha256 侧车）-> %s",
+                    len(written), target)
     return written
 
 
@@ -222,6 +295,27 @@ def check_contract(
             detail=f"合同未冻结（{FROZEN_FIELD} != true）—— 实现阶段不得使用未冻结的合同",
         )
 
+    # ★ 篡改校验：当前字节 vs 冻结时记录的 sha256。
+    # 这是**不可编辑性的真正保证** —— 权限位只是纵深防御的一层
+    # （同用户仍可 chmod 回来），而哈希比对无法绕过。
+    rec = hash_record_path(output_dir, requirement.req_id)
+    if rec.is_file():
+        try:
+            recorded = rec.read_text(encoding="utf-8").splitlines()
+            expected = (recorded[0] if recorded else "").strip()
+            frozen_at = (recorded[1] if len(recorded) > 1 else "").strip()
+        except OSError as exc:  # noqa: BLE001
+            return ContractCheck(req_id=requirement.req_id, ok=False,
+                                 reason="CONTRACT_MISSING",
+                                 detail=f"哈希记录读取失败: {exc}")
+        actual = hash_of(path)
+        if expected and actual != expected:
+            return ContractCheck(
+                req_id=requirement.req_id, ok=False, reason="CONTRACT_TAMPERED",
+                detail=(f"合同在冻结后被修改 —— 期望哈希 {expected[:16]}… / "
+                        f"实际哈希 {actual[:16]}…（冻结于 {frozen_at or '未知'}）。"
+                        "合同是验收依据，实现阶段不得改动它"),
+            )
     frozen = _calls_from_payload(payload)
     # 逐条比对：把声明与冻结件都归一成可比较的元组再比集合
     def key(c: CrossModuleCall) -> tuple[str, str, str]:
@@ -263,7 +357,12 @@ def describe(checks: Sequence[ContractCheck]) -> str:
     lines = ["需求**声明了**跨模块调用契约，但冻结合同不完整:"]
     for c in bad:
         lines.append(f"  - [{c.reason}] {c.req_id}: {c.detail}")
-    lines.append("  合同是**验收合同**：它在编译前由需求 YAML 生成，实现阶段只读、不可修改。")
+    lines.append("  合同是**验收合同**：它在编译前由需求 YAML 生成，"
+                 "写入后置 0444 只读，并记录 sha256 侧车（`.arc/contracts/<req>.sha256`）。")
+    if any(c.reason == "CONTRACT_TAMPERED" for c in bad):
+        lines.append("  **检测到篡改**：合同被改过。不要编辑合同文件 —— "
+                     "它是门禁的比对基准，改它等于改考卷。"
+                     "若确需变更契约，请改需求 YAML 后重新编译（会重新冻结并重算哈希）。")
     lines.append("  **修正指令**：不要改合同；应使代码符合合同里的签名与语义。")
     lines.append("  若确属需求变更，请改需求 YAML 的 cross_module_calls 后重新编译（会重新冻结）。")
     return "\n".join(lines)
