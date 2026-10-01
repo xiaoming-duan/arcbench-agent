@@ -16,6 +16,7 @@ from .config import FactoryConfig
 from .generator import Generator
 from .llm import ModelQuotaExhaustedError
 from .contracts import check_contracts, describe as describe_contracts
+from .uigate import check_ui, describe as describe_ui, e2e_sources_of
 from .errors import RepairBudget, budgets_from_config, describe_budget
 from .models import (
     DesignPlan,
@@ -1394,12 +1395,31 @@ class TddLoop:
         contract_ok_raw, contract_checks = check_contracts(self.output_dir, [requirement])
         result.contract_violations = [c.to_dict() for c in contract_checks if not c.ok]
 
+        # ---- 第五道门：UI 门禁（P0-3）----
+        # 四道既有门禁全部面向后端逻辑；UI 此前**无门禁**，
+        # 于是声明了 ui_contracts 也没人检查测试是否覆盖了那些元素。
+        # 未声明 ui_contracts 的需求返回 ok（可选语义，行为不变）。
+        _e2e_src, _planned_e2e = e2e_sources_of(self.output_dir, plan)
+        ui_check = check_ui(
+            requirement, e2e_sources=_e2e_src, planned_e2e=_planned_e2e,
+            # RED 阶段是否失败：只有真跑过 E2E 才知道。用 outcome 判定 ——
+            # 若需求走到这里且 outcome.passed，说明当前实现已让测试通过，
+            # 无法从这里反推 RED。故传 None（不做 WEAK 判定）以免误报。
+            red_failed=None,
+        )
+        ui_ok_raw = ui_check.ok
+        result.ui_violations = [v.to_dict() for v in ui_check.violations]
+
         dep_ok, mock_ok, bypass_ok = dep_ok_raw, mock_ok_raw, bypass_ok_raw
         # 四道门全部参与，**不短路** —— 任一门禁为假都不放行
-        dep_ok = dep_ok and mock_ok and bypass_ok and contract_ok_raw
+        # 五道门全部参与，**不短路** —— 任一门禁为假都不放行
+        dep_ok = dep_ok and mock_ok and bypass_ok and contract_ok_raw and ui_ok_raw
         result.gate_audits = {
             "dep_ok": dep_ok_raw, "mock_ok": mock_ok_raw, "bypass_ok": bypass_ok_raw,
             "contract_ok": contract_ok_raw,
+            "ui_ok": ui_ok_raw,
+            "ui_element_coverage": ui_check.element_coverage,
+            "ui_message_coverage": ui_check.message_coverage,
             # ★ 分类预算账本必须在**门禁赋值之后**再写。
             #   实测 bug：初版写在循环结束处，而下面这个 `result.gate_audits = {...}`
             #   会**整体覆盖**它 —— 于是真实运行里 6 个需求的账本全部丢失，
@@ -1438,7 +1458,7 @@ class TddLoop:
             # 与「实现不符合同」性质不同，混在一句里会让归因含糊。
             contract_parts = [
                 f"{c['req_id']}={c['reason']}" for c in result.contract_violations
-            ]
+            ] + [f"{v['verdict']}" for v in result.ui_violations]
             reason = "; ".join(parts + contract_parts) or "依赖未通过使用审计"
             self.store.test_failed(req_id, f"{req_id} 依赖未真实验证: {reason}")
             self.store.set_state(req_id, "FAILED", "test")

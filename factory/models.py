@@ -114,6 +114,60 @@ class CrossModuleCall:
 
 
 @dataclass(frozen=True)
+class UIElement:
+    """UI 契约里的一个元素（P0-1）。
+
+    为什么需要它：`cross_module_calls` 只覆盖 **API 签名**，
+    对 UI 一无所知 —— 表单字段、校验规则、错误消息、初始状态
+    全在需求描述的自由文本里，模型只能「自由发挥」。
+    于是 UI 需求不是「生成失败」，而是**从未真正进入生成路径**。
+    """
+
+    element_id: str
+    type: str = "text"            # text | password | checkbox | button | list | link | grid | ...
+    label: str = ""               # 可访问名 / 可见文本
+    validation: str = ""
+    error_messages: tuple[tuple[str, str], ...] = ()   # 场景名 -> 消息文本
+    initial: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.element_id, "type": self.type, "label": self.label,
+            "validation": self.validation,
+            "error_messages": {k: v for k, v in self.error_messages},
+            "initial": self.initial,
+        }
+
+
+@dataclass(frozen=True)
+class UIContract:
+    """一个页面的 UI 契约（P0-1）。可选字段；未声明时全链路行为不变。"""
+
+    page: str
+    title: str = ""
+    elements: tuple[UIElement, ...] = ()
+    error_display: str = ""
+    state_preservation: str = ""
+    #: 页面级不变量（如「另一工作簿的数据不得出现在当前网格中」）。
+    #: 有些 UI 要求不是「某元素存在」，而是「某种情况不得发生」——
+    #: 这类用元素清单表达不了，故单列。
+    invariants: tuple[str, ...] = ()
+
+    @property
+    def element_ids(self) -> tuple[str, ...]:
+        return tuple(e.element_id for e in self.elements)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "page": self.page, "title": self.title,
+            "elements": [e.to_dict() for e in self.elements],
+            "error_display": self.error_display,
+            "state_preservation": self.state_preservation,
+            "invariants": list(self.invariants),
+        }
+
+
+@dataclass(frozen=True)
 class Requirement:
     """规范化需求节点。"""
 
@@ -125,6 +179,9 @@ class Requirement:
     dependencies: tuple[str, ...] = ()
     # 本需求**声明**要调用上游的契约（可选；未声明时全链路行为不变）
     cross_module_calls: tuple[CrossModuleCall, ...] = ()
+    # 本需求声明的 **UI 契约**（可选；未声明时全链路行为不变）。
+    # 与 cross_module_calls 互补：后者管模块间 API，前者管页面上有什么、怎么行为。
+    ui_contracts: tuple[UIContract, ...] = ()
     # 由适配层从全量需求集**推导**：别人声明要调用我的哪些符号。
     # 不是 YAML 字段 —— 让契约天然双向，无需上游重复声明。
     incoming_contracts: tuple[CrossModuleCall, ...] = ()
@@ -269,6 +326,9 @@ class RequirementResult:
     # 冻结合同完整性违规（CONTRACT_MISSING）：合同缺失 / 未冻结 / 与声明漂移。
     # 与 dependency_violations 分开：那是「实现不符合同」，这是「合同本身不成立」。
     contract_violations: list[dict[str, Any]] = field(default_factory=list)
+    # UI 门禁违规（UI_TEST_MISSING / UI_TEST_WEAK / UI_ELEMENT_MISSING /
+    # UI_ERROR_MESSAGE_MISMATCH）—— 第五道门。需求未声明 ui_contracts 时恒为空。
+    ui_violations: list[dict[str, Any]] = field(default_factory=list)
     # 测试文件无法被收集/执行（RED 门禁判 TEST_BROKEN，回退到写测试阶段）
     broken_test: bool = False
     # 重写边界：被拦截的测试文件写入 / 走显式通道允许的测试重写
@@ -314,6 +374,7 @@ REQUIREMENT_RESULT_FIELDS: tuple[str, ...] = (
     "test_rewrites",
     "test_case_count",
     "contract_violations",
+    "ui_violations",
     "write_attempts",
     "cost",
     "test_plan_files",
@@ -422,6 +483,7 @@ class RunReport:
                     "test_rewrites": r.test_rewrites,
                     "test_case_count": r.test_case_count,
                     "contract_violations": list(r.contract_violations),
+                    "ui_violations": list(r.ui_violations),
                     "write_attempts": r.write_attempts,
                     "cost": dict(r.cost),
                     "test_plan_files": list(r.test_plan_files),

@@ -284,15 +284,30 @@ def validate_requirement_plan(
 ) -> list[str]:
     """返回违规列表；空列表表示通过。"""
     violations: list[str] = []
-    test_prefix = f"{backend_dir}/tests/"
+    # 路径白名单**按测试类型分流**：
+    #   unit / integration -> backend/tests/
+    #   **e2e             -> backend/test-e2e/**（Playwright 的 testDir，见
+    #                        template/backend/playwright.config.js）
+    # 分流的理由：vitest 的 include 是 `tests/**`，而 playwright 的 testDir 是
+    # `test-e2e/` —— 两者是不同的运行器与目录约定。此前白名单只认
+    # `backend/tests/`，于是 E2E 计划**必然被计划门禁拒绝** ——
+    # UI 需求连测试计划都过不了，自然「从未进入生成路径」。
+    unit_prefix = f"{backend_dir}/tests/"
+    e2e_prefix = f"{backend_dir}/test-e2e/"
+
+    def _expected_prefix(spec_type: str) -> str:
+        return e2e_prefix if spec_type == "e2e" else unit_prefix
 
     if not entry.test_files:
         violations.append("test_files 为空：计划必须至少声明一个测试文件")
 
     seen: set[str] = set()
     for spec in entry.test_files:
-        if not spec.path.startswith(test_prefix):
-            violations.append(f"{spec.path}: 必须位于 {test_prefix} 下")
+        expect_prefix = _expected_prefix(spec.type)
+        if not spec.path.startswith(expect_prefix):
+            violations.append(
+                f"{spec.path}: type={spec.type} 的测试必须位于 {expect_prefix} 下"
+            )
         if not spec.path.endswith(_TEST_SUFFIXES):
             violations.append(f"{spec.path}: 不是测试文件后缀")
         if spec.path in seen:

@@ -19,6 +19,8 @@ from typing import Any, Iterable
 
 from .models import (
     CrossModuleCall,
+    UIContract,
+    UIElement,
     InterfaceSpec,
     Requirement,
     RequirementSet,
@@ -41,6 +43,8 @@ _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "dependencies": ("dependencies", "depends_on", "depends", "deps", "requires"),
     # 跨模块调用契约（可选；未声明时全链路行为不变）
     "cross_module_calls": ("cross_module_calls", "cross_module", "upstream_calls", "external_calls"),
+    # UI 契约（可选；未声明时全链路行为不变）
+    "ui_contracts": ("ui_contracts", "ui_contract", "pages", "screens", "ui"),
     "visual_reference": ("visual_reference", "visual_references", "images", "screenshots", "references"),
     "acceptance": ("acceptance", "acceptance_criteria", "criteria", "checks"),
     "scenarios": ("scenarios", "cases", "acceptance_scenarios"),
@@ -327,6 +331,7 @@ def _adapt(raw: dict[str, Any] | list[Any], *, source: Path) -> RequirementSet:
                 children_ids=_as_str_list(_pick(node, "children")),
                 dependencies=_as_str_list(_pick(node, "dependencies")),
                 cross_module_calls=_parse_cross_module_calls(node),
+                ui_contracts=_parse_ui_contracts(node),
                 visual_reference=_as_str_list(_pick(node, "visual_reference")),
                 acceptance=_as_str_list(_pick(node, "acceptance")),
                 scenarios=scenarios,
@@ -404,6 +409,80 @@ def _parse_cross_module_calls(node: Any) -> tuple[CrossModuleCall, ...]:
             signature=str(item.get("signature") or "").strip(),
             semantics=str(item.get("semantics") or item.get("meaning") or "").strip(),
             side_effects=tuple(str(x) for x in effects if str(x).strip()),
+        ))
+    return tuple(out)
+
+
+def _parse_ui_contracts(node: Any) -> tuple[UIContract, ...]:
+    """解析 `ui_contracts`（**可选字段**）。
+
+    形状：
+      ui_contracts:
+        - page: "/(实现自定义：工作簿首页)"
+          title: "Workbooks"
+          elements:
+            - id: last-updated
+              type: text
+              label: "Last updated:"
+              validation: "每条记录都显示 ..."
+              error_messages: {format: "..."}
+              initial: unchecked
+          error_display: "..."
+          state_preservation: "..."
+          invariants: ["另一工作簿的数据不得出现在当前网格中"]
+
+    容错：形状不对的条目**跳过而不是抛错** —— 字段可选，
+    写坏了不该让整轮需求解析失败。
+    """
+    raw = _pick(node, "ui_contracts")
+    if not raw:
+        return ()
+    if isinstance(raw, dict):
+        raw = [raw]
+    if not isinstance(raw, (list, tuple)):
+        return ()
+    out: list[UIContract] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        page = str(item.get("page") or item.get("path") or item.get("route") or "").strip()
+        if not page:
+            continue
+        elements: list[UIElement] = []
+        raw_els = item.get("elements") or item.get("fields") or ()
+        if isinstance(raw_els, dict):
+            raw_els = [dict(v, id=k) if isinstance(v, dict) else {"id": k}
+                       for k, v in raw_els.items()]
+        for el in raw_els if isinstance(raw_els, (list, tuple)) else ():
+            if not isinstance(el, dict):
+                continue
+            eid = str(el.get("id") or el.get("element_id") or el.get("name") or "").strip()
+            if not eid:
+                continue
+            msgs = el.get("error_messages") or el.get("errors") or {}
+            pairs: list[tuple[str, str]] = []
+            if isinstance(msgs, dict):
+                pairs = [(str(k), str(v)) for k, v in msgs.items() if str(v).strip()]
+            elif isinstance(msgs, (list, tuple)):
+                pairs = [(str(m), "") for m in msgs if str(m).strip()]
+            elements.append(UIElement(
+                element_id=eid,
+                type=str(el.get("type") or "text").strip().lower(),
+                label=str(el.get("label") or el.get("name") or "").strip(),
+                validation=str(el.get("validation") or el.get("rule") or "").strip(),
+                error_messages=tuple(pairs),
+                initial=str(el.get("initial") or el.get("default") or "").strip(),
+            ))
+        inv = item.get("invariants") or item.get("invariant") or ()
+        if isinstance(inv, str):
+            inv = [inv]
+        out.append(UIContract(
+            page=page,
+            title=str(item.get("title") or "").strip(),
+            elements=tuple(elements),
+            error_display=str(item.get("error_display") or "").strip(),
+            state_preservation=str(item.get("state_preservation") or "").strip(),
+            invariants=tuple(str(x) for x in inv if str(x).strip()),
         ))
     return tuple(out)
 

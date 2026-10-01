@@ -14,7 +14,7 @@ from arcbench_agent_runtime import AgentRuntime
 
 from .adapter import _adapt
 from .config import FactoryConfig
-from .contracts import contracts_dir, write_contracts
+from .contracts import contracts_dir
 from .generator import build_generator
 from .llm import ModelClient, ModelQuotaExhaustedError
 from .loop import TddLoop
@@ -130,8 +130,10 @@ def run_factory(
 
         # ---- 决定生成器与测试方言 ----
         # ---- 契约冻结：编译前把 cross_module_calls 写成只读合同 ----
-        # 位置刻意放在跑需求之前、模板就位之后。
+        # 位置刻意放在跑需求之前、模板就位之后：
+        #   需求 YAML 已解析完（req_set 可用），输出目录已存在（可写 .arc/contracts/）。
         # 未声明 cross_module_calls 的需求不生成合同（可选能力的默认关闭语义）。
+        from .contracts import write_contracts
         write_contracts(output_dir, req_set.requirements)
 
         dialect = _resolve_test_dialect(config, output_dir)
@@ -172,6 +174,7 @@ def run_factory(
         # 让「依赖累积」的失败归因变得不可分辨（是上游的问题还是下游的问题）。
         # 有这条传播后，下游判 UPSTREAM_FAILED 并**不计入通过率分母**。
         outcomes: dict[str, RequirementResult] = {}
+        quota_exhausted = False
 
         # ---- 容器节点（ROOT）识别 ----
         # 平台会把「整个平台」作为 ROOT 塞进需求树。若照常走设计，等于让模型
@@ -184,7 +187,6 @@ def run_factory(
         children_of = build_children_map(req_set.requirements)
         container_ids = {parent for parent, kids in children_of.items() if kids}
 
-        quota_exhausted = False
         for requirement in req_set.requirements:
             if config.dry_run:
                 logger.info("[dry-run] 跳过执行: %s", requirement.req_id)
@@ -229,13 +231,9 @@ def run_factory(
             try:
                 outcome = loop.run(requirement)
             except ModelQuotaExhaustedError as exc:
-                # ★ 配额/余额耗尽：后面每个需求都注定失败。立刻收摊，
+                # ★配额/余额耗尽：后面每个需求都注定失败。立刻收摊，
                 #   而不是逐个把重试预算烧完 —— 实测代价：
                 #   「网关重试 11 次（成功 0）」外加每个需求 3 次循环级重试。
-                #
-                # 本段来自 main（并发工作流 686ca1b）。分支此前用 cp 半同步，
-                # 只取了 test_gates.py 与 llm.py，漏了 pipeline.py -> T37j/T37k 报红。
-                # **按纪律改为整体同步**（BRANCH_SEPARATION §八：禁止跨 worktree 用 cp）。
                 quota_exhausted = True
                 report.error = f"ModelQuotaExhaustedError: {exc}"
                 logger.error(
@@ -296,8 +294,7 @@ def run_factory(
         store.commit(f"factory: {summary}")
 
         # 有上游失败跳过时整体不算 ok：闭包没有被完整验证
-        # 配额中止时**绝不判 ok** —— 那意味着「没跑完」而不是「跑过了」。
-        # 来自 main 的 686ca1b（与 quota_exhausted 的提前收摊配套）。
+        # 配额耗尽中止时绝不能判 ok：即使恰好没有失败，本轮也没跑完
         report.ok = (
             failed == 0 and passed > 0 and weak == 0
             and upstream_failed == 0 and not quota_exhausted
