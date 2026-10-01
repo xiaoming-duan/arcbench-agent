@@ -16,7 +16,7 @@ from .adapter import _adapt
 from .config import FactoryConfig
 from .contracts import contracts_dir, write_contracts
 from .generator import build_generator
-from .llm import ModelClient
+from .llm import ModelClient, ModelQuotaExhaustedError
 from .loop import TddLoop
 from .models import RequirementResult, RunReport
 from .store import FactoryStore
@@ -184,6 +184,7 @@ def run_factory(
         children_of = build_children_map(req_set.requirements)
         container_ids = {parent for parent, kids in children_of.items() if kids}
 
+        quota_exhausted = False
         for requirement in req_set.requirements:
             if config.dry_run:
                 logger.info("[dry-run] 跳过执行: %s", requirement.req_id)
@@ -225,7 +226,24 @@ def run_factory(
 
             # 按需求切分成本：模型客户端是全局的，用快照求增量
             cost_before = model_client.stats.snapshot() if model_client else {}
-            outcome = loop.run(requirement)
+            try:
+                outcome = loop.run(requirement)
+            except ModelQuotaExhaustedError as exc:
+                # ★ 配额/余额耗尽：后面每个需求都注定失败。立刻收摊，
+                #   而不是逐个把重试预算烧完 —— 实测代价：
+                #   「网关重试 11 次（成功 0）」外加每个需求 3 次循环级重试。
+                #
+                # 本段来自 main（并发工作流 686ca1b）。分支此前用 cp 半同步，
+                # 只取了 test_gates.py 与 llm.py，漏了 pipeline.py -> T37j/T37k 报红。
+                # **按纪律改为整体同步**（BRANCH_SEPARATION §八：禁止跨 worktree 用 cp）。
+                quota_exhausted = True
+                report.error = f"ModelQuotaExhaustedError: {exc}"
+                logger.error(
+                    "[致命] 模型配额/余额耗尽，停止本轮剩余需求（共 %d 个）: %s",
+                    len(req_set.requirements),
+                    exc,
+                )
+                break
             if model_client:
                 outcome.cost = model_client.stats.delta(cost_before)
             report.results.append(outcome)
@@ -278,7 +296,12 @@ def run_factory(
         store.commit(f"factory: {summary}")
 
         # 有上游失败跳过时整体不算 ok：闭包没有被完整验证
-        report.ok = failed == 0 and passed > 0 and weak == 0 and upstream_failed == 0
+        # 配额中止时**绝不判 ok** —— 那意味着「没跑完」而不是「跑过了」。
+        # 来自 main 的 686ca1b（与 quota_exhausted 的提前收摊配套）。
+        report.ok = (
+            failed == 0 and passed > 0 and weak == 0
+            and upstream_failed == 0 and not quota_exhausted
+        )
         if model_client is not None:
             report.cost = model_client.stats.to_dict()
             logger.info("成本记账: %s", model_client.stats.summary())
