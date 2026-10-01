@@ -1,32 +1,23 @@
 ==============================================================================
-统一校验：14 类断言
+统一校验：17 类断言
 ==============================================================================
 ✅  声称变更核查       tools/verify_changes.py      ✅ 全部 24 项声称的改动均已核实存在
 ✅  import 冒烟守卫  tools/test_imports.py        ✅ 全部 4 项断言通过
-❌  门禁行为断言       tools/test_gates.py          ❌ 3/188 项失败：
-      ✅  T38f 出厂模板的实现模块图是完整的（否则应用永远起不来）   []
-      ✅  T39 两条后端记账一致（ok）   {}
-      ✅  T39 两条后端记账一致（retry_ok）   {}
-      ✅  T39 两条后端记账一致（exhausted）   {}
-      ✅  T39 重试后成功的调用把重试计入 retries_succeeded（不是悬空）   {'calls': 1, 'prompt_tokens': 11, 'completion_tokens': 7, 'total_tokens': 18, 'reasoning_tokens': 0, 'gateway_retries': 1, 'adaptation_retries': 0, 'json_retries': 0, 'retries_succeeded': 1, 'retries_exhausted': 0, 'prompt_chars': 0, 'max_prompt_chars': 0}
-      ✅  T39 重试耗尽的调用把重试计入 retries_exhausted   {'calls': 0, 'prompt_tokens': 0, 'completion_tokens': 0, 'total_tokens': 0, 'reasoning_tokens': 0, 'gateway_retries': 2, 'adaptation_retries': 0, 'json_retries': 0, 'retries_succeeded': 0, 'retries_exhausted': 2, 'prompt_chars': 0, 'max_prompt_chars': 0}
-      ✅  T39 成功率不再恒为 n/a   1.0
-      ==========================================================================
-      ❌ 3/188 项失败：
-        - T37j pipeline 在配额耗尽时 break（不再逐个烧重试预算）
-        - T37k 配额中止时绝不判 ok
-        - t37_quota_exhaustion_is_terminal_and_fails_fast 抛异常
+✅  门禁行为断言       tools/test_gates.py          ✅ 全部 193 项断言通过
 ✅  度量函数审计       tools/test_measures.py       ✅ 全部 18 项断言通过
 ✅  依赖使用审计       tools/test_dependency_audit.py ✅ 全部 46 项断言通过
 ✅  D10 修复验证     tools/verify_d10.py          ✅ 全部 6 项断言通过
 ✅  依赖边方向断言      tools/test_call_edges.py     ✅ 全部 11 项 call edge / node contract 断言通过
+✅  UI 契约        tests/test_ui_contracts.py   ✅ 8 项断言通过（pytest）
+✅  Playwright E2E tests/test_playwright_e2e.py ✅ 11 项断言通过（pytest）
+✅  UI 门禁        tests/test_ui_gate.py        ✅ 18 项断言通过（pytest）
 ✅  契约完整性        tests/test_contract_integrity.py ✅ 3 项断言通过（pytest）
 ✅  错误分类预算       tests/test_retry_budget.py   ✅ 33 项断言通过（pytest）
 ✅  契约冻结         tests/test_contract_freeze.py ✅ 17 项断言通过（pytest）
 ✅  判据双向验证       tests/test_assertion_meta.py ✅ 4 项断言通过（pytest）
 ✅  契约合成验证       tests/test_contract_mismatch.py ✅ 全部 25 项断言通过
-✅  工作流隔离        tools/test_workstream.py     ✅ 全部 18 项断言通过
+✅  工作流隔离        tools/test_workstream.py     ✅ 全部 19 项断言通过
 ✅  架构核验工具       tools/test_audit_architecture.py ✅ 全部 10 项断言通过
 ==============================================================================
-❌ 1/14 类断言未通过：
-  - 门禁行为断言 (tools/test_gates.py)
+✅ 全部 17 类断言通过（合计 450 项）
+   任何关键改动之后都应重跑本入口，而不是靠肉眼确认。
