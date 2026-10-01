@@ -1,148 +1,127 @@
 {
-  "headline": "样本 4 跑通（从与 run1/2/3 逐字节一致的提交）。**2/4 全链通过**。两个重要结论：① 根节点过度生成假说**被削弱**（5 用例 1 轮通过）；② **失败点不固定**（run2 在 REQ-5，run4 在 REQ-11，模式不同）。",
+  "headline": "任务写在了上一轮结果之前。按**任务自己的决策树**执行：做 ③ 契约冻结、⑤ 判据双向验证；**不做 ④ 依赖图上下文**（触发条件未满足）。样本 4 与 v4 上传均已于上一轮完成。",
+
+  "stale_task_correction": {
+    "item_②_跑样本4": "**已于上一轮完成** —— 4/6 通过，REQ-5 PASSED（5 用例 / 1 轮），失败点在 REQ-11（依赖门禁阻断）。**未重跑**：重跑只会产出第 5 个样本，不是任务说的第 4 个",
+    "v4_tag": "任务里写的是 3 样本版标签；实际已是 **4 样本版**（2/4 全链通过）",
+    "item_④_触发条件": "任务给的触发条件是「样本 4 显示 REQ-5 是结构性问题（2/6 失败且用例数=6）」。**实际样本 4 的 REQ-5 PASSED**，失败点在 REQ-11",
+    "decision_taken": "**按任务决策树的『方差 → 不做第二优先，转第三优先』分支执行**，即做 ③ 与 ⑤，不做 ④"
+  },
 
   "read_locations": {
-    "current_branch": "factory-verify（HEAD 008e10b）",
-    "factory_py_hashes_match_run123": "**当前 HEAD 不一致（5/14 不同）** —— 因上一轮把 test_usecase_limit 骨架提交进了分支；但提交 **1157538** 与 var-a 快照 **14/14 逐字节一致**。故从 1157538 建独立 worktree `.wt/baseline4` 跑样本 4",
-    "hash_evidence": {
-      "current_HEAD_008e10b": "config/generator/loop/models/testplan 共 5 个文件与 var-a 不同（骨架改动）",
-      "commit_1157538": "**14/14 全部一致** —— 含 llm.py=53b57986690c6bb6",
-      "created_worktree": ".wt/baseline4（detached HEAD 1157538）"
-    },
-    "FACTORY_ROOT_TEST_LIMIT": "0（环境变量未设置 = 默认关闭；跑前显式 `unset` 确认）",
-    "architecture_doc_ch19": "第 19 章《验证纪律》已有 19.1 / 19.2（6 项做法）/ 19.3 / 19.4 / 19.5"
+    "cross_module_calls_parse_path": "adapter.py:43 别名表 -> :329 `cross_module_calls=_parse_cross_module_calls(node)` -> :361 `_derive_incoming_contracts()`（推导上游的 incoming_contracts）",
+    "arc_dir_structure": ".arc/ 下有 factory-report.json / runner-events.jsonl / test_plan.yaml / traceability/。**contracts/ 原先不存在** —— 本次新建",
+    "gate_check_point": "loop.py:517 `_audit_dependencies`；:1246 调用；:1355-1365 门禁判定与 gate_audits。本次在第 4 道门位置接入合同校验",
+    "test_prompt_injection": "generator.py:290 `_requirement_brief()` —— 四个 prompt 的唯一共用注入点（:392 design / :433 plan_tests / :513 write_tests+implement）",
+    "assertion_framework": "tools/test_*.py 各自定义 `check(name, ok, detail)`；tests/ 下为 pytest。本次新增 tools/criterion.py 作为**元测试框架**"
   },
 
-  "sample_4_run": {
-    "guard_used": true,
-    "branch": "factory-verify @ 1157538（经 .wt/baseline4 worktree 隔离运行）",
-    "command": "guard --label baseline4 -- python3 main.py requirements_probe_closure6 --output-dir out-baseline4 --type web --generator llm --install-deps auto --max-repairs 3",
-    "isolation_verified": "✅ 冻结副本逐文件未变 + ✅ 运行期间工作区无改动",
-    "wall_clock": "15:24:44 → 15:51:00 = 26 分 16 秒",
-    "report_completeness": "6/6",
-    "REQ-5": {
-      "usecase_count": 5,
-      "attempts": 1,
-      "status": "PASSED",
-      "usecase_names": [
-        "returns empty array for a fully valid item",
-        "rejects missing or malformed sku",
-        "rejects missing or blank name",
-        "rejects negative or non-integer quantity",
-        "returns all violations when multiple fields are invalid"
-      ],
-      "significance": "**5 个用例、1 轮通过** —— 直接削弱「用例多 -> 实现难 -> 失败」的假说"
-    },
+  "sample_4": {
+    "note": "**上一轮已跑，本轮未重跑**（重跑会产出第 5 个样本而非第 4 个）",
+    "branch": "factory-verify @ 1157538（经 .wt/baseline4 worktree）",
+    "hashes_match": true,
+    "hash_note": "当前 HEAD(008e10b) 有 5/14 文件与 var-a 快照不同（骨架改动）；提交 **1157538** 为 14/14 逐字节一致，故从该提交建 worktree 跑",
+    "REQ-5": {"usecase_count": 5, "attempts": 1, "status": "PASSED"},
     "REQ-7_attempts": 2,
-    "REQ-11_attempts": 4,
     "REQ-12_attempts": 0,
-    "dependency_violations": "REQ-11 = 1 条（`REQ-7: DEPENDENCY_NOT_USED` —— 下游完全没有 import 上游模块；上游导出: inventory, movements, updateQuantity）",
-    "CONTRACT_MISMATCH": "0 次",
+    "full_chain_result": "4 通过 / 1 失败 / 1 跳过（尝试 5 个）—— 非全链通过，失败点 REQ-11",
     "gateway_retries": 0,
-    "total_token": 123955,
-    "calls": 24,
-    "full_chain_result": "**4 通过 / 1 失败 / 1 上游失败跳过**（尝试 5 个）—— 非全链通过",
-    "failure_point": "**REQ-11**（与 run2 的失败点不同）",
-    "REQ-11_note": "测试通过但依赖未被真实验证（REQ-7=DEPENDENCY_NOT_USED）：重写 4 次仍未满足依赖使用要求",
-    "failure_mode": "**依赖门禁阻断，非测试失败** —— REQ-11 的测试通过了，但实现从未 import 上游 REQ-7。门禁**正确拦截**了一个「测试通过却未真正集成」的实现",
-    "per_requirement": {
-      "REQ-1": {"state": "PASSED", "attempts": 1, "tokens": 13559},
-      "REQ-5": {"state": "PASSED", "attempts": 1, "tokens": 13961},
-      "REQ-3": {"state": "PASSED", "attempts": 2, "tokens": 22977},
-      "REQ-7": {"state": "PASSED", "attempts": 2, "tokens": 28491},
-      "REQ-11": {"state": "FAILED", "attempts": 4, "tokens": 44967, "dep_violations": 1},
-      "REQ-12": {"state": "UPSTREAM_FAILED", "attempts": 0}
-    }
+    "token": 123955
   },
 
-  "four_sample_analysis": {
-    "results": [
-      "run1: 6/6 通过  token 147,716  REQ-5 用例 2  网关重试 0",
-      "run2: 2/6 通过  token  84,388  REQ-5 用例 6  网关重试 0  ← 失败点 REQ-5",
-      "run3: 6/6 通过  token 144,336  REQ-5 用例 2  网关重试 0",
-      "run4: 4/6 通过  token 123,955  REQ-5 用例 5  网关重试 0  ← 失败点 REQ-11"
+  "contract_freeze": {
+    "generation_location": "pipeline.run_factory —— `_adapt` 之后、`_resolve_test_dialect` 之前调用 `contracts.write_contracts(output_dir, req_set.requirements)`",
+    "new_module": "factory/contracts.py（生成 / 只读读取 / 校验 三件事）",
+    "contract_dir": ".arc/contracts/",
+    "contract_format": "req_id / frozen: true / generated_at / cross_module_calls[]（含 declared_arity）",
+    "read_enforcement": "**提示词层只读冻结件，不读需求 YAML** —— `LLMGenerator.__init__` 接收 `contracts_dir`；`_requirement_brief` 优先 `load_frozen_calls()`，读不到才回退内存声明。冻结件的提示词标题会显式标注「**已冻结**，实现阶段只读，不可修改」",
+    "gate_check_added": true,
+    "gate_position": "第 4 道门，与依赖/mock/注入旁路并列；`dep_ok = dep_ok and mock_ok and bypass_ok and contract_ok_raw` —— **不短路**，四道门全部参与",
+    "verdict_on_missing": "CONTRACT_MISSING",
+    "frozen_field_checked": true,
+    "checks_performed": [
+      "① 合同文件存在（缺失 -> CONTRACT_MISSING）",
+      "② frozen 字段为 true（false 或缺失 -> CONTRACT_MISSING）",
+      "③ 合同内容与需求 YAML 声明一致（逐条比对 upstream/symbol/signature；漂移 -> CONTRACT_MISSING 并指出差了哪条）",
+      "④ 合同损坏/非映射 -> CONTRACT_MISSING（不崩溃）"
     ],
-    "pass_rate": "**2/4 全链通过（50%）**",
-    "REQ-5_usecase_distribution": [2, 6, 2, 5],
-    "REQ-5_status_distribution": ["PASSED", "FAILED", "PASSED", "PASSED"],
-    "over_generation_hypothesis": "**被削弱**。原假说：根节点无上游约束 → 倾向写更多场景 → 实现难度上升 → 失败。检验：run4 的 REQ-5 写了 **5 个用例却在 1 轮内通过**（run2 的 6 个用例是 4 轮失败）。用例数 5 与 6 相差无几，结果却一个轻松通过、一个彻底失败 ——「用例多即失败」**不是稳定关系**。按任务决策树的对应分支（『6 用例也能通过 → 过度生成假说被削弱 → 重新审视：失败可能不是用例数问题』），**不应据此实施 test_usecase_limit**",
-    "variance_vs_structural": "**两者都不是单一解释，观测到的是「多薄弱点 + 方差」**：\n  • run2 失败于 **REQ-5**（纯测试失败：6 用例 4 轮未满足）\n  • run4 失败于 **REQ-11**（依赖门禁阻断：测试通过但 0 条 import）\n  两次失败**节点不同、失败模式不同**（一个是实现能力不足，一个是集成缺失）。\n  这说明链条有**多个薄弱点**，每次运行暴露哪个带有随机性 —— 而不是「某一条结构性问题」。\n  REQ-5 失败 1/4 次、REQ-11 失败 1/4 次；两者都不是稳定复现",
-    "stable_across_all_four": [
-      "网关重试 **4/4 均为 0** —— 环境完全稳定，方差来自模型侧",
-      "隔离验证 **4/4 通过**",
-      "报告完整性 **4/4 均为 6/6**（无部分报告）",
-      "REQ-1、REQ-3 **4/4 全部通过**",
-      "REQ-7 **3/3 进入过 TDD 的运行中全部通过**"
-    ],
-    "token_range": "84,388 – 147,716（两次全链通过 144k/148k；run4 124k；run2 早停 84k）",
-    "attempt_ranges": {
-      "REQ-5": "1 / 4(FAIL) / 1 / 1 —— 通过时恒为 1 轮",
-      "REQ-7": "4 / 跳过 / 2 / 2",
-      "REQ-11": "2 / 跳过 / 2 / 4(FAIL)",
-      "REQ-12": "4 / 跳过 / 3 / 跳过"
-    }
+    "optional_semantics": "未声明 cross_module_calls 的需求：不生成合同、门禁返回 ok（reason=NO_CONTRACT_DECLARED）—— 行为逐位不变",
+    "regeneration": "每次编译**覆盖重写**合同（否则会拿上一轮旧合同跑新需求）—— 有专门断言 test_regeneration_overwrites_stale_contract",
+    "distinction_from_mismatch": "CONTRACT_MISSING = 合同本身不成立（编译期）；CONTRACT_MISMATCH = 合同在但实现不符（运行期）。两者互补",
+    "rejection_reason_executable": "理由含「不要改合同；应使代码符合合同里的签名与语义」「若确属需求变更，请改需求 YAML 后重新编译（会重新冻结）」",
+    "tests": "tests/test_contract_freeze.py —— **12 项**，全部按 19.2.7 判据双向验证纪律编写（每条判据都给出正确样本与错误样本）",
+    "smoke_verified": {
+      "requirements_sample（无声明）": "✅ 未生成合同（正确）",
+      "requirements_probe_closure6": "✅ 生成 1 份（REQ-11.yaml，frozen: true，2 条调用契约）",
+      "pipeline_log": "[合同冻结] 已生成 1 份冻结合同 -> out-smoke2/.arc/contracts"
+    },
+    "sample_REQ-11_result": "**尚未用真实模型跑过**（契约冻结本轮才实现，配额虽恢复但未消耗于验证运行）。合成与冒烟验证已通过；真实运行验证待下一次 closure6"
   },
 
-  "v4_upload": {
-    "filename": "arcbench-agent-v4.zip",
-    "size": "703 KB / 192 文件",
-    "tag": "依赖累积 4 次有效样本、2/4 全链通过；根节点测试过度生成假说被削弱；失败点不固定（run2 REQ-5 / run4 REQ-11）；CONTRACT_MISMATCH 门禁真实触发并生效",
-    "uploaded": true,
-    "upload_mechanism": "**推送到 GitHub 独立分支 `release/v4`**（commit a5558de）",
-    "why_this_mechanism": "本环境**没有外部文件托管通道** —— 只有 GitHub SSH 凭据（无 API token，无法创建 release）。按「已打包的版本不要留在本地」的要求，用独立分支实现异地持久化",
-    "why_separate_branch": "`dist/` 在 .gitignore 内（原设计不入库）。该分支**只放交付产物**，不污染 factory-verify / main 的代码线",
-    "manual_upload_still_available": "若需上传到其他托管，包在 dist/arcbench-agent-v4.zip，标签在 dist/V4-TAG.txt",
-    "note": "GitHub release 需要 API token；当前只有 SSH，故用分支代替"
+  "dependency_graph_context": {
+    "triggered": false,
+    "reason": "任务给的触发条件是「样本 4 显示 REQ-5 是结构性问题（2/6 失败且用例数 = 6）」。**实际样本 4：REQ-5 PASSED（5 用例 / 1 轮）**，失败点在 REQ-11。按任务决策树的『方差 → 不做第二优先』分支，**不做**",
+    "prompt_injection_location": "n/a（未实现）",
+    "no_truncation": "n/a",
+    "model_decides_count": "n/a",
+    "additional_context": "上一轮已用 run4 的数据削弱了「根节点过度生成」假说（5 用例 1 轮通过）。本轮又确认其触发条件不成立 —— 两条独立证据都指向「不做」"
+  },
+
+  "criterion_bidirectional": {
+    "framework_added": true,
+    "framework_location": "tools/criterion.py",
+    "valid_sample_required": true,
+    "invalid_sample_required": true,
+    "pipeline_enforced": true,
+    "how": "`@criterion(name, valid=..., invalid=...)` 装饰器登记判据；`verify_all()` 双向验证：正确样本必须过、错误样本必须败。框架还识别三种坏判据：**恒真**（漏检）/ **恒假**（噪音）/ **反向**（误报）",
+    "meta_self_verification": "★ 框架**自身**也被双向验证：`test_framework_detects_a_broken_criterion` 构造三条坏判据，必须被判为无效；`test_framework_accepts_a_good_criterion` 反向防止框架恒假",
+    "historical_coverage": "四次历史自伤各有可执行判据（tags=historical）：① T36 裸子串命中注释 ② fixture 转义过度 ③ 元断言 detail 误导 ④ 提示词校验用整串相等",
+    "enforcement": "`tests/test_assertion_meta.py` 的 `test_registry_covers_all_historical_incidents` 强制历史事故数 >= 4；`tools/criterion.py:unverified_probe_names()` 供流水线标记未验证判据",
+    "tests": "tests/test_assertion_meta.py —— **4 项 pytest 用例**（含框架自检）",
+    "FIFTH_SELF_INFLICTED_BUG": {
+      "what": "**元测试自己犯了同类错误** —— 为「判据正确性」写的测试，自己用错了判据",
+      "detail": "`assert \"恒真\" in results` —— results 是 dict，`in` 对 dict 是**查键**而非子串匹配，而键是 `\"恒真（坏）\"`，于是判据报红",
+      "fix": "改为按片段查找键（`why_of()` 辅助函数）",
+      "significance": "这是**第五次**同类自伤，且发生在专门为防范它而写的文件里。说明这不是靠一次性规则能消除的问题，必须靠**机制**（本框架）而不是靠**注意**"
+    }
   },
 
   "architecture_doc_update": {
-    "ch19_2_7_added": true,
-    "criterion_bidirectional_verification": true,
-    "location": "软件工厂-项目架构文档.md 第 19.2.7 节《判据双向验证》（文档版本 → v1.5）",
-    "content": [
-      "核心问句：写断言前先问「这个判据在正确实现上会通过吗？在错误实现上会失败吗？」两个都是不确定则判据需重写",
-      "强调前 6 条做法都是**事后**修的，第 7 条是**事前**动作",
-      "两个方向都要构造样本：正确样本 → 确认通过（不误报）；错误样本 → 确认失败（能拦住）。只做单向是常见漏洞来源",
-      "**四次同类自伤对照表**：T36 裸子串命中注释 / fixture 转义过度 / 元断言 detail 误导 / 提示词校验用整串相等 —— 逐条列出「判据错在哪」与「正确的判据」",
-      "执行口径：任何新增/修改判据的提交必须同时给出正确样本与错误样本，缺一视为**未验证**"
-    ]
-  },
-
-  "test_usecase_limit_prompt": {
-    "slice_removed": false,
-    "slice_kept_as_secondary": true,
-    "prompt_injection_added": true,
-    "includes_number": true,
-    "includes_reason": true,
-    "includes_example": true,
-    "prompt_text": "★ 本需求是**根节点**（无上游依赖）。测试用例数**不超过 N 个**。理由：根节点没有上游契约约束，容易把场景铺开写；而每个用例都会抬高实现难度 —— 用例数与通过率**不成正比**。实测：同一需求写 6 个用例时实现 4 轮未通过；写 2 个用例时 1 轮通过。示例：N 个之内覆盖核心场景即可 —— 1 个正常路径 + 1 个边界/异常 + 1 个副作用验证。把最关键的行为写**扎实**（断言具体值），而不是把场景写**全**。",
-    "why_not_removed": "切片（`apply_root_test_limit`）仍是**辅助**机制（裁剪计划内文件清单）；但在本库中它作用在长度恒为 1 的清单上，不咬合。故保留但明确标注为辅助，主机制是提示词。这与任务描述「不改切片」一致 —— 切片保留，提示词增强",
-    "rationale": "参考「拒绝理由必须可执行」的教训：把理由写到能让对方知道**下一步做什么**，而不只是知道**做错了**。故加入具体数字、理由、**实测数据**与**示例**",
-    "verification": "U1–U13 断言仍 46/46 通过；关闭时提示词为空串（逐字不变）"
+    "version": "v1.6（1580 -> 约 1650 行）",
+    "sections_added": [
+      "**11.4 契约冻结：从「提示词建议」到「验收合同」** —— 问题、实测证据（REQ-11 拿到 3 次提示仍未修好）、三方一致模型图、门禁表（MISSING vs MISMATCH 分工）、可选能力语义、验证方式",
+      "**19.2.7 判据双向验证**（上一轮已加，本轮补 ⑤ 落地）",
+      "**11.3 跨模块调用契约：双向设计**（既有）"
+    ],
+    "module_table_updated": "9.1 目录树 + 9.2 模块表均补入 `contracts.py` —— 架构核验断言 ⑦/⑦b 起初报红，正是核验工具在正确履职"
   },
 
   "check_all": {
-    "assertions_passed": "**334/334（9 类）**",
-    "all_pass": true
+    "assertions_passed": "**350 项（11 类）**",
+    "all_pass": true,
+    "delta": "较上轮 +16（契约冻结 12 项 + 判据双向验证 4 项）",
+    "infrastructure_fix": "check_all 原先用 `python <script>` 跑所有套件，pytest 文件因此**零输出**且计数不计入 —— 「总数诚实」这条性质失真。已改为：按**内容**（是否含 `def test_` 且无 `__main__`）判断套件类型，pytest 套件经 `pytest -q` 运行并解析 `N passed`。初版按路径前缀判断，把自带 `__main__` 的 test_contract_mismatch 也塞给 pytest -> 'no tests ran'"
   },
 
-  "decision": {
-    "which_tree_branch": "任务给的四分支均不完全匹配（run4 是 REQ-5 通过、REQ-11 失败）。实质落在「过度生成假说被削弱」一栏",
-    "test_usecase_limit_action": "**不实施对照实验** —— 假说的关键证据（用例多则失败）被 run4 直接削弱（5 用例 1 轮通过）。继续做对照实验会浪费配额去检验一个已被削弱的假说",
-    "recommended_next": [
-      "补跑样本 5–6 提高统计效力（当前 2/4，置信区间极宽）",
-      "针对**多薄弱点**做分析：REQ-5 与 REQ-11 各自失败 1/4 次，应分别观察而非合并归因",
-      "REQ-11 的失败值得单看：它是**依赖门禁正确拦截**（测试通过但 0 import）—— 门禁在起作用，问题是模型 4 轮内没能建立集成。这个方向比用例数上限更有价值",
-      "若要提升整链通过率，**根节点预算增强**的收益仍未被数据支持；也暂不建议"
-    ],
-    "honest_assessment": "整链通过率 50%（2/4）是当前最好的估计。单次失败样本 n=1，无论归因到用例数还是别的变量都证据不足。**先积累样本，再动配置。**"
+  "v5_package": {
+    "filename": "dist/arcbench-agent-v5.zip",
+    "size": "724 KB / 197 文件",
+    "tag": "相对 v4 新增契约冻结（CONTRACT_MISSING 门禁）与判据双向验证框架；未做依赖图上下文（触发条件未满足）；依赖累积 4 样本 2/4 全链通过",
+    "tag_file": "V5-TAG.txt 已打入包内",
+    "integrity": "✅ 无损坏、无重复项"
+  },
+
+  "parallel_execution": {
+    "note": "任务要求「并行做，不互相阻塞」。实际执行顺序：先澄清任务与现状的冲突（样本 4 已完成），随后 ③ 与 ⑤ 顺序实现在同一条提交里完成（两者都依赖 check_all 的套件登记，故合并推进更经济）",
+    "no_blocking": "④ 未实施是按决策树的**规则**判定，不是被阻塞",
+    "quota": "配额已恢复（上一轮确认）。本轮**未消耗配额** —— ③⑤ 均为纯代码与合成验证，冒烟测试用 stub generator"
   },
 
   "not_done": {
-    "config_changes": "未改（FACTORY_ROOT_TEST_LIMIT 保持 0）",
-    "controlled_experiment": "未做 —— 假说被削弱，不做无谓实验",
-    "fabricated_data": "无 —— 所有样本均为真实运行",
-    "skipped_baseline": "无 —— 先补基线样本再到配置实验的顺序被遵守",
-    "ran_from_main_tree": "未发生 —— 从与 run1/2/3 逐字节一致的提交跑"
+    "dependency_graph_context": "未实现 —— 触发条件未满足（REQ-5 非结构性问题）；且上一轮已独立削弱该假说",
+    "contract_freeze_real_run": "未做真实模型运行验证（配额未消耗；合成 + 冒烟已通过）",
+    "fabricated_data": "无",
+    "config_changes": "无（FACTORY_ROOT_TEST_LIMIT 保持 0）",
+    "skipped_baseline": "无（基线仍为 4 样本）"
   }
 }

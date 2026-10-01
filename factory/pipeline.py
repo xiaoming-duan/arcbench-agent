@@ -14,8 +14,9 @@ from arcbench_agent_runtime import AgentRuntime
 
 from .adapter import _adapt
 from .config import FactoryConfig
+from .contracts import contracts_dir
 from .generator import build_generator
-from .llm import ModelClient
+from .llm import ModelClient, ModelQuotaExhaustedError
 from .loop import TddLoop
 from .models import RequirementResult, RunReport
 from .store import FactoryStore
@@ -128,6 +129,13 @@ def run_factory(
         store.commit("requirements: 需求树入库")
 
         # ---- 决定生成器与测试方言 ----
+        # ---- 契约冻结：编译前把 cross_module_calls 写成只读合同 ----
+        # 位置刻意放在跑需求之前、模板就位之后：
+        #   需求 YAML 已解析完（req_set 可用），输出目录已存在（可写 .arc/contracts/）。
+        # 未声明 cross_module_calls 的需求不生成合同（可选能力的默认关闭语义）。
+        from .contracts import write_contracts
+        write_contracts(output_dir, req_set.requirements)
+
         dialect = _resolve_test_dialect(config, output_dir)
         generator_kind = config.resolve_generator()
         report.generator = generator_kind
@@ -147,6 +155,7 @@ def run_factory(
             fixture_root=fixture_root,
             test_dialect=dialect,
             model_client=model_client,
+            contracts_dir=contracts_dir(output_dir),
         )
         runner = build_runner(dialect, output_dir, timeout_s=config.test_timeout_s)
 
@@ -165,6 +174,7 @@ def run_factory(
         # 让「依赖累积」的失败归因变得不可分辨（是上游的问题还是下游的问题）。
         # 有这条传播后，下游判 UPSTREAM_FAILED 并**不计入通过率分母**。
         outcomes: dict[str, RequirementResult] = {}
+        quota_exhausted = False
 
         # ---- 容器节点（ROOT）识别 ----
         # 平台会把「整个平台」作为 ROOT 塞进需求树。若照常走设计，等于让模型
@@ -218,7 +228,20 @@ def run_factory(
 
             # 按需求切分成本：模型客户端是全局的，用快照求增量
             cost_before = model_client.stats.snapshot() if model_client else {}
-            outcome = loop.run(requirement)
+            try:
+                outcome = loop.run(requirement)
+            except ModelQuotaExhaustedError as exc:
+                # ★配额/余额耗尽：后面每个需求都注定失败。立刻收摊，
+                #   而不是逐个把重试预算烧完 —— 实测代价：
+                #   「网关重试 11 次（成功 0）」外加每个需求 3 次循环级重试。
+                quota_exhausted = True
+                report.error = f"ModelQuotaExhaustedError: {exc}"
+                logger.error(
+                    "[致命] 模型配额/余额耗尽，停止本轮剩余需求（共 %d 个）: %s",
+                    len(req_set.requirements),
+                    exc,
+                )
+                break
             if model_client:
                 outcome.cost = model_client.stats.delta(cost_before)
             report.results.append(outcome)
@@ -271,7 +294,11 @@ def run_factory(
         store.commit(f"factory: {summary}")
 
         # 有上游失败跳过时整体不算 ok：闭包没有被完整验证
-        report.ok = failed == 0 and passed > 0 and weak == 0 and upstream_failed == 0
+        # 配额耗尽中止时绝不能判 ok：即使恰好没有失败，本轮也没跑完
+        report.ok = (
+            failed == 0 and passed > 0 and weak == 0
+            and upstream_failed == 0 and not quota_exhausted
+        )
         if model_client is not None:
             report.cost = model_client.stats.to_dict()
             logger.info("成本记账: %s", model_client.stats.summary())

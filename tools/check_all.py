@@ -31,6 +31,8 @@ SUITES = (
     ("依赖使用审计", "tools/test_dependency_audit.py", "24 项：静态调用 / 假依赖 / 间接声明 / mock / 注入旁路"),
     ("D10 修复验证", "tools/verify_d10.py", "6 项：mock 违规是否真的阻断（含旧判定复算）"),
     ("依赖边方向断言", "tools/test_call_edges.py", "11 项：call edge 方向(source=调用方) + node contract 落盘"),
+    ("契约冻结", "tests/test_contract_freeze.py", "12 项：生成/只读读取/CONTRACT_MISSING 门禁/拒绝理由可执行"),
+    ("判据双向验证", "tests/test_assertion_meta.py", "4 项：元测试 —— 判据本身必须双向成立"),
     ("契约合成验证", "tests/test_contract_mismatch.py", "25 项：CONTRACT_MISMATCH 门禁合成验证（含元断言与已知局限）"),
     ("工作流隔离", "tools/test_workstream.py", "9 项：冻结快照 / 漂移检出(正/负向) / guard 污染报警"),
     ("架构核验工具", "tools/test_audit_architecture.py", "9 项：追溯表计数 / 文档精确匹配 / 孤儿分类 / 制品 kind"),
@@ -44,8 +46,20 @@ def main() -> int:
     failures: list[str] = []
     counts: list[int] = []
     for label, script, note in SUITES:
+        # pytest 套件必须经 pytest 运行 —— 它们没有 __main__ 入口，
+        # 直接 `python <file>` 会零输出，导致「总数诚实」这条性质失真。
+        #
+        # 按**内容**判断而不是按路径：`tests/` 下既有 pytest 文件
+        # （test_contract_freeze / test_assertion_meta），
+        # 也有自带 __main__ 的独立脚本（test_contract_mismatch / test_dag）。
+        # 初版只看路径前缀，于是把独立脚本也塞给 pytest -> "no tests ran"。
+        _src = (ROOT / script).read_text(encoding="utf-8")
+        is_pytest = "def test_" in _src and "__main__" not in _src
+        cmd = ([sys.executable, "-m", "pytest", str(ROOT / script),
+                "-q", "--no-header", "-p", "no:cacheprovider"]
+               if is_pytest else [sys.executable, str(ROOT / script)])
         proc = subprocess.run(
-            [sys.executable, str(ROOT / script)],
+            cmd,
             cwd=str(ROOT),
             capture_output=True,
             text=True,
@@ -60,10 +74,17 @@ def main() -> int:
             tail[-1] if tail else "(无输出)",
         )
         ok = proc.returncode == 0
-        # 从摘要行里取「N 项」参与合计，避免各套件增删断言后总数失真
-        found = re.search(r"(\d+)\s*项", summary)
-        if found:
-            counts.append(int(found.group(1)))
+        # 从摘要行里取数目参与合计，避免各套件增删断言后总数失真。
+        # 两种口径：自研套件写「N 项」；pytest 写「N passed」。
+        if is_pytest:
+            m = re.search(r"(\d+)\s+passed", proc.stdout or "")
+            if m:
+                counts.append(int(m.group(1)))
+                summary = f"✅ {m.group(1)} 项断言通过（pytest）"
+        else:
+            found = re.search(r"(\d+)\s*项", summary)
+            if found:
+                counts.append(int(found.group(1)))
         print(f"{'✅' if ok else '❌'}  {label:<12} {script:<28} {summary}")
         if not ok:
             failures.append(f"{label} ({script})")

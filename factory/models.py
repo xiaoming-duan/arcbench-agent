@@ -266,6 +266,9 @@ class RequirementResult:
     regressions: list[dict[str, Any]] = field(default_factory=list)
     # 最终门禁三段审计的 ok 标志（用于验证判定本身，而不是只能看结果）
     gate_audits: dict[str, Any] = field(default_factory=dict)
+    # 冻结合同完整性违规（CONTRACT_MISSING）：合同缺失 / 未冻结 / 与声明漂移。
+    # 与 dependency_violations 分开：那是「实现不符合同」，这是「合同本身不成立」。
+    contract_violations: list[dict[str, Any]] = field(default_factory=list)
     # 测试文件无法被收集/执行（RED 门禁判 TEST_BROKEN，回退到写测试阶段）
     broken_test: bool = False
     # 重写边界：被拦截的测试文件写入 / 走显式通道允许的测试重写
@@ -310,6 +313,7 @@ REQUIREMENT_RESULT_FIELDS: tuple[str, ...] = (
     "note",
     "test_rewrites",
     "test_case_count",
+    "contract_violations",
     "write_attempts",
     "cost",
     "test_plan_files",
@@ -417,6 +421,7 @@ class RunReport:
                     "note": r.note,
                     "test_rewrites": r.test_rewrites,
                     "test_case_count": r.test_case_count,
+                    "contract_violations": list(r.contract_violations),
                     "write_attempts": r.write_attempts,
                     "cost": dict(r.cost),
                     "test_plan_files": list(r.test_plan_files),

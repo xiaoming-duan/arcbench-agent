@@ -388,6 +388,9 @@ DEP_UNCERTAIN = "DEPENDENCY_CHECK_UNCERTAIN"
 # 与 DEPENDENCY_NOT_USED 的区别：后者是「没调」，前者是「调了但调错」——
 # 单模块测试无法暴露后者（同名不同语义），只有声明式契约能。
 DEP_CONTRACT_MISMATCH = "CONTRACT_MISMATCH"
+# 冻结合同本身缺失/未冻结/与需求声明漂移（编译期问题）——
+# 与 CONTRACT_MISMATCH（运行期：合同在但实现不符）互补。
+DEP_CONTRACT_MISSING = "CONTRACT_MISSING"
 
 # 判定为违规（阻断）的
 DEP_VIOLATIONS = frozenset({DEP_NOT_USED, DEP_FAKE, DEP_UPSTREAM_MISSING,
@@ -1145,3 +1148,67 @@ def describe_injection_bypass(audit: InjectionAudit) -> str:
         "  3. **不得改变**函数签名与返回结构——现有测试依赖它们，改了会把测试改坏。"
     )
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# 实现侧的相对模块解析审计
+# ---------------------------------------------------------------------------
+
+# require('./x') / from './x' / import('./x')
+_RELATIVE_MODULE = re.compile(
+    r"""(?:require\s*\(\s*|from\s+|import\s*\(\s*)['"](\.[^'"]+)['"]"""
+)
+
+# Node/打包器实际会尝试的扩展与目录入口
+_MODULE_RESOLUTIONS = (
+    "", ".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx", ".json",
+    "/index.js", "/index.mjs", "/index.cjs", "/index.jsx",
+    "/index.ts", "/index.tsx", "/index.json",
+)
+
+
+def audit_relative_imports(root: Path, files: "list[Path] | tuple[Path, ...]") -> list[dict]:
+    """实现文件里引用的**相对模块**是否真的存在。
+
+    实测病理（平台 2026-10-01 01:50）：模型往 `src/app.js` 的
+    「// route modules imports」锚点后插入了
+
+        require('./routes/branchRoutes')
+
+    却**从未创建** `src/routes/branchRoutes.js`。平台会 `npm start` 验证产物，
+    于是启动即崩：
+
+        Error: Cannot find module './routes/branchRoutes'
+        requireStack: [ .../src/app.js, .../src/index.js ]
+
+    我们此前只审计**测试**是否 import 了实现，从不检查**实现自己的模块图**，
+    于是这类"引用了不存在的文件"一路溜到平台上、死在启动阶段。
+
+    返回 [{"file":..., "specifier":..., "resolved":...}, ...]；空列表 = 全部可解析。
+    """
+    missing: list[dict] = []
+    for path in files:
+        try:
+            source = Path(path).read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for match in _RELATIVE_MODULE.finditer(source):
+            spec = match.group(1)
+            base = Path(path).parent / spec
+            if any((base.parent / (base.name + suffix)).exists()
+                   for suffix in _MODULE_RESOLUTIONS):
+                continue
+            # 也允许 base 本身是个目录（含 index.*）
+            if base.is_dir():
+                if any((base / ("index" + suffix)).exists()
+                       for suffix in _MODULE_RESOLUTIONS if suffix.startswith(".")):
+                    continue
+            missing.append(
+                {
+                    "file": str(Path(path).relative_to(root)) if root in Path(path).parents
+                    else str(path),
+                    "specifier": spec,
+                    "resolved": str(base),
+                }
+            )
+    return missing

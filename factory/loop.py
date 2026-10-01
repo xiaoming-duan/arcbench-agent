@@ -15,6 +15,7 @@ from typing import Sequence
 from .config import FactoryConfig
 from .generator import Generator
 from .llm import ModelQuotaExhaustedError
+from .contracts import check_contracts, describe as describe_contracts
 from .models import (
     DesignPlan,
     GeneratedFile,
@@ -1359,10 +1360,17 @@ class TddLoop:
             or not self.config.warn_injection_bypass
             or not self.config.block_injection_bypass   # 默认警告级，不阻断
         )
+        # 冻结合同完整性：需求**声明了** cross_module_calls 时必须存在冻结件且一致。
+        # 未声明时 check_contract 返回 ok（可选能力的默认关闭语义）。
+        contract_ok_raw, contract_checks = check_contracts(self.output_dir, [requirement])
+        result.contract_violations = [c.to_dict() for c in contract_checks if not c.ok]
+
         dep_ok, mock_ok, bypass_ok = dep_ok_raw, mock_ok_raw, bypass_ok_raw
-        dep_ok = dep_ok and mock_ok and bypass_ok
+        # 四道门全部参与，**不短路** —— 任一门禁为假都不放行
+        dep_ok = dep_ok and mock_ok and bypass_ok and contract_ok_raw
         result.gate_audits = {
             "dep_ok": dep_ok_raw, "mock_ok": mock_ok_raw, "bypass_ok": bypass_ok_raw,
+            "contract_ok": contract_ok_raw,
             "combined_ok": dep_ok,
             "enforce_dependency_usage": self.config.enforce_dependency_usage,
             "enforce_mock_check": self.config.enforce_mock_check,
@@ -1391,16 +1399,29 @@ class TddLoop:
                 parts += [
                     f"{f.upstream}=INJECTION_BYPASS({f.parameter})" for f in bypass_audit.findings
                 ]
-            reason = "; ".join(parts) or "依赖未通过使用审计"
+            # 冻结合同违规单独成段：它是**编译期**问题（合同缺失/未冻结/漂移），
+            # 与「实现不符合同」性质不同，混在一句里会让归因含糊。
+            contract_parts = [
+                f"{c['req_id']}={c['reason']}" for c in result.contract_violations
+            ]
+            reason = "; ".join(parts + contract_parts) or "依赖未通过使用审计"
             self.store.test_failed(req_id, f"{req_id} 依赖未真实验证: {reason}")
             self.store.set_state(req_id, "FAILED", "test")
             self.store.commit(f"{req_id} (blocked): {requirement.name} 依赖未验证")
             result.state = "FAILED"
-            result.note = (
-                f"测试通过但依赖未被真实验证（{reason}）："
-                f"重写 {attempts} 次仍未满足依赖使用要求"
-            )
-            logger.error("[依赖门禁] %s BLOCK -> FAILED（%s）", req_id, reason)
+            if result.contract_violations and not parts:
+                # 纯合同问题：理由是**可执行**的（见 contracts.describe）
+                result.note = (
+                    "冻结合同不成立（"
+                    + "; ".join(contract_parts)
+                    + "）：" + describe_contracts(contract_checks).replace("\n", " ")
+                )
+            else:
+                result.note = (
+                    f"测试通过但依赖未被真实验证（{reason}）："
+                    f"重写 {attempts} 次仍未满足依赖使用要求"
+                )
+            logger.error("[门禁] %s BLOCK -> FAILED（%s）", req_id, reason)
         else:
             self.store.test_failed(
                 req_id, f"{req_id} 测试失败（{attempts} 次尝试）: {outcome.summary()}"

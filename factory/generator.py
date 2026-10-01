@@ -258,9 +258,14 @@ class LLMGenerator:
 
     name = "llm"
 
-    def __init__(self, client: ModelClient, test_dialect: str) -> None:
+    def __init__(self, client: ModelClient, test_dialect: str,
+                 contracts_dir: Path | None = None) -> None:
         self.client = client
         self.test_dialect = test_dialect
+        # 冻结合同所在目录（`.arc/contracts`）。设置后提示词**只读冻结件**，
+        # 不读需求 YAML —— 合同是验收依据，不能让生成阶段看到"可变的那份"。
+        # 未设置（如单元测试直接构造）时回退到内存声明。
+        self.contracts_dir = contracts_dir
 
     # ---- 内部 ----
 
@@ -326,10 +331,20 @@ class LLMGenerator:
         # 而上游 REQ-7 实现的是 `updateQuantity(sku, from, to)`（区间变更语义）。
         # 模型被告知「你没 import 上游」时，**无法推断出正确的参数语义** ——
         # 它只知道要调，不知道按什么调。
-        if requirement.cross_module_calls:
+        # 契约来源优先级：**冻结合同 > 内存声明**。
+        # 冻结件是编译期产物，实现阶段只读 —— 提示词读它，模型无法在运行中改掉依据。
+        frozen = None
+        if self.contracts_dir is not None:
+            from .contracts import load_frozen_calls
+            frozen = load_frozen_calls(self.contracts_dir.parent, requirement.req_id)
+        _declared = frozen if frozen is not None else requirement.cross_module_calls
+
+        if _declared:
             lines.append("")
-            lines.append("★ 本需求对上游的**跨模块调用契约**（必须真实调用，不得用参数注入绕过）:")
-            for call in requirement.cross_module_calls:
+            lines.append("★ 本需求对上游的**跨模块调用契约**"
+                         + ("（**已冻结**，实现阶段只读，不可修改）" if frozen is not None else "")
+                         + "（必须真实调用，不得用参数注入绕过）:")
+            for call in _declared:
                 head = f"  - {call.upstream} / {call.symbol}"
                 if call.signature:
                     head += f"  签名: {call.signature}"
@@ -575,6 +590,7 @@ def build_generator(
     fixture_root: Path,
     test_dialect: str,
     model_client: ModelClient | None = None,
+    contracts_dir: Path | None = None,
 ) -> Generator:
     if kind == "llm":
         client = model_client or ModelClient()
@@ -584,7 +600,7 @@ def build_generator(
                 "OPENAI_API_KEY / OPENAI_BASE_URL / MODEL 三个变量。"
             )
         logger.info("使用 LLMGenerator (model=%s)", client.model)
-        return LLMGenerator(client, test_dialect)
+        return LLMGenerator(client, test_dialect, contracts_dir=contracts_dir)
     if test_dialect == "vitest":
         logger.warning(
             "StubGenerator 的 fixture 是 node 测试方言，vitest 环境下不会被执行。"
