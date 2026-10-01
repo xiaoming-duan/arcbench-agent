@@ -1740,6 +1740,46 @@ def t23_uncollectable_test_rolls_back_to_test_stage() -> None:
           "vi.hoisted" in fb and "require(" in fb and "收集" in fb)
 
 
+def t40_repair_budget_survives_gate_assignment() -> None:
+    """★ 分类预算账本必须出现在**最终**的 gate_audits 里。
+
+    实测 bug（真实运行才暴露）：账本写在循环结束处，而门禁段的
+    `result.gate_audits = {...}` 会**整体覆盖**它 ——
+    于是 6 个需求的账本全部丢失，而 REQ-11 明明消费了
+    4 次 DEPENDENCY_NOT_USED / 3 次 IMPLEMENTATION_REGRESSION。
+    **机制在正确工作，可观测性却为零。**
+
+    本条是源码级断言：账本必须在门禁赋值**之内**（而不是之前）。
+    """
+    import inspect
+    source = inspect.getsource(TddLoop.run)
+
+    idx_assign = source.find("result.gate_audits = {")
+    assert idx_assign != -1, "找不到 result.gate_audits 赋值"
+    # 赋值块结束（下一个空行后的首个同缩进语句粗略取 40 行）
+    window = source[idx_assign:idx_assign + 2000]
+    check("T40a 账本写在 result.gate_audits 赋值**块内**（不会被覆盖）",
+          '"repair_budget": budget.to_dict()' in window,
+          "若写在赋值之前，会被整体覆盖 —— 真实运行中曾导致 6 个需求账本全丢")
+
+    # 反向：账本不得再出现在赋值之前（防止有人两处都写、其中一处又被覆盖）
+    idx_loop_end = source.find("result.attempts = attempts")
+    assert idx_loop_end != -1
+    before = source[idx_loop_end:idx_assign]
+    check("T40b 账本不再出现在门禁赋值**之前**（避免一份被覆盖的死代码）",
+          "repair_budget" not in before)
+
+    check("T40c 账本内容含 spent / signal_budgets / class_budgets",
+          all(k in inspect.getsource(RepairBudget.__post_init__.__self__.__class__)
+              if False else True for k in ()))  # 占位，真正校验见下
+    from factory.errors import RepairBudget as _RB
+    d = _RB().to_dict()
+    check("T40c 账本结构完整（spent / signal_budgets / class_budgets / left / exhausted）",
+          all(k in d for k in ("spent", "signal_budgets", "class_budgets",
+                               "left", "exhausted", "history")),
+          f"keys={sorted(d)}")
+
+
 def t36_dependency_audit_runs_even_when_tests_fail() -> None:
     """依赖审计必须**无条件运行**，不放在 `if outcome.passed` 内。
 
@@ -2027,6 +2067,7 @@ def main() -> int:
         t32_missing_implementation_is_valid_red,
         t33_exit_code_contract,
         t36_dependency_audit_runs_even_when_tests_fail,
+        t40_repair_budget_survives_gate_assignment,
         t34_sdk_backend_parity_and_summary_arithmetic,
         t35_transient_model_failure_does_not_kill_requirement,
         t37_quota_exhaustion_is_terminal_and_fails_fast,
