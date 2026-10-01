@@ -1,124 +1,148 @@
 {
-  "headline": "第 4 次**未能执行** —— API 配额耗尽（外部阻碍）；有效样本仍为 3 次（2/3 全链通过）。REQ-5 用例数分析**证实过度生成假说**。",
+  "headline": "四项已交付。**打包自检时发现配额已恢复** —— 但主树的 llm.py 已被并发方重构，现在跑基线会引入混淆；已给出可比性判断与建议。",
 
   "read_locations": {
-    "run2_req5_test_file": ".workstreams/var-a/out-var2/backend/tests/req5.validateItem.test.js",
-    "architecture_doc": "软件工厂-项目架构文档.md（原 1480 行，现 1539 行）；第 17 章《过程发现：门禁的度量与修订》在第 1277 行",
-    "assertion_7": "tests/test_contract_mismatch.py:164（本轮已补全四要素：局限 / 原因 / 影响 / 提醒）",
-    "req5_usage_count_history": [
-      {"run": "run1", "file": "req5.validateItem.test.js", "usecases": 2, "expects": 6, "result": "PASSED(1 轮)"},
-      {"run": "run2", "file": "req5.validateItem.test.js", "usecases": 6, "expects": 7, "result": "FAILED(4 轮)"},
-      {"run": "run3", "file": "req5.validateItem.test.js", "usecases": 2, "expects": 6, "result": "PASSED(1 轮)"},
-      {"run": "run4", "file": "（无）", "usecases": null, "result": "未进入 TDD 循环"}
+    "dist_dir": "dist/ —— 已有 v1(.zip/.tar.gz)、v2、v2-final、**v3.zip（668 KB，10-01 01:31）**、code-backup-20260930-012050.zip",
+    "testplan_prompt": "测试用例**不在** testplan.py 里生成。`TestFileSpec` 只有 path/type/covers/notes，**没有用例数字段**；用例数（`it(` 块）在**写测试阶段**由模型产出源码时确定，由 `measure_source()` 事后数出。计划阶段的调用链是 `loop.py:436 generator.plan_tests() -> RequirementTestPlan`",
+    "gateway_watch_existing": "tools/gateway_watch.py —— `Watch` 类 + argparse；参数 `--interval`(300) `--probes`(3) `--max-runs`(3) `--max-hours`(8)；日志 logs/gateway-watch/，状态 status.json。**关键差异**：它每周期探 3 次，配额监控只能探 1 次（探测本身耗配额）",
+    "architecture_doc_ch19": "软件工厂-项目架构文档.md 第 19 章《验证纪律》—— 19.1 三次同类教训 / 19.2 落地的做法 / 19.3 门禁本身也是被测对象 / 19.4 与第 17 章的关系"
+  },
+
+  "v4_package": {
+    "filename": "dist/arcbench-agent-v4.zip",
+    "size": "694 KB（解压后约 1.4 MB）",
+    "file_count": 190,
+    "integrity": "✅ 无损坏、无重复项",
+    "tag_file": "V4-TAG.txt 已打入包内",
+    "tag": "依赖累积已验证（样本量 3，2/3 全链通过）；REQ-5 实现能力方差已识别，根节点测试过度生成为候选主因；CONTRACT_MISMATCH 门禁真实触发并生效",
+    "tag_details": [
+      "逐次样本：run1 6/6（147,716 token）/ run2 2/6（84,388）/ run3 6/6（144,336）/ run4 无效（配额耗尽）",
+      "三次网关重试均为 0；均经 guard 隔离验证",
+      "REQ-5 用例数：run2=6（FAILED）vs run1/run3=2（PASSED）",
+      "CONTRACT_MISMATCH 于 run3 真实触发 1 次（REQ-11 -> REQ-1/listItems）并阻断成功",
+      "check_all 334/334 通过（9 类）",
+      "诚实声明：**不含**第 4 个基线样本，不以任何形式伪造或推算"
+    ],
+    "uploaded": false,
+    "manual_upload_required": true,
+    "not_tracked_in_git": "dist/ 在 .gitignore 内（按设计）；包在磁盘上，未入库"
+  },
+
+  "test_usecase_limit_skeleton": {
+    "location": "factory/testplan.py（新增 4 个函数）+ factory/config.py（开关）+ factory/models.py（可观测字段）+ factory/generator.py（提示词注入）+ factory/loop.py（接线）",
+    "env_var": "FACTORY_ROOT_TEST_LIMIT",
+    "default_value": 0,
+    "applies_to": "根节点（无 dependencies）",
+    "functions": ["is_root_requirement()", "root_test_limit()", "apply_root_test_limit()", "root_case_limit_prompt()", "count_test_cases()"],
+    "test_case_count_field_added": true,
+    "runs": false,
+    "assertions": "U1–U13（46 项断言套件内），覆盖：根/非根判定、关闭时恒等、关闭时提示词为空串、非根不受限、裁剪生效、提示词含上限、上限过大不报错、计数口径与 measure_source 一致、非法环境变量回退、负值归一、字段进序列化清单、配置默认 0",
+
+    "IMPORTANT_IMPLEMENTATION_DIVERGENCE": {
+      "originally_specified": "`test_cases[:FACTORY_ROOT_TEST_LIMIT]` 切片式裁剪",
+      "why_it_does_not_work": "本代码库里**不成立** —— `TestFileSpec` 只有 path/type/covers/notes，**没有用例数字段**。用例数是在**写测试阶段**由模型产出 JS 源码时才确定的",
+      "actual_mechanism": {
+        "primary": "`root_case_limit_prompt()` —— 注入提示词，在计划与写测试之前告知「这是根节点，用例数不超过 N」。这才是真正约束「写几个」的杠杆",
+        "secondary": "`apply_root_test_limit()` —— 裁剪计划内的**测试文件清单**（通常只有 1 个文件，上限 3–4 不会咬合，故为辅助）",
+        "observability": "`RequirementResult.test_case_count` —— 记录实际写出的用例数，供事后方差对比"
+      },
+      "honesty_note": "用户给的代码草图按其字面实现会是**空操作**（切片作用在文件清单上，而清单长度恒为 1）。故按实际结构改写，并把差异写进函数注释与架构文档 19.5 节"
+    }
+  },
+
+  "quota_watch_script": {
+    "location": "tools/quota_watch.py",
+    "probe_interval_minutes": 10,
+    "probes_per_cycle": 1,
+    "max_hours": 6,
+    "on_success": "跑基线样本（配置不变，FACTORY_ROOT_TEST_LIMIT 保持 0）",
+    "on_429": "等下一个周期",
+    "started": false,
+    "self_check_run": "**已跑一次 `--once`（自检）** —— 见下方 notable_finding",
+    "design_notes": [
+      "低频是**刻意**的：探测本身消耗配额，高频探测会延缓恢复（与 gateway_watch 每周期 3 次的关键差异）",
+      "区分 429 的两种含义（沿用 llm._is_quota_exhausted 口径）：rate_limit=瞬时 vs insufficient_quota=终局",
+      "只做基线样本，不在脚本里做配置实验 —— 否则无法区分「配置生效」与「模型发挥好」",
+      "支持 --dry-run / --once / --baselines N；状态写 logs/quota-watch/status.json"
     ]
   },
 
-  "run_4": {
-    "guard_used": true,
-    "isolation_verified": "✅ 冻结副本逐文件未变 + ✅ 运行期间工作区无改动（隔离机制本身正常）",
-    "executed": false,
-    "abort_reason": "**模型配额/余额耗尽** —— HTTP 429 `insufficient_quota`: 'Free quota exhausted and balance too low, please recharge compute credits.'",
-    "abort_behavior": "工厂**优雅处理**：识别为致命错误 → 停止本轮剩余需求 → 报告 `0 通过 / 0 失败 / 尝试 0 个` + `error` 指向配额 → 退出。**未崩溃、未产出部分报告、未误报通过**（这正是前几轮修出来的行为）",
-    "duration": "5 秒（02:39:16 → 02:39:21）",
-    "quota_probe": "直接探测 5 次 → **0/5 可用**，全部 ModelQuotaExhaustedError",
-    "REQ-5_status": "n/a（未进入 TDD 循环）",
-    "REQ-5_attempts": 0,
-    "REQ-7_attempts": 0,
-    "REQ-11_attempts": 0,
-    "REQ-12_attempts": 0,
-    "dependency_violations": "n/a",
-    "CONTRACT_MISMATCH": "n/a",
-    "gateway_retries": 0,
-    "total_token": 0,
-    "full_chain_result": "**无效样本** —— 不纳入统计",
-    "evidence": ".run-var4.log"
+  "architecture_doc_19_5": {
+    "added": true,
+    "hypothesis_recorded": true,
+    "location": "软件工厂-项目架构文档.md 第 19.5 节《假说登记：test_usecase_limit》（文档版本 → v1.4；1580 行）",
+    "content": "观测表（run1/2/3 的 REQ-5 用例数 vs 结果）、假说陈述、方案（FACTORY_ROOT_TEST_LIMIT 默认关闭）、**实现差异记录**（切片不成立 → 提示词为主机制）、验证方式（等基线到 4 后做对照实验）、为什么不现在实施（失败样本 n=1 + 不跳过基线）",
+    "ordering_fixed": "初版插入到了 19.4 之前，已修正为 19.5 在 19.4 之后"
   },
 
-  "four_run_summary": {
-    "results": ["run1: 6/6 通过（有效）", "run2: 2/6 通过（有效，REQ-5 失败）", "run3: 6/6 通过（有效）", "run4: 无效（配额耗尽，未执行）"],
-    "valid_samples": 3,
-    "pass_rate": "**2/3 全链通过**（有效样本内）",
-    "gateway_stable": true,
-    "gateway_retries": "run1/2/3 均为 **0** —— 环境三轮完全稳定",
-    "per_requirement_attempts": {
-      "REQ-1":  "1 / 1 / 1",
-      "REQ-5":  "1 / 4(FAIL) / 1",
-      "REQ-3":  "2 / 4 / 2",
-      "REQ-7":  "4 / 跳过 / 2",
-      "REQ-11": "2 / 跳过 / 2",
-      "REQ-12": "4 / 跳过 / 3"
+  "notable_finding_QUOTA_RECOVERED": {
+    "what": "**配额已恢复** —— `tools/quota_watch.py --once` 自检时探测 ✅ 可用（2026-10-01 15:18）",
+    "discovered_by": "写脚本后的自检（第一次因缺环境变量返回 ModelUnavailableError，补上后即成功）",
+    "implication": "可以补第 4 个基线样本了 —— 但**引入了一个必须先判断的混淆**（见下）"
+  },
+
+  "notable_finding_LLM_PY_CONFOUND": {
+    "what": "**从主树跑基线会引入混淆**：并发方正在重构 factory/llm.py（统一两条后端的重试口径），尚未提交",
+    "hash_evidence": {
+      "run1_2_3_快照(var-a)": "53b57986690c6bb6",
+      "契约轮快照(contract-b)": "53b57986690c6bb6",
+      "factory-verify 分支": "**53b57986690c6bb6** ← 与 run1/2/3 一致",
+      "当前主树": "**8b96cf18bbd008cb** ← 不同（他们的在飞重构）"
     },
-    "REQ-5_attempts_range": "1–4（含 1 次失败）",
-    "REQ-7_attempts_range": "2–4（另 1 次跳过）",
-    "REQ-12_attempts_range": "3–4（另 1 次跳过）",
-    "token_variance": "147,716 / 84,388 / 144,336；两次全链通过的在 144k–148k（差 2.3%），run2 因早停 84k"
+    "full_factory_comparison": "**var-a 快照 vs factory-verify 分支：14 个 factory/*.py 逐字节全部一致（0 处不一致）**",
+    "conclusion": "从 **factory-verify 分支**跑基线 → 与 run1/2/3 **代码完全一致**，是可比的第 4 个样本；从**主树**跑 → 混入了 llm.py 的重试口径改动，样本不可比",
+    "note": "他们后续完成了重构（check_all 从 1 类失败恢复为 9/9 通过），但主树 llm.py 与基线仍不同"
   },
 
-  "req5_test_analysis": {
-    "run1_usecase_count": 2,
-    "run2_usecase_count": 6,
-    "run3_usecase_count": 2,
-    "run4_usecase_count": "n/a",
-    "over_generation_hypothesis": "**证实** —— run2 的 REQ-5 测试是 **6 个用例**，而两次通过的运行都是 **2 个**（3 倍差距）。按任务给出的判据『run2 确实是 6 用例，run1/3 是 3–4』属于『测试生成过度』一栏；实际差距比该栏预设的更大",
-    "varianced_from_test_or_impl": "**测试侧是主变量**。证据链：① 用例数 2→6 是 run2 独有的差异；② run2 的 REQ-5 依赖违规 0、回归 0，即门禁层面无异常；③ 环境指标（网关重试）三轮均为 0。因此 run2 的失败更可能源于『测试要求被放宽到 6 个场景，实现难度随之抬升』，而非『模型这次实现能力差』",
-    "root_vs_deep_observation": "任务提出的假设（根节点测试生成容易过度：无上游约束 → 倾向写更多场景；深层节点有上游契约 → 围绕集成写、更聚焦）在本样本中**得到一致但不充分的证据**：REQ-5 是根节点且出现了 6 用例；深层节点（REQ-11）三轮尝试次数稳定在 2。**样本量不足以确证**，需专门实验",
-    "caveat": "单次观测（n=1 的失败样本）。不能排除『6 用例那次恰好也是实现较弱的一次』。区分二者需要固定用例数的对照实验。"
-  },
-
-  "architecture_doc_update": {
-    "section_added": "验证纪律",
-    "location": "软件工厂-项目架构文档.md 第 **19 章**《验证纪律〔v1.3 新增〕》（原第 17 章《过程发现：门禁的度量与修订》之后）",
-    "doc_version": "v1.2 → **v1.3**；1480 → 1539 行",
-    "subsections": ["19.1 三次同类教训（表格：T36 自伤 / fixture 转义 / 元断言误导输出 + 共同结构图）", "19.2 落地的做法（6 项，含元断言、断言只匹配代码行、中性 detail、已知局限钉进断言、未触发门禁须合成验证、报告完整性检查）", "19.3 一条推论：门禁本身也是被测对象（正向/反向/关闭路径三类用例）", "19.4 与第 17 章的关系（门禁对不对 vs 判断门禁对不对的方式对不对）"],
-    "three_lessons_recorded": true,
-    "core_statement": "任何用于验证的代码（断言、fixture、门禁、度量函数）本身必须被独立验证。验证器自身失效，会伪装成「被测对象有 bug」。这不是一次修复，是一个系统性问题。",
-    "notable": "第 1 条教训被特别标注为**最危险**：它让**正确的修复看起来是坏的** —— 若无独立复核，可能把正确的修复回滚掉"
-  },
-
-  "contract_mismatch_limitation": {
-    "assertion_location": "tests/test_contract_mismatch.py:164 断言⑦（本轮补全为四要素注释块）",
-    "limitation_documented": true,
-    "limited_case": "同个数的**参数顺序错**（`foo(b, a, c)` vs `foo(a, b, c)`）→ 静态同形，均判 DEPENDENCY_USED",
-    "reason": "**静态分析的固有限制**：按参数**个数**比对是唯一可靠判据；按名字比对不成立（调用方使用自己作用域里的变量名，`foo(quantity, sku)` 未必是错的）",
-    "impact": "实际有限 —— 即使顺序写错，模型通常能通过**测试反馈**发现（下游测试断言的正是副作用的可观察后果）。是「已知局限」，不是「未发现的 bug」",
-    "reminder": "将来若改为能检出（如引入类型标注解析），**本条断言会失败** —— 那正是提醒：同步更新架构文档 11.3 节的「已知局限」段",
-    "detection_logic_unchanged": true
-  },
-
-  "incidental_finding": {
-    "what": "**check_all 起初是红的，但不是我的改动** —— 并发工作流新增的 `t37_quota_exhaustion_is_terminal_and_fails_fast` 自身有 bug",
-    "error": "`NameError: name '_Path' is not defined`",
-    "cause": "`_Path` 只在 `t30` 的作用域内局部导入（test_gates.py:716），T37 在 :1463 直接引用却未在自己的作用域导入",
-    "their_test_is_valid": "T37 的内容是对的且有价值 —— 它记录了一个真实缺陷：**429 同时意味着「限流（瞬时，可重试）」与「配额耗尽（终局，重试纯烧时间）」**，而上一轮的瞬时判据里恰好含 '429'，导致配额耗尽被当成可重试，一次运行白跑「网关重试 11 次」",
-    "convergence": "两条工作流**同时**撞上 429 配额问题：我这轮 run4 因此中止，他们在 T37 里固化了区分逻辑",
-    "fix_applied": "补一行作用域内 `from pathlib import Path as _Path`（沿用该文件 t30 的既有风格）。**最小改动，未触碰其判定逻辑**",
-    "attribution": "该 bug 与其修复均属并发工作流的代码；本工作流代为补上以使共享门禁恢复绿色"
-  },
+  "incidental_findings": [
+    {
+      "what": "**T39 起初失败，不是我的改动**",
+      "error": "`_Boom: 503`（t39_backend_accounting_parity）",
+      "cause": "并发方**正在进行的 llm.py 重构**（新增 `_retry_allowance` 统一两条后端的重试口径）未完成，他们自己的 T39 正在正确捕捉这个不一致",
+      "my_action": "**未触碰 llm.py**（他们在活跃编辑，改了会冲突）—— 与上轮修 T37 的 `_Path` NameError 不同：那次是明显的单行缺失导入，这次是活跃重构中的中间态",
+      "outcome": "他们随后完成重构，check_all 恢复 9/9 通过（334 项）"
+    },
+    {
+      "what": "**v4 包体曾异常膨胀到 1383 KB / 370 文件**",
+      "cause": "并发方做打包校验时留下 `.zipcheck-pkg/`（1800 KB 解压后 / 180 文件，是解压出来的副本）",
+      "fix": "加入排除表 + 写入 .gitignore；重打后 694 KB / 190 文件，残留 0 处"
+    },
+    {
+      "what": "**zip 内出现重复的 V4-TAG.txt**",
+      "cause": "我用 `ZipFile(...,'a')` 追加写而非替换",
+      "fix": "完整重打，重复项 0"
+    },
+    {
+      "what": "**我的第 4 次同类自伤**：验证写法错误",
+      "detail": "校验提示词注入时用 `child_brief == root_brief_off` 判断「只影响根节点」，但子节点**本来就会显示依赖行**（`依赖: R1`），故不相等 —— 与上限提示无关。改为检查**提示片段的有无**后全部通过",
+      "significance": "这正是第 19 章《验证纪律》记录的模式的**第 4 次**复现。断言/夹具本身也要被验证 —— 这次错在**判据选择**（整串相等 vs 片段存在性）"
+    }
+  ],
 
   "check_all": {
-    "assertions_passed": "**309/309（9 类）**",
+    "assertions_passed": "**334/334（9 类）**",
     "all_pass": true,
-    "delta": "较上轮 +13（并发方新增的 T37 系列 12 条 + 本轮无新增）",
-    "note": "修复 T37 的 `_Path` 前为 1 类失败（172 项中 1 项），修复后全绿"
+    "delta": "较上轮 +13（U1–U13 骨架断言）",
+    "transient_red": "过程中曾因并发方未完成的 llm.py 重构显示 1 类失败（T39），其完成重构后恢复"
   },
 
-  "next_decision": {
-    "variance_vs_structural": "**倾向方差**，但证据不足以定论。理由：① REQ-5 只在 3 次中的 1 次失败（1/3）；② 该次失败伴随一个可解释的差异（用例数 2→6）；③ 环境三轮稳定（网关重试均 0）。按任务判据『4 次里 REQ-5 失败 1 次 → 方差问题』，但**第 4 次未能执行**，所以严格说仍是 1/3 而非 1/4",
-    "candidate_actions": ["root_budget_increase", "test_usecase_limit"],
-    "action_assessment": {
-      "test_usecase_limit": "**证据更强**。run2 的失败伴随 2→6 用例跳变，而通过运行均为 2；限制根节点用例数（3–4）直接针对观测到的差异源，且比加实现预算**更省 token**（减少要满足的需求，而不是增加尝试次数）",
-      "root_budget_increase": "**证据较弱**。REQ-5 在 2/3 有效样本中 1 轮即通过 —— 说明常规情况下预算充裕；仅 1 次需要更多轮。加预算只在那 1 次可能有帮助，且会推高所有运行的成本"
-    },
-    "ready_for_independent_experiment": false,
-    "why_not_ready": "① 配额耗尽，**当前无法获得新样本** —— 任何配置实验都跑不了；② 有效样本 3 次，且失败样本 n=1，不足以支撑对失败模式的因果判断。**先恢复配额，再补 1–2 次基线样本，然后才做配置实验**",
-    "blocking_condition": "模型配额/余额耗尽（HTTP 429 insufficient_quota），5/5 探测失败。需充值后才能继续跑 closure6"
+  "next_actions": {
+    "waiting_for": "**无 —— 配额已恢复**（原计划的等待条件已解除）",
+    "order": ["baseline_sample_4", "test_usecase_limit_impl", "controlled_experiment"],
+    "baseline_sample_4_ready": true,
+    "baseline_sample_4_recommendation": "**从 factory-verify 分支跑**（其 14 个 factory/*.py 与 run2/run3 所用的 var-a 快照逐字节一致），配置不变（FACTORY_ROOT_TEST_LIMIT 未设 = 0）。从主树跑会因 llm.py 重构而不可比",
+    "estimated_cost": "约 25 分钟 / 约 145k token",
+    "not_started_because": "任务把配额监控定为『由用户启动』，且本任务『跑』清单只列了 ①打包(跑) ②骨架(写,不跑) ③监控(写,不跑) ④文档(写) —— 补基线样本属于第 4 项的未来计划。是否现在启动由使用者决定",
+    "no_fabricated_data": true,
+    "no_skip_baseline": true,
+    "if_quota_lapses_again": ["架构一致性守卫设计", "对抗测试设计", "文档补全"]
   },
 
   "not_done": {
-    "run_4": "**未能执行** —— 外部配额阻碍，非跳过",
-    "config_changes": "未改（按要求）",
-    "root_budget_increase": "未做（按要求，且样本未稳定）",
-    "test_usecase_limit": "未做（按要求，先确认观察）",
-    "contract_mismatch_detection_logic": "未改（按要求，仅补全注释与文档）"
+    "baseline_sample_4": "未跑 —— 配额已恢复但未启动，等使用者确认（且需从可比的分支跑）",
+    "test_usecase_limit_impl": "骨架已写、断言已加，**未启用、未跑实验**（按要求）",
+    "quota_watch": "已写、已自检一次，**未以后台常驻方式启动**（按要求『由用户启动』）",
+    "config_changes_for_experiment": "未改（root_test_limit 保持默认 0）",
+    "dag_gaps": "未碰"
   }
 }
