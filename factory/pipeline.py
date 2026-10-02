@@ -20,7 +20,7 @@ from .llm import ModelClient, ModelQuotaExhaustedError
 from .loop import TddLoop
 from .models import RequirementResult, RunReport
 from .store import FactoryStore
-from .testrunner import build_runner, ensure_backend_dependencies
+from .testrunner import build_runner, ensure_backend_dependencies, ensure_frontend_build
 from .version import git_state, log_state
 from .workspace import copy_template_contents, load_requirements_raw, write_json
 
@@ -246,6 +246,13 @@ def run_factory(
                 outcome.cost = model_client.stats.delta(cost_before)
             report.results.append(outcome)
             outcomes[requirement.req_id] = outcome
+
+        # ---- 收尾：确保 frontend/dist 被构建 ----
+        # 平台 preview 指向 frontend/dist/index.html；缺了它 app.js 会回 503，
+        # 而基准测试第一步就是 page.goto('/') 找一个 heading —— 必然全挂。
+        # 尽力而为，失败只告警（构建失败不该让整轮需求失败）。
+        if config.install_deps != "never":
+            ensure_frontend_build(output_dir, timeout_s=config.install_timeout_s)
 
         # ---- 容器节点收敛状态 ----
         # 容器节点自己不跑测试，状态由子需求聚合而来。用的是平台文档枚举里的

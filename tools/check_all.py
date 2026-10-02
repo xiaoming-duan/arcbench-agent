@@ -41,6 +41,8 @@ SUITES = (
      "14 项：判据不再依赖 RED；两门禁共用同一实现（单一定义由测试锁死）"),
     ("UI 探针 error_messages", "tests/test_ui_probe.py",
      "8 项：探针声明具体错误消息；UI_ERROR_MESSAGE_MISMATCH 可触发且可满足"),
+    ("UI 契约正文提取", "tests/test_ui_contract_extraction.py",
+     "22 项：提取规则 + 真实语料覆盖率/精确率（语料缺失则跳过）"),
     ("契约完整性", "tests/test_contract_integrity.py", "3 项：内嵌 integrity 字段 / 无侧车时仍能发现正文篡改 / 非 sha256 拒绝"),
     ("错误分类预算", "tests/test_retry_budget.py", "30 项：四类分类 / 预算语义 / 环境不挤占实现 / 配置对接"),
     ("契约冻结", "tests/test_contract_freeze.py", "12 项：生成/只读读取/CONTRACT_MISSING 门禁/拒绝理由可执行"),
