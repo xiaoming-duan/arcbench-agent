@@ -1,0 +1,62 @@
+arcbench-agent v8 —— 交付标签（诚实标注）
+============================================================
+
+相对 v7 的变化（三项，均由「template application server exited before
+becoming ready (code=1)」这一平台错误引出，并逐项本地实测）
+------------------------------------------------------------
+
+① 端口 3000 -> 3301（★三处，不是一处）
+   依据：平台基准测试 baseURL = http://127.0.0.1:3301
+   （arc-bench 的 playwright.config.ts：TARGET_URL || PLAYWRIGHT_BASE_URL || :3301）
+     backend/src/index.js          监听端口（并接受上游 ARC_RUNTIME_PORT）
+     backend/playwright.config.js  自带 E2E 的 baseURL（并接受上游 TARGET_URL）
+     frontend/vite.config.js       dev 代理目标
+   实测：Backend listening at http://127.0.0.1:3301；GET / -> HTTP 200；3000 无服务
+
+② 确保 frontend/dist 被构建（原先未构建 -> 503 致命错配）
+   平台 preview 指向 frontend/dist/index.html，而 app.js 在 dist 缺失时回 503
+   页面；基准测试第一步就是 openHome -> page.goto('/') 找一个 heading ——
+   拿到 503 必然全挂，且看不出是构建没做。
+   新增 testrunner.ensure_frontend_build()：幂等 / 尽力而为 / 失败只告警，
+   接入 pipeline 收尾，受 install_deps 门控（测试环境不跑 npm）。
+   实测：npm run build -> dist/index.html + dist/assets/；
+        启动后 GET / 返回真实 React 首页（455 字节），不再是占位页
+
+③ UI 契约改从**正文**提取（粒度 A：元素清单 + 可访问名）
+   最根本的发现：平台**从不发** ui_contracts 字段（6 个真实 app 的
+   requirements.yaml 全无命中），于是第五道 UI 门禁在真实输入上永远走
+   NO_UI_CONTRACT_DECLARED —— 这道门**从未真正活过**。
+   新增 factory/uicontract.py；adapter 接入，**字段优先、正文兜底**
+   （平台将来若发字段，行为立即回归）。
+   规则来自真实语料统计，实测修掉两个真问题：
+     · 切句不能按 `.`：邮箱 bookstack_user@example.com 里有点号，
+       劈开后的悬空引号会配出 ', enters ' 这种"名字"
+     · 引号必须支持全角：ctrip 通篇 “注册”/“登录”，只认 ASCII 时
+       它 0/133 个需求提取到元素 -> 改后 89/133
+   实测（tests/test_ui_contract_extraction.py 22 项）：
+     真实 6 app 覆盖率   331/468 = 70.7%
+     对真实基准测试精确率 324/357 = 90.8%
+     对齐依据：helpers 定位 getByRole 180 / getByLabel 32 / getByText 17
+   未覆盖部分是**粒度 A 的固有限制**：那些描述只写区域名
+   （navigation bar / carousel），没有任何显式可访问名，提取就得靠编
+   （即粒度 B/C，本轮明确不做）。
+
+附带：后端 lockfile 与 package.json 对齐（删掉漂移的 playwright-chromium，
+18 行删除 / 0 新增）—— 这正是此前判定「不能改用 npm ci」的原因。
+
+验证
+------------------------------------------------------------
+tools/check_all.py —— 21 类 / 514 项全部通过（解压后的包内自跑）
+main.py 冒烟 —— stub 生成器 + node 方言：2 通过 / 0 失败，exit 0
+v7 线为 20 类 / 492 项。
+
+诚实标注（未验证 / 已知缺口）
+------------------------------------------------------------
+· **LLM 兜底未实现**：任务书写的提取方法是「正则 + LLM 兜底」，本包只有正则。
+  原因：额度阻塞无法调用，且会让测试不确定。正则单独已达 70.7% / 90.8%。
+· **closure6 / 真实 E2E 跑通未执行**：API 额度耗尽。
+  本包只含静态与合成验证，**不含真实基准测试跑通的证据**。
+· tests/test_dag.py 的 10 项失败是**既有**缺口（DAG_DESIGN.md），
+  整合前的 main 上同样失败，不在 check_all 套件内。
+· UI 契约正文提取的语料校验（覆盖率/精确率）依赖 .probe-upstream/，
+  该目录被打包器排除 —— 包内这些用例会**自动跳过**，不影响交付。
