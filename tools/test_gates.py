@@ -1427,17 +1427,35 @@ def t37_quota_exhaustion_is_terminal_and_fails_fast() -> None:
 
     for name in ("run",):
         src = inspect.getsource(getattr(TddLoop, name))
-        check(f"T37i {name}() 对 ModelQuotaExhaustedError 显式上抛",
-              src.count("except ModelQuotaExhaustedError:") >= 3,
-              f"出现 {src.count('except ModelQuotaExhaustedError:')} 次")
+        check(f"T37i {name}() 对 ModelFatalError 显式上抛（配额与凭据都涵盖）",
+              src.count("except ModelFatalError:") >= 3,
+              f"出现 {src.count('except ModelFatalError:')} 次")
 
     from factory import pipeline
 
     psrc = inspect.getsource(pipeline.run_factory)
-    check("T37j pipeline 在配额耗尽时 break（不再逐个烧重试预算）",
-          "ModelQuotaExhaustedError" in psrc and "break" in psrc)
-    check("T37k 配额中止时绝不判 ok",
-          "not quota_exhausted" in psrc)
+    check("T37j pipeline 在终局故障时 break（不再逐个烧重试预算）",
+          "ModelFatalError" in psrc and "break" in psrc)
+    check("T37k 终局故障中止时绝不判 ok",
+          "not fatal_model_error" in psrc)
+
+    # ★401 凭据无效：实测（平台 2026-10-02 07:19）每个需求各撞一次 401。
+    #   它与配额同属「终局」—— 不重试，且应终止整轮。
+    from factory.llm import ModelAuthError as _Auth
+    from factory.llm import _is_auth_error as _is_auth
+
+    class _E401(Exception):
+        status_code = 401
+
+    check("T37n 状态码 401 判为凭据无效", _is_auth(_E401()))
+    check("T37o invalid_api_key 文本判为凭据无效",
+          _is_auth(Exception("401 - {'code': 'invalid_api_key', 'message': 'unauthorized'}")))
+    check("T37p 配额耗尽不被误判为凭据无效",
+          not _is_auth(Exception("429 insufficient_quota, please recharge")))
+    check("T37q ModelAuthError 与配额同属终局基类（都会被上抛+终止）",
+          issubclass(_Auth, __import__("factory.llm", fromlist=["x"]).ModelFatalError))
+    check("T37r 凭据无效不判为瞬时（不重试）",
+          _is_transient_model_error(_Auth("模型凭据无效: 401")) is False)
 
     # ---- 端到端：配额耗尽必须让整轮提前收摊（不是逐个需求烧重试预算）----
     import tempfile as _tf
@@ -1489,6 +1507,47 @@ def t37_quota_exhaustion_is_terminal_and_fails_fast() -> None:
     check("T37m 提前中止时 report.ok=False 且 error 指向配额",
           report.ok is False and "Quota" in (report.error or ""),
           f"ok={report.ok} error={(report.error or '')[:60]}")
+    shutil.rmtree(ws, ignore_errors=True)
+
+    # ★401 凭据无效的端到端：实测平台 2026-10-02 07:19 那次，
+    #   注入的 key 被拒，每个需求各撞一次 401（日志里试了 2 个）。
+    #   终局故障必须让整轮**只撞一次**就收摊。
+    class _AuthGen:
+        name = "auth"
+        calls = 0
+
+        def design(self, requirement):  # noqa: ANN001
+            _AuthGen.calls += 1
+            raise _Auth("模型凭据无效: Error code: 401 - invalid_api_key")
+
+        def plan_tests(self, *a, **k):  # noqa: ANN002, ANN003
+            raise AssertionError("凭据无效，不该走到计划阶段")
+
+        write_tests = implement = plan_tests
+
+    ws = Path(_tf.mkdtemp(prefix="auth-abort-"))
+    reqs = ws / "reqs"
+    reqs.mkdir(parents=True)
+    (reqs / "requirements.yaml").write_text(
+        "schema_version: \"1.0\"\nproject: {id: a, name: auth}\nrequirements:\n"
+        + "".join(f"  - id: REQ-{i}\n    name: r{i}\n" for i in (1, 2, 3)),
+        encoding="utf-8")
+    runtime2 = AgentRuntime.from_env(project_dir=str(ws / "out"))
+    cfg2 = _FC()
+    cfg2.install_deps = "never"
+    original2 = _P.build_generator
+    _P.build_generator = lambda *a, **k: _AuthGen()  # type: ignore[assignment]
+    try:
+        report2 = _P.run_factory(runtime2, reqs, ws / "out", config=cfg2,
+                                 template_dir=ROOT / "template")
+    finally:
+        _P.build_generator = original2  # type: ignore[assignment]
+
+    check("T37s 凭据无效（401）时整轮提前收摊（只撞 1 次）",
+          _AuthGen.calls == 1, f"design 被调用 {_AuthGen.calls} 次")
+    check("T37t 凭据无效时 report.error 指向 Auth",
+          report2.ok is False and "Auth" in (report2.error or ""),
+          f"ok={report2.ok} error={(report2.error or '')[:60]}")
     shutil.rmtree(ws, ignore_errors=True)
 
 

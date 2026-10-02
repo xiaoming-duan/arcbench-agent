@@ -14,7 +14,7 @@ from typing import Sequence
 
 from .config import FactoryConfig
 from .generator import Generator
-from .llm import ModelQuotaExhaustedError
+from .llm import ModelFatalError
 from .contracts import check_contracts, describe as describe_contracts
 from .uigate import check_ui, describe as describe_ui, e2e_sources_of
 from .errors import RepairBudget, budgets_from_config, describe_budget
@@ -82,11 +82,12 @@ _TRANSIENT_MODEL_MARKERS = (
 def _is_transient_model_error(exc: Exception) -> bool:
     """模型/传输层故障是否为「瞬时」——决定是回传重试还是直接判失败。
 
-    ★必须先排除配额耗尽：它也带 429，但重试永远不会成功。
+    ★必须先排除**终局性**故障（配额耗尽 / 凭据无效）：它们也带 4xx，
+    但重试永远不会成功，且会影响后续每一次调用。
     实测教训：把配额耗尽当瞬时，一次运行白白「网关重试 11 次（成功 0）」，
     外加每个需求的 3 次循环级重试。
     """
-    if isinstance(exc, ModelQuotaExhaustedError):
+    if isinstance(exc, ModelFatalError):
         return False
     text = str(exc).lower()
     # 兜底：异常被别的层重新包装过（不再是 ModelQuotaExhaustedError）时，
@@ -956,7 +957,7 @@ class TddLoop:
             try:
                 plan = self.generator.design(requirement)
                 break
-            except ModelQuotaExhaustedError:
+            except ModelFatalError:
                 raise          # 终局故障：重试永远不会成功，交给 pipeline 提前收摊
             except Exception as exc:
                 design_error = str(exc)
@@ -1029,7 +1030,7 @@ class TddLoop:
                     ),
                     allowed_paths=allowed_paths,
                 )
-            except ModelQuotaExhaustedError:
+            except ModelFatalError:
                 raise          # 终局故障，见上
             except Exception as exc:
                 # 与实现阶段同理：写测试这一环**本来就有**带反馈的重试循环
@@ -1263,7 +1264,7 @@ class TddLoop:
                 impl_files = self.generator.implement(
                     requirement, plan, failures, test_context=test_context
                 )
-            except ModelQuotaExhaustedError:
+            except ModelFatalError:
                 raise          # 终局故障，见上
             except Exception as exc:
                 # ★模型/传输层故障**不应直接判需求失败**。
