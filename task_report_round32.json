@@ -1,0 +1,135 @@
+{
+  "headline": "七步全部走完。**②④⑥ 发现已由独立会话完成**（分支已远超主树）；我补做了 ③ 确认、⑤ VALID_RED_UNVERIFIED、⑦ DSH 插件打包。**两树项数不一致是 main→分支单向合并的预期结果，未做反向合并** —— 见 §post_merge_confirmations。",
+
+  "fork_overview": {
+    "branch_commits": "41 个（main..HEAD）",
+    "main_commits": "1 个（HEAD..main，即我本轮那条 repo 清理提交）",
+    "check_all_branch": "**547 项 / 23 类**",
+    "check_all_main": "450 项 / 17 类",
+    "diff_81_source": "**不是 81 而是 97 项**（分支在本轮又新增 2 个套件）。构成 = 分支独有的 **6 个套件**，仅主树有 0 个：\n  并发工作流（4 个）: test_ui_contract_extraction / test_ui_probe / test_ui_test_weak / test_weak_test_classification\n  本轮新加（2 个）: tests/test_valid_red_unverified.py / tools/test_governance_kit.py\n判定：**全部来自并发工作流与自己，无重复、无来源不明。**",
+    "branch_only_suites": [
+      "tests/test_ui_contract_extraction.py",
+      "tests/test_ui_probe.py",
+      "tests/test_ui_test_weak.py",
+      "tests/test_weak_test_classification.py",
+      "tests/test_valid_red_unverified.py",
+      "tools/test_governance_kit.py"
+    ],
+    "already_done_by_independent_session": {
+      "merge": "f4ff87c merge main into factory-verify（早于本轮，当时 main 在 f4a4f2c）",
+      "step_4_WEAK_TEST_by_type": "ee5610b fix(ui): WEAK_TEST 按 type 分规则；UI_TEST_WEAK 判据脱离 RED；补 error_messages 探针",
+      "step_6_empty_file": "66a7692 fix(gate): 空测试文件必须被如实报出来 —— 两种方言此前都在说假话",
+      "note": "分支上另有 30+ 提交（3301 端口 / frontend 构建 / UI 契约改从正文提取 / 401 终局故障 / shell 就绪超时），均非本会话所做"
+    }
+  },
+
+  "merge": {
+    "session": "本会话（worktree .wt/factory-verify，独立工作目录）",
+    "merge_command": "git merge --no-commit --no-ff main",
+    "conflicts": [".pack_v2.py —— 分支删除（v4 剥离对方产物）、main 修改 → **取 main 版本**（他们持续维护；release/v5、v6 仍保持剥离）"],
+    "test_imports_after_each": true,
+    "test_imports_evidence": "解析后立即跑；4 项通过",
+    "check_all_after_full": "21 类 / **531 项**通过（合并态，未提交前先跑）",
+    "commit_hash": "**4a8facc**"
+  },
+
+  "post_merge_confirmations": {
+    "check_all_consistent": "**不一致，且这是预期结果**：分支 547 / 主树 450。\n任务只要求 **main → 分支** 单向合并，故分支成了 main 的**超集**（main 独有 0 个实质提交），主树看不到分支的工作。\n**「基于主树的结论可能错」这个担心已消解** —— 主树是分支的真子集，分支上的结论全都成立，只是主树还没有那些套件。\n未做反向合并（branch → main）：它会移动共享线，超出本任务范围。分支进 main 目前是**可 fast-forward 的**（`git merge-base --is-ancestor main HEAD` 成立，无冲突）。",
+    "llm_py_final_version": "**分支版本**（sha256 前缀 b9ed8bdc5311；主树 8b96cf18bbd0；差 55 行）。\n分支版本新增 **401 凭据无效的终局判定**（`_is_auth_error`）—— 「凭据无效」与「配额耗尽」同属终局故障，不再逐个需求去撞。\n合并后分支的 llm.py 即最终版；主树仍是旧的（因未反向合并）。",
+    "module_4_5_status_still_valid": "**仍然成立**：\n  模块 4（审计 Provider）：❌ **未写** —— 全仓无 InspectProvider 形态\n  模块 5（五道门禁）：✅ **已合入** combined_ok（`loop.py:1544` 五道门不短路）\n  但模块 5 的**验证状态**仍是「⚠️ 合成验证」—— 合入 ≠ 已验证。SKILLS.md 的标注无需修改。"
+  },
+
+  "WEAK_TEST_E2E_fix": {
+    "status": "**已由独立会话完成（ee5610b）**，本轮未重复改动",
+    "per_type_rules": {
+      "unit_integration": "import implementation（保留原判据）",
+      "e2e": "不要求 import 实现；改查 UI 元素断言"
+    },
+    "shares_criterion_with_UI_TEST_WEAK": true,
+    "evidence": "ee5610b 改了 factory/loop.py(46) / testaudit.py(48) / uigate.py(110) 并新增 tests/test_ui_probe.py(166)",
+    "test_passed": "tests/test_weak_test_classification.py + tests/test_ui_test_weak.py + tests/test_ui_probe.py 均在 check_all 中通过"
+  },
+
+  "VALID_RED_UNVERIFIED": {
+    "added": true,
+    "location": "factory/loop.py（RED 确认处）+ factory/models.py（`RequirementResult.red_verdict`）",
+    "distinguishes_from_WEAK_TEST": true,
+    "three_states": {
+      "VALID_RED": "失败原因**已确认**是实现尚未生产（`_expected_red_reason` 非 None）",
+      "VALID_RED_UNVERIFIED": "测试确实失败了，但原因**不是**已确认的那一种 → 记入 red_verdict + logger.warning，**不算 WEAK_TEST**",
+      "WEAK_TEST": "RED 阶段**根本没失败**（测试无效）"
+    },
+    "why_needed": "此前只有二值（weak / 非 weak）。「失败原因已确认」与「它失败了我不知道为什么」在结果上是同一个「通过」，读日志的人无法发现成因未归类。",
+    "boundary": "只增加**可观测性**，不改变阻断行为 —— 有反向断言钉住 `red_verdict` 不得参与 weak 计算",
+    "test_passed": "tests/test_valid_red_unverified.py —— **6 项通过**",
+    "field_serialized": "进 REQUIREMENT_RESULT_FIELDS，报告里可见"
+  },
+
+  "empty_file_branch": {
+    "status": "**已由独立会话完成（66a7692）**，本轮未重复改动",
+    "TEST_BROKEN_reasons": ["empty_file", "syntax_error", "idiom_error"],
+    "diagnosis_log_split": true,
+    "evidence": "66a7692 「空测试文件必须被如实报出来 —— 两种方言此前都在说假话」；新增 tests/test_weak_test_classification.py(89)",
+    "test_passed": "在 check_all 中通过"
+  },
+
+  "dsh_kit": {
+    "directory": "dsh-governance-kit/",
+    "modules": ["ui-contract-extraction", "contract-freeze"],
+    "package_json_has_dsh_bundle": true,
+    "cordis_patch_yml": true,
+    "index_ts": "**用 index.js 而非 index.ts** —— 见 deviated_from_spec",
+    "module_3_deferred": true,
+    "files": [
+      "package.json（dsh.bundle.patch -> cordis.patch.yml）",
+      "cordis.patch.yml（只 insert，不改既有插件行）",
+      "index.js（export function apply(ctx) + export const inject=['tools']）",
+      "lib/contract.js（共享序列化与哈希，生成与校验**必须共用**）",
+      "tools/freeze_contract.js",
+      "tools/verify_contract.js",
+      "skills/ui-contract-extraction/SKILL.md",
+      "skills/contract-freeze/SKILL.md",
+      "kit-test.mjs（13 项端到端自测）",
+      "ARCHITECTURE.md / SKILLS.md / LESSONS.md / README.md"
+    ],
+    "deviated_from_spec": [
+      "① 用 `index.js` 而非任务写的 `index.ts`：DSH 的 Host-only bundle **无需构建工具**（install_bundle 不跑 TS 构建），`.ts` 会得到一个无法加载的模块。",
+      "② 用 `ctx.tools.register(definition)` 而非任务写的 `defineTool`：这是经 `cordis_inspect_query(Service, 'tools')` **实查**到的 API；`defineTool` 在 DSH 中不存在，照抄会静默失效。"
+    ],
+    "verified": {
+      "manifest": "dsh.bundle.patch / exports['.'] / meta.title 齐全",
+      "entry": "index.js 导出 apply（函数）+ inject=['tools'] + VERDICTS 三态名",
+      "tool_modules": "两个模块的 name/description/parameters/execute/render 齐全（ToolDefinition 要求）",
+      "end_to_end": "**kit-test.mjs 13 项全通过** —— 冻结 / 完好(OK) / 漂移(MISSING) / 实现不符(MISMATCH) / 篡改(TAMPERED，含前提断言) / 不存在 / 空声明不生成 / 重新冻结",
+      "reverse_verification": "**破坏 lib/contract.js 的 sha256 后自测必须报红** —— 已确认报红，证明自测不是恒绿"
+    },
+    "install_status": "**未安装**（`plugin_manager install_bundle` 需 danger-full-access 审批）。交付物是**可安装的包**，不是已安装的插件。"
+  },
+
+  "check_all": {
+    "assertions_passed": "**547 项 / 23 类**（分支；主树 450 项 / 17 类）",
+    "all_pass": true,
+    "delta_this_round": "+16（RED 三态 6 + 治理套件 10）"
+  },
+
+  "mistake_i_made_and_fixed": {
+    "what": "在主树提交时**把整个 `.pw-browsers/`（619 个文件、109 MB Chromium 二进制）提交了**，且提交信息声称「分支的 RED 三态与治理套件同步回主树」—— **而同步根本没发生**（主树 loop.py 里 VALID_RED_UNVERIFIED 0 处、两个新文件不存在、check_all 无登记）",
+    "severity": "两个问题叠加：① 109 MB 二进制污染仓库 ② **提交信息说了假话**，会误导后人以为主树已有那些改动",
+    "how_found": "紧接着核对「两树项数」时发现主树仍是 450 项 —— 与提交信息矛盾",
+    "fix": "`git reset --soft HEAD~1` 撤销；`.pw-browsers/` / `.npm-cache/` / `.cache/` / `*.zip:Zone.Identifier` 写入 .gitignore；重提为 `d983a6e`，**提交信息改为如实描述现状**（明写两树不一致、未做反向合并）",
+    "verified": "仓库中 .pw-browsers 文件数 = **0**"
+  },
+
+  "blocked_by_balance": {
+    "closure6": "pending —— API 余额耗尽（本轮前一次运行遇 HTTP 402 insufficient_balance）",
+    "UI_probe": "pending —— 同上"
+  },
+
+  "honest_caveats": [
+    "**两树项数不一致（547 vs 450）** —— 这是 main→分支单向合并的预期结果，不是缺陷。但若期望「两树一致」，需要额外的 branch→main 合并（当前可 fast-forward）。**本任务未做。**",
+    "**dsh-governance-kit 未安装** —— 只验证了「包形态正确 + 工具端到端能判定三态」，未验证「注册进 DSH 后模型真的能调用它」。后者需要 install_bundle 审批。",
+    "**WEAK_TEST 修复与空文件分支不是本轮做的** —— 是独立会话的 ee5610b / 66a7692。本轮只确认其存在并在 check_all 中通过。",
+    "**步骤⑤ 的行为边界**：VALID_RED_UNVERIFIED 只增加可观测性，不改变任何通过/阻断判定。它的价值需要真实运行才能体现（目前只有合成断言）。",
+    "**模块 4/5 状态未变** —— 模块 4 仍未写，模块 5 仍是合成验证。"
+  ]
+}
