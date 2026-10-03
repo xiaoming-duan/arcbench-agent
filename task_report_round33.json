@@ -1,0 +1,89 @@
+{
+  "status": "**停 —— 未执行 fast-forward**（前置检查②返回非 0，按任务指示「停，报告后再动」）",
+
+  "pre_check": {
+    "main_tree_clean": true,
+    "main_tree_clean_evidence": "git status --short 返回 0 项未提交改动",
+    "main_head_before": "c1e90fd docs: 七步任务报告（分叉全貌 / 合并 / RED 三态 / DSH 套件）",
+    "factory_verify_head_before": "bbebe09 feat: RED 三态判定（VALID_RED_UNVERIFIED）+ 治理套件接入 check_all",
+    "is_ancestor": false,
+    "exit_code": 1,
+    "expected_by_task": "0（任务预期可以 fast-forward）",
+    "verdict": "**实际为 1 —— 不能 fast-forward。已按任务约束停住。**"
+  },
+
+  "why_not_fast_forwardable": {
+    "merge_base": "8dafd4f feat(governance-kit): 打包模块 1+2 为 DSH Tool Plugin",
+    "main_unique_commits": 2,
+    "main_unique_list": [
+      "c1e90fd docs: 七步任务报告（分叉全貌 / 合并 / RED 三态 / DSH 套件）",
+      "d983a6e chore(repo): 忽略浏览器二进制与临时产物；补入历史报告与证据"
+    ],
+    "branch_unique_commits": 41,
+    "root_cause": "**分叉是我上一轮自己造成的。**\n顺序错误：我先在分支里 `git merge main`（4a8facc，把 main 并入分支），\n**之后又在主树提交了 2 个 commit**（d983a6e 仓库清理 + c1e90fd 本轮报告）。\n于是 main 不再是被合并方 —— 双方各有对方没有的提交。\n\n正确顺序应是：合并前先把主树的待提交内容处理掉，合并后不再往被合并方提交。\n任务参考里写的「主树应该是共享线：main 应该包含最新最完整的工作」\n方向是对的，但上一轮我做的方向恰好相反（往 main 提交了分支没有的东西）。"
+  },
+
+  "dry_run_finding": {
+    "note": "虽不能 fast-forward，但我做了一次**不落地**的干跑以判断后续可行性（已 abort，工作区回到 0 改动）",
+    "command": "git merge --no-commit --no-ff factory-verify",
+    "result": "**Automatic merge went well; stopped before committing as requested**",
+    "conflicts": 0,
+    "file_overlap": {
+      "main_side_changed": 19,
+      "branch_side_changed": 48,
+      "overlapping_paths": [
+        "BRANCH_SEPARATION.md",
+        "evidence/baseline4-report.json",
+        "evidence/cf2-report.json",
+        "evidence/cf3-report.json",
+        "evidence/p0v-report.json"
+      ],
+      "actual_conflict_count": 0,
+      "why_overlap_but_no_conflict": "这些路径双方都动过，但改动不冲突（或一侧的内容是另一侧的超集），git 三方合并可自动解决"
+    },
+    "aborted": true
+  },
+
+  "recommended_path": {
+    "option_A_regular_merge": {
+      "command": "git checkout main && git merge --no-ff factory-verify",
+      "conflicts": 0,
+      "effect": "main 拿到全部分支工作；产生一个合并提交；两侧历史都保留",
+      "cost": "多一个合并提交（非 fast-forward）",
+      "risk": "低 —— 干跑已验证 0 冲突",
+      "recommended": true
+    },
+    "option_B_rebase_then_ff": {
+      "command": "在 main 上 rebase 那 2 个提交到分支，然后 ff",
+      "effect": "得到线性历史",
+      "risk": "**高 —— 会重写已推送的 main 历史，需要 force-push**",
+      "recommended": false
+    },
+    "option_C_do_nothing": {
+      "effect": "主树永久落后分支 97 项",
+      "requirement": "必须明确记录：后续所有基于主树的结论都不包含分支的工作",
+      "recommended": false
+    }
+  },
+
+  "answers_to_task_questions": {
+    "main_tree_clean": "✅ 干净（0 项未提交改动）",
+    "can_fast_forward": "❌ **不能**（exit code 1）",
+    "two_trees_identical": "❌ 不相同（main c1e90fd / 分支 bbebe09）",
+    "blocked_on": "**不是技术障碍，是历史形状** —— 常规 merge 0 冲突可行，fast-forward 因 main 有 2 个独有提交而不可行"
+  },
+
+  "safety_check_per_task_guidance": {
+    "single_user_project": "任务要求前置确认「单人项目 / 用户控制所有分支」。\n**本会话观察到的事实**：本仓库上有一条**并行工作流** —— 分支 factory-verify 上有 30+ 个提交不是本会话所做\n（如 f4ff87c / ee5610b / 66a7692 / 35080d1 / e9af088 / 1848504）。\n它们由某个独立会话推进（任务参考里也承认「②④⑥ 已由独立会话完成」）。",
+    "does_anyone_depend_on_main_current_state": "**未发现**。main 的 2 个独有提交都是本会话所写\n（仓库清理 + 本轮报告），且都是**追加型**内容（.gitignore、报告 JSON、evidence），\n没有第三方基于它们工作。\n**但并行工作流的存在意味着「单人项目」这一前提不能由我单方面断定** —— 故停在这里等确认。",
+    "risk_of_proceeding": "低。但既然任务明确写了「若返回非 0 → 停，报告后再动」，我不越权执行。"
+  },
+
+  "not_done": {
+    "fast_forward": "未执行（前置条件不满足）",
+    "checkout_main_merge": "未执行",
+    "check_all_after": "未执行（合并未发生，跑它没有意义）"
+  },
+
+  "honest_note": "本轮**没有**完成任务的四步 —— 卡在第 2 步的前置条件上。\n这不是失败，是任务自身设了「返回非 0 就停」的闸门，而我触发了它。\n**根因是我上一轮的顺序错误**，不是分支或工具的问题。"
+}
