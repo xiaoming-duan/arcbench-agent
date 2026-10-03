@@ -1,0 +1,95 @@
+{
+  "status": "✅ 四步全部完成（选项 A）",
+
+  "pre_check": {
+    "main_tree_clean": true,
+    "main_tree_clean_evidence": "git status --short = 0 项未提交改动",
+    "main_head_before": "8b0940b docs: fast-forward 前置检查报告 —— 未执行（exit code 1）",
+    "factory_verify_head_before": "bbebe09 feat: RED 三态判定（VALID_RED_UNVERIFIED）+ 治理套件接入 check_all",
+    "current_branch": "main（无需 checkout）",
+    "ff_recheck": "git merge-base --is-ancestor main factory-verify -> exit 1（复认确实不能 ff，故走选项 A）"
+  },
+
+  "merge": {
+    "command": "git merge --no-ff factory-verify",
+    "success": true,
+    "conflicts": [],
+    "merge_commit_hash": "3e6c1e4",
+    "parents": {
+      "parent_1": "8b0940b（main 侧）",
+      "parent_2": "bbebe09（分支侧）"
+    },
+    "notable_file_ops": "新增 6 个套件文件（test_ui_probe / test_ui_test_weak / test_valid_red_unverified / test_weak_test_classification / tools/test_governance_kit.py 等）；删除 v2_contract_report.json",
+    "history_rewritten": false,
+    "force_push_used": false
+  },
+
+  "verification": {
+    "check_all_items": "**547**",
+    "check_all_categories": "**23**",
+    "expected_items": 547,
+    "expected_categories": 23,
+    "matches_expectation": true,
+    "llm_py_version": "**分支版 b9ed8bdc5311**（含 401 终局判定，`_is_auth_error` 3 处）；与分支 sha256 逐位相同，差异 0 行",
+    "main_equals_merge_commit": true,
+    "two_trees_consistent": true,
+    "consistency_definition": "**分支独有提交 = 0** —— main 已含分支的全部工作（分支是 main 的祖先）。\nmain 独有 5 个 = 合并提交本身 3e6c1e4 + 4 个主树侧文档/报告提交（d983a6e / c1e90fd / 8b0940b / cddb3eb）。\n这是选项 A 的正确终态：**main 是分支的严格超集**。",
+    "verification_after_doc_change": "改完 BRANCH_SEPARATION.md 后**重跑全量**：仍 23 类 / 547 项通过（未碰坏别的东西）"
+  },
+
+  "branch_separation_md": {
+    "file_path": "BRANCH_SEPARATION.md",
+    "discipline_added": true,
+    "section": "**§十 合并方向纪律〔v1.2 新增〕**",
+    "counterexample_recorded": true,
+    "content": [
+      "规则三步：被合并方先清空待提交内容 → 执行合并 → **合并后不再往被合并方提交**",
+      "反例（本仓库 2026-10-03 实际发生）：正确顺序 vs 实际顺序的逐行对照",
+      "症状：`git merge-base --is-ancestor` 返回 1，fast-forward 不可能",
+      "定性：**这不是缺陷，是流程缺口** —— 两条线各自都正确，错的是顺序",
+      "分层：事前靠纪律（本节）；事后靠 `merge-base --is-ancestor` 检查（**已生效过一次**）",
+      "与第 19 章同源：每一步都做了正确的事，合起来却得到一个错误的状态",
+      "判定表：4 种情形（合并前有未提交内容 / 合并后往被合并方提交 / 合并后往合并方提交 / 新周期重评方向）",
+      "收敛手段表：A `merge --no-ff`（首选）/ B rebase+force-push（❌）/ C 不做（❌）",
+      "并写明 **A 不依赖「单人项目」前提** —— 只有 B 才需要先确认「是否有人依赖 main」"
+    ],
+    "line_count": "271 → **373 行**",
+    "bonus_fix": "§九 里「分支 llm.py 与基线**差 110 行**」已更正为 **163 行**，并附更正记录（该数字是前向同步之前测的；分支之后又合入 401 终局判定）。留在文档里的旧数字会让人误判可比性。"
+  },
+
+  "mistake_this_round": {
+    "what": "提交信息里的**反引号被 shell 当命令执行**，两个短语被吞掉",
+    "damaged": [
+      "「事后靠 `merge-base --is-ancestor` 检查」 -> 「事后靠  检查」",
+      "「A `merge --no-ff`（首选，不重写历史）」 -> 「A （首选，不重写历史）」"
+    ],
+    "scope": "**仅 cddb3eb 的提交信息**（两处短语缺失）",
+    "not_affected": [
+      "BRANCH_SEPARATION.md 文件内容**完整** —— 两处短语都在（第 315 / 337 / 365 行）",
+      "代码与断言（check_all 547 项通过）",
+      "已推送的历史形状（无分叉、无需 force-push）"
+    ],
+    "why_not_fixed": "修正需 `git commit --amend` + **force-push** —— 任务明确禁止 force-push。\n信息本身没丢（都在文件里），只是提交信息的摘要不够清楚。**故不改写历史，如实报告。**",
+    "recurrence": "历史提交信息里同类缺口 **2 处** —— 这是重复问题，应机制化",
+    "lesson": "**提交信息不得含反引号**（shell 命令替换）。已知的老问题，本轮又犯。\n建议机制化：写提交信息时用单引号包裹 heredoc，或先写文件再 `git commit -F <file>`。"
+  },
+
+  "post_state": {
+    "main_head": "cddb3eb",
+    "factory_verify_head": "bbebe09",
+    "main_contains_all_branch_work": true,
+    "branch_unique_commits": 0,
+    "main_unique_commits": 5,
+    "pushed": "main -> c1e90fd..cddb3eb（GitHub）",
+    "next_work_location": "**在 main 上工作**（分支 factory-verify 已完全并入，继续在两处工作会重新制造分叉）。\n若确需重新隔离，应**重新 fork 一个新 worktree**，而不是继续用 factory-verify（它与 main 仅差主树侧文档提交）。"
+  },
+
+  "task_answers": {
+    "main_tree_clean": "✅ 0 项未提交",
+    "merge_executed": "✅ `git merge --no-ff factory-verify` -> 3e6c1e4，0 冲突",
+    "check_all": "✅ 547 项 / 23 类",
+    "llm_py": "✅ 分支版（401 终局判定）",
+    "two_trees": "✅ 分支独有 0 个 —— main 已含分支全部工作",
+    "discipline_written": "✅ §十（counterexample 已记录）"
+  }
+}

@@ -1,95 +1,98 @@
 {
-  "status": "✅ 四步全部完成（选项 A）",
+  "status": "✅ 四项全部完成（① ③ 已做，② 安装成功并真实验证，④ 复核完成）",
 
-  "pre_check": {
-    "main_tree_clean": true,
-    "main_tree_clean_evidence": "git status --short = 0 项未提交改动",
-    "main_head_before": "8b0940b docs: fast-forward 前置检查报告 —— 未执行（exit code 1）",
-    "factory_verify_head_before": "bbebe09 feat: RED 三态判定（VALID_RED_UNVERIFIED）+ 治理套件接入 check_all",
-    "current_branch": "main（无需 checkout）",
-    "ff_recheck": "git merge-base --is-ancestor main factory-verify -> exit 1（复认确实不能 ff，故走选项 A）"
-  },
-
-  "merge": {
-    "command": "git merge --no-ff factory-verify",
-    "success": true,
-    "conflicts": [],
-    "merge_commit_hash": "3e6c1e4",
-    "parents": {
-      "parent_1": "8b0940b（main 侧）",
-      "parent_2": "bbebe09（分支侧）"
+  "commit_msg_hook": {
+    "hook_path": ".git/hooks/commit-msg",
+    "executable": true,
+    "permissions": "755（初建时为 711，已修正）",
+    "rejects_backtick": true,
+    "accepts_normal": true,
+    "LESSONS_md_updated": true,
+    "test_evidence": {
+      "含反引号": "拒绝 —— 未产生提交（HEAD 仍停在 d978ab4）",
+      "无反引号": "通过（产生测试提交 d1aec7a，已 reset 撤销）",
+      "单引号包裹含反引号": "拒绝 —— **hook 看内容不看来源，这是刻意的**",
+      "从文件读取干净内容": "通过（git commit -F，推荐路径）",
+      "清理": "git reset --hard d978ab4，工作区 0 项",
+      "撤销后复查": "hook 仍生效（再次拦截 1 次）"
     },
-    "notable_file_ops": "新增 6 个套件文件（test_ui_probe / test_ui_test_weak / test_valid_red_unverified / test_weak_test_classification / tools/test_governance_kit.py 等）；删除 v2_contract_report.json",
-    "history_rewritten": false,
-    "force_push_used": false
+    "lessons_discipline_number": "**纪律 9：提交信息不得含反引号**",
+    "lessons_content": "记录两次同类事故（本次 + f8a2504「声称同步但同步没发生」）的共同点：\n**提交信息是唯一没有验证器的产物** —— 代码错了测试会红、数字错了复核能发现，\n而提交信息错了没人会去 diff 它。",
+    "hook_limitation_recorded": "**重要且已写入 LESSONS**：`.git/hooks/` **不随仓库分发** ——\n换机器、重新 clone，hook 就没了，而纪律 9 作为文件还在。\n「机制若不被版本管理，寿命短于纪律」—— 这条本身也是教训。\n要真正机制化需 `core.hooksPath` 指向仓库内目录，或写进 CI。**本仓库只做了本地 hook。**"
   },
 
-  "verification": {
-    "check_all_items": "**547**",
-    "check_all_categories": "**23**",
-    "expected_items": 547,
-    "expected_categories": 23,
-    "matches_expectation": true,
-    "llm_py_version": "**分支版 b9ed8bdc5311**（含 401 终局判定，`_is_auth_error` 3 处）；与分支 sha256 逐位相同，差异 0 行",
-    "main_equals_merge_commit": true,
-    "two_trees_consistent": true,
-    "consistency_definition": "**分支独有提交 = 0** —— main 已含分支的全部工作（分支是 main 的祖先）。\nmain 独有 5 个 = 合并提交本身 3e6c1e4 + 4 个主树侧文档/报告提交（d983a6e / c1e90fd / 8b0940b / cddb3eb）。\n这是选项 A 的正确终态：**main 是分支的严格超集**。",
-    "verification_after_doc_change": "改完 BRANCH_SEPARATION.md 后**重跑全量**：仍 23 类 / 547 项通过（未碰坏别的东西）"
+  "dsh_kit_install": {
+    "install_command": "plugin_manager install_bundle /home/duanlinghui/dshwork/dsh-governance-kit",
+    "approved": true,
+    "installed": true,
+    "install_result": "application=**applied**，enabled=true，warnings=[]，pnpm 退出码 0",
+    "package_link": "profile package.json 里 `\"@local/dsh-governance-kit\": \"link:/home/duanlinghui/dshwork/dsh-governance-kit\"`",
+    "pending_builds": "无（本包无 install 脚本）",
+    "freeze_contract_callable": "**✅ 是** —— 真实调用成功，写出合同 + 侧车，`只读(0444): 是`",
+    "verify_contract_callable": "**✅ 是** —— 真实调用成功",
+    "three_state_verified": {
+      "OK": "✅ `[CONTRACT_OK] REQ-11 —— 2 条调用契约已冻结且一致`",
+      "MISSING": "✅ `[CONTRACT_MISSING] REQ-999 —— 合同不存在`",
+      "TAMPERED": "✅ `[CONTRACT_TAMPERED]` —— 期望 5c5f69c2… / 实际 7d64456b…（冻结于 2026-10-03 13:04:32）+ 修正指令",
+      "MISMATCH": "✅ `[CONTRACT_MISMATCH]` —— 声明 updateQuantity(sku, quantity, from, to)（4 个参数），实际按 3 个参数调用 + 修正指令"
+    },
+    "registration_confirmed_independently": "`cordis_inspect_query(Tool, listTools)` 返回的清单里**包含** freeze_contract 与 verify_contract ——\n即两个工具对本 Agent **真实可见可调用**，不是只看安装日志。",
+    "tamper_premise_assertion": "篡改前后 sha256 5c5f69c2… -> 7d64456b…，**断言确实变了字节**（LESSONS 纪律 2）",
+    "cleanup": "测试目录 .kit-verify 已删除，合同的 0444 已解除",
+    "note": "这是把「包形态正确」推进到「**模型真能调用**」的关键一步 —— 已完成。"
   },
 
-  "branch_separation_md": {
-    "file_path": "BRANCH_SEPARATION.md",
-    "discipline_added": true,
-    "section": "**§十 合并方向纪律〔v1.2 新增〕**",
-    "counterexample_recorded": true,
-    "content": [
-      "规则三步：被合并方先清空待提交内容 → 执行合并 → **合并后不再往被合并方提交**",
-      "反例（本仓库 2026-10-03 实际发生）：正确顺序 vs 实际顺序的逐行对照",
-      "症状：`git merge-base --is-ancestor` 返回 1，fast-forward 不可能",
-      "定性：**这不是缺陷，是流程缺口** —— 两条线各自都正确，错的是顺序",
-      "分层：事前靠纪律（本节）；事后靠 `merge-base --is-ancestor` 检查（**已生效过一次**）",
-      "与第 19 章同源：每一步都做了正确的事，合起来却得到一个错误的状态",
-      "判定表：4 种情形（合并前有未提交内容 / 合并后往被合并方提交 / 合并后往合并方提交 / 新周期重评方向）",
-      "收敛手段表：A `merge --no-ff`（首选）/ B rebase+force-push（❌）/ C 不做（❌）",
-      "并写明 **A 不依赖「单人项目」前提** —— 只有 B 才需要先确认「是否有人依赖 main」"
+  "module_4_design": {
+    "design_doc_path": "dsh-governance-kit/MODULE4-AUDIT-DESIGN.md",
+    "interface_aligned_with_dsh_provider": "**✅ 是，且全部经 cordis_inspect_query 实查**（非照抄）：\n  inspector.publish(topic, payload, monotonicMs?)  <- 观测发布出口\n  tools/result（emit）—— 文档明写 \"frozen, lossless-JSON final outcome\"，最佳单点钩子\n  tools/execute（waterfall）—— 文档明写用于 \"timeout, retry, or **metrics**\"\n  agent/error / agent/status（emit）\n  tokenMeter.measure(session, requestHeader?)  <- 成本",
+    "append_only_jsonl": true,
+    "interfaces": ["log_step", "log_tool_call", "log_cost", "query"],
+    "critical_constraint_found": "**来自 practices.md，走错会让会话无法重开**：\n插件**不得**用新 type 追加 session 事件 —— Session.append() 无法设 ignorable 标记，\nSession 会拒绝重开。审计必须「**只读既有事件 + 写自有存储**」。\n这条不满足会让整个 DSH 会话失效，代价远大于审计的价值。",
+    "three_design_decisions": [
+      "参数存哈希不存原文（凭据/密钥/PII 泄露风险）+ 同时存 argKeys 保证「调用了什么形状」可理解",
+      "ts 与 mono 都存 —— 延迟**必须**用 monotonic（用 ts 会在时钟回拨时算出负数）",
+      "append-only 由 O_APPEND 保证 + verify_append_only() 可验证 —— 把「我们约定只追加」变成「可以验证只追加」"
     ],
-    "line_count": "271 → **373 行**",
-    "bonus_fix": "§九 里「分支 llm.py 与基线**差 110 行**」已更正为 **163 行**，并附更正记录（该数字是前向同步之前测的；分支之后又合入 401 终局判定）。留在文档里的旧数字会让人误判可比性。"
+    "verification_plan": "8 条断言，含**反向验证**（破坏 verify_append_only 使其恒真，则错误样本必须报红）—— 与 kit-test.mjs 的反向验证同源",
+    "storage_recommendation": "先做**自有 JSONL** —— 让 8 条断言都能独立验证，不依赖 DSH 运行时存储语义。\n理由：审计的第一价值是**可信**，不是**集成度**。",
+    "code_written": false,
+    "note": "按约束只设计不写代码（依赖余额）"
   },
 
-  "mistake_this_round": {
-    "what": "提交信息里的**反引号被 shell 当命令执行**，两个短语被吞掉",
-    "damaged": [
-      "「事后靠 `merge-base --is-ancestor` 检查」 -> 「事后靠  检查」",
-      "「A `merge --no-ff`（首选，不重写历史）」 -> 「A （首选，不重写历史）」"
+  "doc_number_audit": {
+    "scan_command": "grep -rnoE \"[0-9]+(\\.[0-9]+)?%|差 [0-9]+ 行|[0-9]+ 项断言|[0-9]+ 项：\" --include=\"*.md\" .",
+    "flagged_numbers": [
+      "ARCHITECTURE_AUDIT.md:242 「9 项断言」「216 项（8 类）」—— 实际 10 项 / 547 项（23 类）",
+      "ISOLATION.md:105 「8 项断言」—— 实际 19 项",
+      "FACTORY.md:90 「8 类 / 216 项」—— 实际 23 类 / 547 项",
+      "dist/BACKUP-README.md:14 「8 类 / 217 项」—— 实际 23 类 / 547 项（归档当时的值）",
+      "BRANCH_SEPARATION.md:263 「差 110 行」—— **不是陈旧数字**，那正是更正记录本身（110 -> 163），刻意保留",
+      "DAG_DESIGN.md / V2_RELEASE.md 「236 项断言」—— **不是陈旧数字**，指当次实验的断言数，非 check_all 总数"
     ],
-    "scope": "**仅 cddb3eb 的提交信息**（两处短语缺失）",
-    "not_affected": [
-      "BRANCH_SEPARATION.md 文件内容**完整** —— 两处短语都在（第 315 / 337 / 365 行）",
-      "代码与断言（check_all 547 项通过）",
-      "已推送的历史形状（无分叉、无需 force-push）"
+    "corrected": [
+      "ARCHITECTURE_AUDIT.md: 9->10 项断言；216 项（8 类）-> 547 项（23 类）+ 历史备注",
+      "ISOLATION.md: 8->19 项断言 + 历史备注",
+      "FACTORY.md: 8 类/216 项 -> 23 类/547 项 + 历史备注",
+      "dist/BACKUP-README.md: 注明「归档当时的值；当前为 23 类/547 项」（**该文件被 gitignore，不进版本库**）"
     ],
-    "why_not_fixed": "修正需 `git commit --amend` + **force-push** —— 任务明确禁止 force-push。\n信息本身没丢（都在文件里），只是提交信息的摘要不够清楚。**故不改写历史，如实报告。**",
-    "recurrence": "历史提交信息里同类缺口 **2 处** —— 这是重复问题，应机制化",
-    "lesson": "**提交信息不得含反引号**（shell 命令替换）。已知的老问题，本轮又犯。\n建议机制化：写提交信息时用单引号包裹 heredoc，或先写文件再 `git commit -F <file>`。"
+    "correction_style": "**更正 + 保留历史备注**，而非静默改写 —— 这些文档描述的是**当时**的状态，直接改掉会丢失信息",
+    "pattern_summary": "三类陈旧数字：\n  ① 数字写在文档里，之后代码变了，数字没更新（本次 3 处进版本库）\n  ② 口径不同却并列（「全链 6/6」vs「通过率 3/6」）\n  ③ 数字来源未复核就断言「来源不明」（70.7% 那次，实为有来源 —— 已写成纪律 8）"
   },
 
-  "post_state": {
-    "main_head": "cddb3eb",
-    "factory_verify_head": "bbebe09",
-    "main_contains_all_branch_work": true,
-    "branch_unique_commits": 0,
-    "main_unique_commits": 5,
-    "pushed": "main -> c1e90fd..cddb3eb（GitHub）",
-    "next_work_location": "**在 main 上工作**（分支 factory-verify 已完全并入，继续在两处工作会重新制造分叉）。\n若确需重新隔离，应**重新 fork 一个新 worktree**，而不是继续用 factory-verify（它与 main 仅差主树侧文档提交）。"
+  "check_all": {
+    "assertions_passed": "**547 项 / 23 类**",
+    "all_pass": true,
+    "note": "改动文档后**重跑**确认未碰坏别的东西"
   },
 
-  "task_answers": {
-    "main_tree_clean": "✅ 0 项未提交",
-    "merge_executed": "✅ `git merge --no-ff factory-verify` -> 3e6c1e4，0 冲突",
-    "check_all": "✅ 547 项 / 23 类",
-    "llm_py": "✅ 分支版（401 终局判定）",
-    "two_trees": "✅ 分支独有 0 个 —— main 已含分支全部工作",
-    "discipline_written": "✅ §十（counterexample 已记录）"
+  "mistakes_and_notes": {
+    "hook_permission": "初建时权限是 711（`-rwx--x--x`），已修正为 755",
+    "git_add_failure": "第一次提交文档更正时 `git add dist/BACKUP-README.md` 因 dist/ 被 gitignore 而失败，\n整个 && 链中断 -> **提交未发生**。已改为只提交受版本管理的 3 个文件。",
+    "no_fabrication": "所有结论均有实际调用输出或命令结果支撑"
+  },
+
+  "remaining_todos": {
+    "blocked_by_balance": ["closure6 真实运行", "UI 探针真实运行", "模块 5 从合成验证推进到真实验证", "VALID_RED_UNVERIFIED 端到端验证"],
+    "not_blocked": ["模块 4 按设计写代码（若需要）", "把 hook 机制化为 core.hooksPath 或 CI 检查"]
   }
 }
