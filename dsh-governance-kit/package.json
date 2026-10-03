@@ -1,0 +1,28 @@
+{
+  "name": "@local/dsh-governance-kit",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "DSH 质量治理层：UI 契约提取（Skill）+ 契约冻结（Tool）",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "meta": {
+    "title": "Governance Kit",
+    "description": "质量治理层：契约冻结（三态判定）+ UI 契约提取。不替代编排插件，嵌入在编排层与执行层之间。"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "files": [
+    "index.js",
+    "lib/",
+    "tools/",
+    "skills/",
+    "cordis.patch.yml",
+    "*.md"
+  ]
+}
