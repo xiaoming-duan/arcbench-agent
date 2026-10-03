@@ -38,3 +38,7 @@ node_modules/
 
 # 工作流隔离用的 worktree 容器（不随主树提交）
 .wt/
+.pw-browsers/
+c9462d0bafc2-template.zip
+*.zip:Zone.Identifier
+check_all_output.txt

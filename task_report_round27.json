@@ -1,0 +1,157 @@
+{
+  "headline": "**全链 6/6 通过，REQ-11 PASSED** —— 契约冻结的读路径已真实生效（提示词含「已冻结」），CONTRACT_MISSING 零误报。按决策树：冻结生效，v5 标签升为「契约冻结已完整验证」。本轮另修两个阻塞并新增两道守卫。",
+
+  "pre_run": {
+    "branch": "factory-verify @ 05d66d6（从 `.wt/factory-verify` worktree，**未用主树**）",
+    "FACTORY_ROOT_TEST_LIMIT": 0,
+    "test_imports_passed": true,
+    "test_imports_detail": "✅ 4 项：factory 包可导入 / 14 子模块逐个导入 / 关键公开符号存在 / 第三方依赖可用",
+    "factory_py_hashes_match_sample4": false,
+    "hash_detail": "7 一致 / 8 不同。差异来自契约冻结（contracts/generator/loop/models/pipeline/testaudit）+ 骨架（config/testplan，默认关闭）。**llm.py 不在差异中** ✅",
+    "snapshot_forced": true,
+    "snapshot_detail": "用新 label `cf3` + `--refresh`，未复用同名快照",
+    "read_b_verified": "load_frozen_calls(self.contracts_dir, requirement.req_id) —— 直接传合同目录，无 .parent 链",
+    "read_c_verified": "合同目录可建可写；用样本规格实测读到 2 条；提示词含「已冻结」=True",
+    "read_e_verified": "tools/test_imports.py 存在（135 行）并通过"
+  },
+
+  "run_result": {
+    "guard_used": true,
+    "snapshot_force": true,
+    "snapshot_label": "cf3",
+    "isolation_verified": "✅ 冻结副本逐文件未变（+ 运行期间工作区无改动）",
+    "wall_clock": "19:35:03 → 20:14:39 = 39 分 36 秒",
+    "report_completeness": "**6/6**",
+    "full_chain_result": "**6 通过 / 0 失败 / 0 上游失败跳过**（尝试 6 个）—— 全链通过",
+    "ok": true,
+    "upstream_failed": 0,
+    "gateway_retries": 0,
+    "total_token": 190244,
+    "reasoning_tokens": 132731,
+    "calls": 31,
+
+    "REQ-11": {
+      "status": "**PASSED**",
+      "attempts": 4,
+      "test_rewrites": 0,
+      "tokens": 69481,
+      "prompt_contains_frozen": "**True**（用本次运行的真实 REQ-11.yaml 复验：不接 765 / 接 786 字符，差 21）",
+      "CONTRACT_MISSING_triggered": false,
+      "CONTRACT_MISMATCH_triggered": false,
+      "gate_audits": {"dep_ok": true, "mock_ok": true, "bypass_ok": true, "contract_ok": true, "combined_ok": true},
+      "dependency_violations": 0,
+      "contract_violations": 0,
+      "note": "（空 —— 顺利通过）"
+    },
+
+    "REQ-5": {"status": "PASSED", "attempts": 1, "usecase_count": 2, "tokens": 12178},
+
+    "per_requirement": {
+      "REQ-1":  {"state": "PASSED", "attempts": 1, "tokens": 11926, "usecase_count": 1},
+      "REQ-5":  {"state": "PASSED", "attempts": 1, "tokens": 12178, "usecase_count": 2},
+      "REQ-3":  {"state": "PASSED", "attempts": 2, "tokens": 20877, "usecase_count": 4},
+      "REQ-7":  {"state": "PASSED", "attempts": 2, "tokens": 38040, "usecase_count": 4},
+      "REQ-11": {"state": "PASSED", "attempts": 4, "tokens": 69481, "usecase_count": 2},
+      "REQ-12": {"state": "PASSED", "attempts": 2, "tokens": 37742, "usecase_count": 2}
+    },
+
+    "gate_trigger_counts_from_log": {
+      "CONTRACT_MISSING": 0,
+      "CONTRACT_MISMATCH": 0,
+      "依赖门禁·归因": 2,
+      "合同冻结生成": 1
+    },
+    "REQ-11_repair_timeline": [
+      "19:53:36 计划：白名单 1 个文件",
+      "19:55:22 RED 确认通过",
+      "19:57:18 测试未通过 + 依赖审计（REQ-1=NOT_USED）-> 第 1 次修复",
+      "20:01:16 测试未通过 + 依赖审计（REQ-1/REQ-7=NOT_USED）-> 第 2 次修复",
+      "20:03:13 **测试通过**，但依赖门禁拦截（REQ-1/REQ-7=NOT_USED）",
+      "（后续修复使其真实集成）-> PASSED"
+    ]
+  },
+
+  "contract_freeze_verdict": {
+    "read_path_effective": "**✅ 是** —— 冻结合同被读到（2 条），提示词含「已冻结」",
+    "frozen_visible_in_prompt": "**✅ 是** —— 用本次运行产出的真实 `REQ-11.yaml` 复验：765 -> 786 字符（差 21），含「已冻结」",
+    "REQ_11_passed_first_try": false,
+    "REQ_11_passed": true,
+    "verdict": "**effective**",
+
+    "three_questions_answered": {
+      "① 提示词是否含「已冻结」": "**是** ✅ —— 上一轮的核心缺陷（读路径静默回退）已修复并在真实运行中生效",
+      "② REQ-11 是否通过": "**是** ✅ —— 4 次尝试通过。**非一次通过**（1 次测试通过但被依赖门禁拦截，需继续修复以真实集成）",
+      "③ CONTRACT_MISSING 是否误报": "**否** ✅ —— 真实运行 0 次。四项检查（存在/冻结/一致/可解析）均未误触发；`contract_ok=True`"
+    },
+
+    "what_this_does_and_does_not_prove": {
+      "proves": [
+        "契约冻结的**三条路径全部真实生效**：生成 ✅ / 读取 ✅ / 门禁 ✅",
+        "门禁在真实运行中**零误报**，且正确参与 combined_ok",
+        "REQ-11 在**本次**运行中通过，全链 6/6"
+      ],
+      "does_not_prove": [
+        "**不能归因**：REQ-11 4 次尝试通过，其中第二次「测试通过但依赖门禁拦截」说明模型仍需多轮才建立集成。契约冻结是否**缩短**了轮次，需要对照实验（无契约冻结的基线里 REQ-11 是 2 次通过 / 1 次失败）",
+        "**单次结果**：契约冻结运行只有 1 次，不据此声称稳定性",
+        "**不可直接对比通过率**：本次配置与基线 4 次不同（多了契约冻结）"
+      ]
+    }
+  },
+
+  "new_guards_added_this_round": {
+    "③_stale_snapshot_guard": {
+      "what": "`guard` 默认**拒绝**陈旧快照（返回码 2，要求 `--refresh` 或换 label）",
+      "why": "事故：修复分支后重跑 `guard --label contractfreeze` 复用了 16:07 那次失败留下的快照（含跨 worktree 污染代码），于是**修复完仍然 ImportError**。静默复用是「基础设施失效伪装成正常」的又一变体",
+      "bug_found_and_fixed_during_implementation": "初版 `_stale_owned_files` 用模块级 `ROOT` 作基准，而快照可能来自别的工作区（`--store` 只换 STORE 不换 ROOT）—— 现有断言 ⑥ 立刻抓到这个回归。修法：把 `source_root` 记进 manifest，判定以它为准",
+      "assertions": "tools/test_workstream.py 9 -> **15 项**（⑦a-f：新建不算陈旧 / 改动我方判陈旧 / 仅改他方不误报 / guard 拒绝陈旧 / --refresh 放行 / refresh 后不再陈旧）"
+    },
+    "④_import_smoke_guard": {
+      "what": "tools/test_imports.py（4 项）：跨模块符号一致性",
+      "why": "事故：跨 worktree 复制文件使 `b062436/008e10b/c43bcf9/7dd9394` **四个提交均不可导入**，而 check_all 一直在主树跑故未发现 —— 分支一路「绿色」",
+      "reverse_verified": "故意把 `ModelCallError` 改名 -> 守卫正确报红"
+    }
+  },
+
+  "check_all": {
+    "main_tree": "**362 项 / 12 类**",
+    "branch": "**337 项 / 12 类**",
+    "all_pass": true,
+    "delta": "较上轮 +6（陈旧快照守卫 ⑦a-f）"
+  },
+
+  "v5_label_update": {
+    "before": "契约冻结：生成 ✅ / 门禁 ✅（真实运行 0 误报）/ 读取 ❌已修待重跑验证",
+    "after": "契约冻结：生成 ✅ / 读取 ✅ / 门禁 ✅（**真实运行完整验证**）；REQ-11 PASSED；全链 6/6；CONTRACT_MISSING 零误报",
+    "ready_to_submit": true,
+    "tag_file": "dist/V5-TAG.txt 已重写，含五次运行明细、两道新守卫、以及诚实声明（单次结果 / 不可直接对比通过率 / DNS 失败样本已排除）",
+    "package": "dist/arcbench-agent-v5.zip（745 KB / 202 文件）"
+  },
+
+  "five_run_overview": {
+    "baseline_samples": [
+      "run1 6/6  token 147,716  REQ-5 用例 2",
+      "run2 2/6  token  84,388  REQ-5 用例 6  ← 失败点 REQ-5",
+      "run3 6/6  token 144,336  REQ-5 用例 2",
+      "run4 4/6  token 123,955  REQ-5 用例 5  ← 失败点 REQ-11"
+    ],
+    "baseline_pass_rate": "**2/4 全链通过**",
+    "contract_freeze_run": "cf3 **6/6 全链通过**（配置不同，不计入基线统计）",
+    "excluded": "一次 DNS 环境失败（[Errno -3] name resolution）判为无效样本并排除",
+    "stable_across_all": [
+      "网关重试 **5/5 均为 0** —— 环境稳定，方差来自模型侧",
+      "隔离验证 **5/5 通过**",
+      "报告完整性 **5/5 均为 6/6**",
+      "REQ-1、REQ-3 **5/5 全部通过**"
+    ]
+  },
+
+  "not_done": {
+    "sample_4_rerun": "未做（按要求）",
+    "dependency_graph_context": "未做（触发条件未满足，按要求）",
+    "ran_from_main_tree": "未发生（主树 llm.py=8b96cf18bbd0，分支=53b57986690c，确认不同）",
+    "fabricated_results": "无。DNS 失败那次判为无效样本并排除，未计入任何统计",
+    "controlled_experiment": "未做 —— 契约冻结的**增益**需要对照实验才能归因，本轮只有单次结果"
+  },
+
+  "honest_caveat": "**契约冻结已真实生效**（三条路径全部验证）是确凿的；但「它是否提升了通过率」**未被证明** —— 本轮是单次结果且配置与基线不同。REQ-11 在本次是 4 次尝试通过，而基线中它出现过 2 次通过、1 次失败、1 次跳过。因此标签写「契约冻结已完整验证」（功能层面），**不写**「契约冻结提升了通过率」（因果层面）。"
+}

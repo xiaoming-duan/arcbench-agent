@@ -30,7 +30,9 @@ EXCLUDED_DIRS = {"backups", ".workstreams", "dist", ".arc", ".npm-cache",
                  # 里面是**同一份源码的第二份拷贝**，进包会让文件数翻倍
                  ".wt",
                  # pytest 运行缓存（跑一次测试就会生成）
-                 ".pytest_cache"}
+                 ".pytest_cache",
+                 # E2E 用的隔离数据库目录（模板 README 里写明由 test harness 创建）
+                 ".arc-test-db"}
 
 # 仅**顶层**的游离物。必须限定在顶层：同名文件在子目录里是正式文件 ——
 #   factory/loop.py、tools/test_gates.py、arcbench-agent-runtime/src 都是本体。
@@ -42,7 +44,10 @@ EXCLUDED_ROOT_NAMES = {
     "agent-blank-based (1).zip",    # 嵌套的 baseline agent 包（119KB，53 条目）
 }
 EXCLUDED_PREFIXES = (".verify-", ".probe-", ".zipcheck", ".zipv", ".bkcheck")
-EXCLUDED_SUFFIXES = (".log", ".pyc", ".pyo")
+EXCLUDED_SUFFIXES = (".log", ".pyc", ".pyo",
+                     # 运行期数据库：本地起一次服务就会生成（template/backend/database.db
+                     # 就是这么混进模板的）。它属于运行产物，不该进提交包。
+                     ".db", ".sqlite", ".sqlite3")
 
 
 def is_excluded(rel: str) -> bool:

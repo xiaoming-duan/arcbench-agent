@@ -1,0 +1,135 @@
+{
+  "headline": "P0-1 契约不可编辑化 + P0-2 错误分类重试预算均已落地并验证。check_all 13 类 / 395 项通过。P1/P2 按要求未做。",
+
+  "read_locations": {
+    "contracts_dir": "factory/contracts.py:57 `CONTRACTS_SUBDIR = .arc/contracts`；`contracts_dir()` / `contract_path()` / 新增 `hash_record_path()`",
+    "contract_read_path": "factory/generator.py:336-340 —— `load_frozen_calls(self.contracts_dir, requirement.req_id)`；**原先还有 `or requirement.cross_module_calls` 的回退，本轮已删除**",
+    "gate_judgments": [
+      "CONTRACT_MISSING（contracts.check_contract）—— 文件不存在 / 未冻结 / 与声明漂移 / 无法解析",
+      "CONTRACT_MISMATCH（testaudit.audit_dependency_usage）—— 合同在但调用签名不符",
+      "**CONTRACT_TAMPERED（本轮新增）** —— 哈希与冻结时不一致"
+    ],
+    "error_classification": "**原先不存在**。只有内联的失败信号（TEST_BROKEN / WEAK_TEST / TEST_FAILED / DESIGN_FAILED / 模型错误），没有任何统一分类器",
+    "max_repairs_usage": "factory/loop.py:1154 `while attempts <= self.config.max_repairs:` —— **四类错误共用一本账**；循环内共 5 处 `if attempts > self.config.max_repairs` 判定点（模型错误 / 引用不存在模块 / 依赖门禁 / 回归回退 / 主修复路径）",
+    "arch_doc_11_4": "软件工厂-项目架构文档.md:1140 `### 11.4 契约冻结`（v1.6 新增），在 11.3 之后、第 12 章之前"
+  },
+
+  "contract_immutable": {
+    "chmod_0444": true,
+    "chmod_detail": "合同与侧车写后均 `chmod 0444`。**明确标注为纵深防御而非安全边界** —— 同用户仍可 chmod 回来，真正的保证来自哈希比对",
+    "hash_recorded": true,
+    "hash_record_format": "`.arc/contracts/<req_id>.sha256` 三行：sha256 / 冻结时间戳 / frozen_by",
+    "frozen_metadata_added": ["frozen_at", "frozen_by", "hash"],
+    "metadata_detail": "`hash` 字段记录**不含该字段的正文哈希**（自指哈希不可能）；权威哈希是侧车（覆盖含 hash 字段的完整文件）。初版留了字段却填空 —— 已修并补断言禁止空值",
+    "llm_generator_hardcoded_path": true,
+    "no_yaml_direct_read": true,
+    "no_yaml_direct_read_detail": "**删除了 `frozen ... else requirement.cross_module_calls` 的回退**。保留回退等于留一条旁路：合同缺失时提示词仍拿到内存声明，表面正常而「冻结」未生效 —— 这正是上一轮真实 bug 的形态。现在合同缺失就是缺失：提示词无契约段 + 门禁判 CONTRACT_MISSING 阻断",
+    "CONTRACT_TAMPERED_added": true,
+    "reason_includes": ["expected_hash", "actual_hash", "timestamp"],
+    "reason_sample": "合同在冻结后被修改 —— 期望哈希 9e34e62766d98ee8… / 实际哈希 04bb17db5e68961f…（冻结于 2026-10-01 20:39:29）。合同是验收依据，实现阶段不得改动它",
+    "judgment_ordering": "**篡改优先于漂移** —— 文件被改时报更具体、更可操作的 TAMPERED，而非笼统的「与声明不一致」",
+    "three_judgments": {
+      "CONTRACT_MISSING": "合同**不存在**（或未冻结 / 与需求声明漂移）",
+      "CONTRACT_TAMPERED": "合同**存在但被改过**（哈希与冻结时不一致）",
+      "CONTRACT_MISMATCH": "合同未被改，但**实现/调用**不符合它"
+    },
+    "test_passed": "tests/test_contract_freeze.py **17 项**（12 -> 17）。新增：篡改判定 / 0444 只读生效 / 元数据齐全；漂移与篡改**分开测**（两种不同的事）",
+    "end_to_end_smoke": {
+      "generated": "[合同冻结] 已生成 1 份**只读**冻结合同（0444 + sha256 侧车）",
+      "permissions": "-r--r--r-- REQ-11.yaml / -r--r--r-- REQ-11.sha256",
+      "metadata": "frozen: true / frozen_at: '2026-10-01 20:39:29' / frozen_by: factory / hash: <64 位>",
+      "sidecar_matches": "侧车哈希 == 合同实际 sha256 ✅",
+      "tamper_detected": "chmod 644 后追加一行 -> 门禁判 **CONTRACT_TAMPERED** ✅（含期望/实际哈希与时间戳）"
+    }
+  },
+
+  "error_retry_budget": {
+    "classification": {"design": 2, "implementation": 3, "test": 2, "environment": 1},
+    "classifier_location": "factory/errors.py —— `classify(signal, detail)` + `RepairBudget`（独立计数账本）",
+    "signal_mapping": {
+      "测试错误": ["TEST_BROKEN", "INVALID_TEST_SYNTAX", "WEAK_TEST", "TEST_FILE_DRIFT"],
+      "实现错误": ["TEST_FAILED", "IMPLEMENTATION_REGRESSION"],
+      "设计错误": ["DESIGN_FAILED", "CONTRACT_MISSING", "CONTRACT_TAMPERED", "CONTRACT_MISMATCH", "DEPENDENCY_NOT_USED", "UNVERIFIED_DEPENDENCY"],
+      "环境错误": ["ENV_ERROR", "MODEL_ERROR", "DNS_ERROR", "QUOTA_EXHAUSTED", "GATEWAY_ERROR"]
+    },
+    "text_fallback": "未登记的信号按关键字兜底判环境（name resolution / timed out / quota / 429 / 503 / network 等）—— 这是实测 DNS 与网关故障的实际文本形态",
+    "unknown_default": "未知信号保守归 **implementation**（预算最大 3）—— 宁可多给一次机会，也不要把可能的真问题当环境问题直接终止",
+    "env_error_separate_budget": true,
+    "unified_max_repairs_removed": true,
+    "unified_max_repairs_detail": "循环上界改为 `sum(budgets) + 1`，实际停止由各类预算分别决定；循环内 **5 处** `if attempts > max_repairs` 全部替换为分类计费（残留 0 处）",
+    "observability": "账本写入 `result.gate_audits[\"repair_budget\"]`（budgets / spent / left / history / exhausted）",
+    "config": "FactoryConfig 四个字段 `repair_budget_{design,implementation,test,environment}`；环境变量 FACTORY_BUDGET_{DESIGN,IMPL,TEST,ENV}",
+    "test_passed": "tests/test_retry_budget.py **30 项**（新增）",
+
+    "self_inflicted_bugs_caught_by_existing_assertions": [
+      {
+        "bug": "预算语义写成 `spent < budget`",
+        "effect": "budget=1 的环境错误在**首轮就判死** ——「重试 1 次」变成「重试 0 次」",
+        "caught_by": "现有断言 **T35a**（实现调用瞬时失败后会重试）",
+        "fix": "改为 `spent <= budget`（预算是「允许的重试次数」，不含首次）"
+      },
+      {
+        "bug": "`write_contracts` 重写前只解除**合同**的只读，没解除**侧车**",
+        "effect": "第二轮冻结在同一输出目录必 PermissionError",
+        "caught_by": "test_regeneration_overwrites_stale_contract",
+        "fix": "两个文件都先 chmod 0644"
+      },
+      {
+        "bug": "`hash` 字段留了却填空字符串",
+        "effect": "字段形同虚设，无法用于人眼比对两份合同是否同源",
+        "caught_by": "本轮新增断言（禁止空值 + 断言 64 位）",
+        "fix": "填入「不含 hash 字段的正文哈希」"
+      }
+    ]
+  },
+
+  "arch_doc_update": {
+    "section": "11.4",
+    "doc_version": "v1.6 -> **v1.7**",
+    "immutable_control_added": true,
+    "immutable_control_detail": "**11.4.1 不可编辑控制的实现方式** —— 三层表格（权限位 / 哈希侧车 / 元数据），并明确写「权限位是纵深防御不是安全边界」",
+    "tampered_judgment_added": true,
+    "three_judgments_relationship": true,
+    "three_judgments_detail": "**11.4.2 三种判定的关系** —— 含关键澄清：MISSING 里含**漂移**（文件没动但声明变了），与 TAMPERED（文件被改）是两件不同的事，故分开判定；并记录判定顺序（篡改优先）",
+    "verification_section": "**11.4.3 验证** —— 17 项、覆盖面清单、漂移与篡改分开测的理由",
+    "module_list_updated": "9.1 目录树 + 9.2 模块表均补入 `errors.py`（架构核验断言 ⑦/⑦b 起初报红，正是核验工具在履职）"
+  },
+
+  "check_all": {
+    "assertions_passed": "**395 项 / 13 类**",
+    "all_pass": true,
+    "delta": "较上轮 +33（契约冻结 12 -> 17；新增错误分类预算 30 项）",
+    "suites": 13
+  },
+
+  "gate_run": {
+    "test_imports": "✅ 4 项通过",
+    "pytest_tests_dir": "**52 passed / 10 failed**",
+    "pytest_note": "10 项失败**全部来自 `tests/test_dag.py`** —— 那是刻意保持红色的 DAG 断言套件（D1–D10），**从未登记进 check_all**（登记会破坏其全绿不变量）。这是已知且预期的状态，不是本轮引入的回归",
+    "targeted_suites": {
+      "tests/test_contract_freeze.py": "**17 passed**",
+      "tests/test_retry_budget.py": "**30 passed**"
+    }
+  },
+
+  "not_this_round": {
+    "P1_gate_meta_verification": "未做（按要求等 P0 落地）",
+    "P1_context_layer": "未做（按要求等 P0 落地）",
+    "P2_phase_isolation": "未做（按要求等 P1 落地）",
+    "P2_dynamic_test_limit": "未做（按要求等 REQ-5 方差的进一步数据）",
+    "ch20_governance": "未写（按要求等 P1/P2 落地）",
+    "real_run_of_P0_features": "**未做** —— 两个 P0 特性只有合成 + 冒烟验证，尚未用真实模型跑过 closure6"
+  },
+
+  "next_step": {
+    "recommendation": "补跑一次 closure6 验证两个 P0 特性的真实效果",
+    "specific_questions": [
+      "契约是否真的 0444 且门禁零误报（CONTRACT_TAMPERED 不该在正常路径触发）",
+      "`repair_budget` 账本在真实运行中的分布 —— 环境类花费几次、实现类花费几次",
+      "REQ-11 的尝试次数是否因契约只读化而变化（基线 2/4/跳过，契约冻结轮 4）",
+      "分类预算是否让「环境错误」不再拖累整链（上一次 DNS 失败让 REQ-11 连设计都没做完）"
+    ],
+    "why_worth_it": "P0-2 的核心主张（环境错误不挤占实现预算）在合成测试下成立，但其**真实收益**需要一次真实运行才能观测",
+    "estimated_cost": "约 27-40 分钟 / 约 150-190k token"
+  }
+}

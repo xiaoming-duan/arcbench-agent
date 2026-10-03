@@ -1,0 +1,161 @@
+{
+  "headline": "按指定规格补齐两个 P0：**契约内嵌 integrity 字段**（+ 侧车两路互补）与 **RETRY_BUDGET 八信号分类型预算**。check_all 主树 401 项 / 分支 376 项 / 14 类全通过。同时修掉我**重复犯的**跨 worktree 污染。",
+
+  "task_vs_previous_round": {
+    "note": "本轮的 P0-1/P0-2 与上一轮**同名但设计不同**。上一轮已实现，本轮按本次规格改造并对齐差异。",
+    "P0_1_diff": {
+      "spec_this_round": "`integrity: {sha256, algorithm}` **写在合同 YAML 内**，门禁重算哈希与它比对",
+      "previous_round": "**侧车** `.arc/contracts/<req>.sha256`（三行：哈希/时间戳/frozen_by）+ `hash` 字段",
+      "resolution": "**两者并存，互补**：内嵌字段覆盖**正文**（可移植自证）；侧车覆盖**完整文件字节**（权威）。已实测「删掉侧车后仅凭内嵌仍能发现正文篡改」"
+    },
+    "P0_2_diff": {
+      "spec_this_round": "`RETRY_BUDGET` 按**信号**细分 8 类（TEST_FAILED 3 / DEPENDENCY_NOT_USED 3 / CONTRACT_MISMATCH 2 / CONTRACT_MISSING 1 / CONTRACT_TAMPERED 1 / TEST_BROKEN 2 / WEAK_TEST 2 / ENVIRONMENT 1）",
+      "previous_round": "四个**类别**（design 2 / implementation 3 / test 2 / environment 1）+ 信号→类别映射",
+      "resolution": "**改为信号级**（本轮规格更细）。计费键 = 信号；表外信号回退到四类兜底。`RepairBudget` 已改造，测试已同步"
+    }
+  },
+
+  "read_locations": {
+    "contracts_generation": "factory/contracts.py:94 `contract_payload()`（产字段）、:121 `write_contracts()`（写文件 + 侧车 + chmod）、:77 `CONTRACT_MODE = 0o444`、:89 `hash_record_path()`",
+    "gate_judgments": [
+      "CONTRACT_MISSING —— 文件不存在 / 未冻结 / 与声明漂移 / 无法解析（contracts.check_contract）",
+      "CONTRACT_TAMPERED —— **两路**：内嵌 `integrity.sha256` 与正文不符（可移植），或侧车哈希与完整文件不符（权威）",
+      "CONTRACT_MISMATCH —— 合同未被改，但实现/调用签名不符（testaudit.audit_dependency_usage）"
+    ],
+    "config_max_repairs": "factory/config.py:61 `max_repairs: int = 2`（统一预算，**已不再被重试循环使用**）；新增 :RETRY_BUDGET（ClassVar）+ 四个 `repair_budget_*` 兜底字段",
+    "retry_loop": "factory/loop.py:1158 建账本 → 5 处 `budget.charge(signal)`（环境 / 实现引用不存在模块 / 依赖门禁 / 回归回退 / 主修复路径）。循环内 `max_repairs` 残留 **0 处**",
+    "arch_doc_11_4": "软件工厂-项目架构文档.md:1142 `### 11.4`（v1.6）；子节 11.4.1 不可编辑控制 / 11.4.2 三种判定 / 11.4.3 验证"
+  },
+
+  "P0_1_contract_integrity": {
+    "integrity_field_added": true,
+    "field_shape": "`integrity: {sha256: <64位>, algorithm: \"sha256\"}`",
+    "sha256_recorded": true,
+    "coverage": "覆盖**正文** —— 排除 `hash` 与 `integrity` 两个自指字段后的序列化哈希",
+    "why_not_self_covering": "哈希写进文件后再算哈希，值就变了（**自指无解**）。所以内嵌字段只能覆盖正文，用于**可移植自证**；「连 integrity 字段一起改」由侧车兜住",
+    "sidecar_kept": true,
+    "sidecar_role": "覆盖**完整文件字节**（含 integrity 块）—— 权威",
+    "shared_hash_function": "`hash_of_body()` —— 生成与门禁**共用同一口径**。两边各写一套是这类校验最经典的失效方式（生成时算 A、校验时算 B，于是永远不等或永远相等）",
+    "gate_verifies_hash": true,
+    "gate_verifies_both": "门禁先校内嵌正文哈希，再校侧车完整文件哈希",
+    "CONTRACT_TAMPERED_added": true,
+    "reason_includes": ["expected_hash", "actual_hash", "timestamp"],
+    "reason_samples": [
+      "合同**正文**在冻结后被修改 —— 期望哈希 a2ff3d00ebb492b9… / 实际哈希 638719b84459b47b…（冻结于 2026-10-01 20:46:32）。合同是验收依据，实现阶段不得改动它",
+      "合同在冻结后被修改 —— 期望哈希 9e34e62766d98ee8… / 实际哈希 04bb17db5e68961f…（冻结于 …）"
+    ],
+    "algorithm_checked": "`algorithm != sha256` -> 直接 TAMPERED（无法校验就不能放行）",
+    "three_judgments_relationship": "MISSING（不存在或漂移）/ TAMPERED（存在但被改）/ MISMATCH（未改但实现不符）",
+    "test_passed": "**tests/test_contract_integrity.py 3 项**（新建，按任务指定文件名）+ tests/test_contract_freeze.py **20 项**"
+  },
+
+  "P0_2_retry_budget": {
+    "RETRY_BUDGET_defined": true,
+    "location": "factory/config.py（ClassVar —— 写成普通字段会被 dataclass 以「可变默认值」拒绝）",
+    "map": {
+      "TEST_FAILED": 3,
+      "DEPENDENCY_NOT_USED": 3,
+      "CONTRACT_MISMATCH": 2,
+      "CONTRACT_MISSING": 1,
+      "CONTRACT_TAMPERED": 1,
+      "TEST_BROKEN": 2,
+      "WEAK_TEST": 2,
+      "ENVIRONMENT": 1
+    },
+    "counting_key": "**信号**（如 CONTRACT_MISSING / TEST_FAILED），非粗粒度类别",
+    "rationale": "合同类信号预算最紧（1–2）—— 合同问题**改实现修不好**，多给轮次纯属浪费；实现类最宽（3）",
+    "class_fallback": "表外信号回退到四类兜底预算（design 2 / implementation 3 / test 2 / environment 1），不会「没预算可用」",
+    "env_error_separate_budget": true,
+    "env_budget": 1,
+    "unified_max_repairs_removed": true,
+    "unified_max_repairs_detail": "循环上界改为 `sum(信号预算) + sum(类别预算) + 1`；循环内 5 处 `if attempts > max_repairs` **全部替换**为 `budget.charge(signal)`，残留 0 处",
+    "per_class_independent_count": true,
+    "dependency_verdict_used_as_signal": "依赖违规按**具体判定**计费（NOT_USED / MISMATCH / MISSING 各有不同预算），而不是笼统记一笔",
+    "observability": "账本写入 `result.gate_audits[\"repair_budget\"]`（signal_budgets / class_budgets / spent / left / history / exhausted）",
+    "test_passed": "**tests/test_retry_budget.py 33 项**（含 3 条本轮新增：映射逐项钉住 / 信号预算优先于类别兜底 / 合同类预算最紧）"
+  },
+
+  "arch_doc_update": {
+    "section": "11.4",
+    "doc_version": "v1.7 -> **v1.8**",
+    "tampered_judgment_added": true,
+    "integrity_explained": true,
+    "immutable_control_table": "四层（权限位 / 内嵌 integrity / 侧车 / 元数据）各标**覆盖范围**与作用",
+    "two_path_explained": "明确写出「两路哈希为什么都要」+ 自指无解 + 生成与门禁共用 `hash_of_body()` 的理由",
+    "tampered_two_paths": "11.4.2 补入「TAMPERED 的两个触发路径」：正文被改 -> 内嵌不匹配；完整字节被改（含只改 integrity 自身）-> 侧车不匹配",
+    "verification_updated": "11.4.3 补入 `tests/test_contract_integrity.py` 3 项与 freeze 20 项"
+  },
+
+  "check_all": {
+    "main_tree": "**401 项 / 14 类**",
+    "branch": "**376 项 / 14 类**",
+    "all_pass": true,
+    "delta": "较上轮 +6（新增契约完整性套件 3 项 + 分类型预算新增 3 项）",
+    "gate_run": {
+      "tools/test_imports.py": "✅ 4 项",
+      "tests/test_contract_integrity.py + tests/test_retry_budget.py": "✅ 36 passed"
+    }
+  },
+
+  "self_inflicted_bugs": [
+    {
+      "bug": "`RETRY_BUDGET: dict = {...}` 写在 `@dataclass` 内被当成字段",
+      "effect": "`ValueError: mutable default <class 'dict'> for field RETRY_BUDGET is not allowed` —— 整个 factory 包无法导入",
+      "fix": "改为 `ClassVar[dict[str, int]]`（类常量，非字段）"
+    },
+    {
+      "bug": "`classify(\"ENVIRONMENT\")` 掉进「未知信号 -> implementation」兜底",
+      "effect": "环境预算（1）被当成实现预算（3）—— **恰好抹掉 P0-2 的核心收益**。裸信号名 `ENVIRONMENT` 没在信号→类别表里登记",
+      "fix": "登记 `\"ENVIRONMENT\": CLASS_ENVIRONMENT`"
+    },
+    {
+      "bug": "`spent_in_class` 生成器解包写错（`(k,_), n` 对 `(h, spent)`）",
+      "effect": "`ValueError: too many values to unpack`",
+      "fix": "改为按 history 逐条计数"
+    },
+    {
+      "bug": "`describe_budget` 对空账本也列出全部 8 个 `=0/N`",
+      "effect": "日志被零值淹没，真正有用的信息看不见",
+      "fix": "只列**实际发生过**的信号；空账本输出 `(未发生重试)`"
+    },
+    {
+      "bug": "**第 7 次同类自伤**：拆出的 `test_contract_integrity.py` 里 fixture 的 SPEC 只有 **1 条**调用，而篡改用 `d[\"cross_module_calls\"][:1]` 截断",
+      "effect": "**篡改是空操作** -> 哈希不变 -> 断言假绿（本该报 TAMPERED 却 ok=True）",
+      "fix": "SPEC 补第二条调用（与真实规格一致）；并**补一条前提断言**「篡改必须真的改了字节，否则断言前提不成立」",
+      "significance": "这是同一模式的第 7 次：**判据/夹具不满足自身前提，看起来像被测对象正常**"
+    },
+    {
+      "bug": "**跨 worktree 污染第二次**：本轮我又反复从主树 `cp` 文件到分支，把并发方的 `ModelQuotaExhaustedError` 带进分支 `loop.py`，而分支 `llm.py` 是重构前版本",
+      "effect": "分支 check_all 3 类失败（ImportError）",
+      "difference_from_last_time": "并发方的 llm 重构**本次已提交**（f200cc7 / 686ca1b / 2220d7b 在 main 上），不是未提交的在飞改动 —— 所以修法是**前向同步**（分支取用主树 llm.py），而非上次的「回退 + 重放」",
+      "lesson": "跨 worktree 同步必须**整体同步**，不能按文件挑着 cp —— 挑着 cp 必然产生「A 模块新版 + B 模块旧版」的半新半旧状态，而 import 是最先断裂的地方",
+      "guard_worked": "`tools/test_imports.py` **两次都立刻抓到**（该守卫正是上次事故的产物）"
+    }
+  ],
+
+  "branch_state_note": {
+    "what_changed": "分支 `llm.py` 由 `53b57986690c`（重构前）同步为主树版本（含配额终局判定与两后端记账对拍）",
+    "implication": "**分支不再与基线样本 1–4 的 llm.py 逐字节一致**。分支已定位为**特性分支**，不是基线快照",
+    "baseline_comparability": "基线可比性由 `.wt/baseline4`（固定提交 1157538）保证，不受影响"
+  },
+
+  "not_this_round": {
+    "P1_gate_meta_verification": "未做（按要求）",
+    "P1_context_layer": "未做（按要求）",
+    "P2_dynamic_test_limit": "未做（按要求）",
+    "P2_phase_isolation": "未做（按要求）",
+    "ch20_governance": "未写（按要求）",
+    "real_run_verification": "**未做** —— 两个 P0 特性仍只有合成 + 冒烟验证，未用真实模型跑过 closure6"
+  },
+
+  "next_step": {
+    "recommendation": "补跑一次 closure6，验证两个 P0 的真实效果",
+    "specific_questions": [
+      "`repair_budget` 账本在真实运行中的分布 —— 八信号各自花费几次",
+      "CONTRACT_TAMPERED 在正常路径**零触发**（不该误报）",
+      "合同 0444 只读是否影响任何正常流程",
+      "分类型预算是否让「环境错误」不再拖累整链（上次 DNS 失败让 REQ-11 连设计都没做完）"
+    ],
+    "note": "分支 llm.py 已前向同步，本次运行的 llm 版本与基线 1–4 不同 —— 分析通过率时需注明"
+  }
+}

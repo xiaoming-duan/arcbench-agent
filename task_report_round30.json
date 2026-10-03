@@ -1,0 +1,136 @@
+{
+  "headline": "补跑完成：P0-1/P0-2 **机制真实生效**（REQ-11 尝试 7 次、依赖门禁预算正确耗尽、零误报）。但暴露一个真 bug —— **账本被整体覆盖**，可观测性为零。另因我此前 cp 半同步引出分支整合问题，已按新纪律用 git 处理。",
+
+  "pre_run": {
+    "branch": "factory-verify @ fef6274（特性分支，含 P0-1/P0-2）",
+    "P0_present": "contracts.py 含 integrity（14 处）/ errors.py 存在 / config.RETRY_BUDGET 存在",
+    "llm_py_differs_from_baseline": true,
+    "llm_py_hashes": {"branch": "8b96cf18bbd0", "baseline_1_4": "53b57986690c", "diff_lines": 110},
+    "llm_diff_content": "`_QUOTA_MARKERS` / `_is_quota_exhausted()` / `_retry_allowance()` —— 配额终局判定与两后端重试口径统一",
+    "baseline_comparability_note": "**本次通过率不可与 cf3 直接对比归因** —— cf3 用旧 llm.py。二者只可并列陈述。严格可比需从 `.wt/baseline4`（固定提交 1157538）跑，但那不含 P0-1/P0-2，本轮按要求不做",
+    "guards": "tools/test_imports.py ✅ 4 项；污染扫描：factory/ 下无 ModelQuotaExhaustedError 残留",
+    "snapshot": "guard --refresh（label p0v），强制重新冻结"
+  },
+
+  "run_result": {
+    "guard_used": true,
+    "snapshot_force": true,
+    "isolation_verified": "✅ 冻结副本逐文件未变",
+    "wall_clock": "20:55:01 → 21:27:11 = 32 分 10 秒",
+    "report_completeness": "6/6",
+    "full_chain_result": "**4 通过 / 1 失败 / 1 上游失败跳过**（尝试 5 个）—— 非全链通过",
+    "gateway_retries": 0,
+    "total_token": 146874,
+    "calls": 28,
+
+    "repair_budget_distribution": {
+      "source": "**从日志重建** —— 报告里的账本因下面的 bug 全部丢失",
+      "TEST_FAILED": 0,
+      "DEPENDENCY_NOT_USED": "**4**（预算 3）-> **耗尽 -> BLOCK** ✅",
+      "CONTRACT_MISMATCH": 0,
+      "CONTRACT_MISSING": 0,
+      "CONTRACT_TAMPERED": 0,
+      "TEST_BROKEN": 0,
+      "WEAK_TEST": 0,
+      "ENVIRONMENT": "**0**（预算 1）—— 本轮无环境错误",
+      "IMPLEMENTATION_REGRESSION": "3（未列入 RETRY_BUDGET -> 类别兜底 implementation=3）-> 未耗尽",
+      "reconstruction_evidence": "日志中 `[依赖门禁] REQ-11 测试通过` ×4、`[回归] REQ-11 重写把测试` ×3",
+      "key_insight": "REQ-11 共尝试 **7 次** —— 旧统一 `max_repairs=3` 时**不可能到 7**。这直接证明分类型预算确实按不同信号独立放宽了总额度"
+    },
+
+    "CONTRACT_TAMPERED_triggered": "**0 次**（正常路径零误报 ✅）",
+    "CONTRACT_MISSING_triggered": "0 次",
+    "CONTRACT_MISMATCH_triggered": "0 次",
+    "contract_readonly_ok": true,
+    "contract_readonly_evidence": "运行产物 `.arc/contracts/` 下 `-r--r--r-- REQ-11.yaml` 与 `-r--r--r-- REQ-11.sha256`，全程未阻塞任何流程 ✅",
+    "contract_freeze_log": "`[合同冻结] 已生成 1 份**只读**冻结合同（0444 + sha256 侧车）`",
+    "env_error_not_blocking": "本轮 ENVIRONMENT 花费 0（网关重试 0，无环境故障）—— **无对照组**，该主张本轮仅未被反驳，未被验证",
+
+    "per_req_status": {
+      "REQ-1":  {"state": "PASSED", "attempts": 1, "tokens": 17495},
+      "REQ-5":  {"state": "PASSED", "attempts": 1, "tokens": 13517},
+      "REQ-3":  {"state": "PASSED", "attempts": 2, "tokens": 14918},
+      "REQ-7":  {"state": "PASSED", "attempts": 2, "tokens": 23013},
+      "REQ-11": {"state": "FAILED", "attempts": 7, "tokens": 77931, "reason": "依赖门禁预算耗尽（DEPENDENCY_NOT_USED 4 > 3）"},
+      "REQ-12": {"state": "UPSTREAM_FAILED", "attempts": 0}
+    },
+
+    "decision_tree_branch": "落在「某需求失败，其他原因」-> 按失败模式分析。**不是** CONTRACT_TAMPERED 误报，**不是**环境失败，**不是** budget 分布异常（ENVIRONMENT=0）"
+  },
+
+  "real_bug_found_by_this_run": {
+    "what": "**repair_budget 账本被整体覆盖** —— 6 个需求的账本全部丢失",
+    "how_found": "报告里 `gate_audits.repair_budget` 全部缺失（`（无账本）`），而 REQ-11 的 `尝试 7` 说明预算机制明明在工作",
+    "root_cause": "账本写在循环结束处（`result.attempts = attempts` 之后），而门禁段的 `result.gate_audits = {...}` 会**整体覆盖**它",
+    "deceptive_part": "**机制在正确工作，可观测性却为零** —— 只看报告会以为预算没生效；只看日志才知道花了 4+3 次。若无日志重建，会得出「P0-2 未生效」的错误结论",
+    "fix": "账本移入门禁赋值**块内**（`\"repair_budget\": budget.to_dict()`）",
+    "regression_guard": "新增 **T40**（源码级断言）：T40a 账本必须在赋值块内 / T40b 不得再出现在赋值之前（避免一份被覆盖的死代码）/ T40c 账本结构完整",
+    "significance": "这是**合成测试与冒烟验证都没抓到**的问题 —— 它们只验证账本内容正确，不验证它是否**存活到最终报告**"
+  },
+
+  "arch_doc_ch19_2_7": {
+    "added": true,
+    "actual_section_number": "**19.2.8**",
+    "numbering_note": "19.2.7 已被《判据双向验证》占用（v1.5 新增），故本次新增为 **19.2.8**",
+    "fixture_premise_assertion": true,
+    "seven_same_type_incidents_listed": true,
+    "content": "七次同类自伤的对照表（T36 裸子串 / fixture 转义 / 元断言误导 / 提示词校验 / 元测试 dict in / 快照路径 / **fixture SPEC 截断**）+ 通用形式（记录改前状态 -> 执行修改 -> 断言确实不同 -> 才断言被测对象）",
+    "core_value": "把第 7 次的模式**从「靠注意」变成「可检测」**：以后任何修改型 fixture 都可加一条「操作必须真的改变了目标」的前提断言",
+    "doc_version": "v1.8 -> **v1.9**"
+  },
+
+  "operation_discipline": {
+    "no_cp_between_worktrees": true,
+    "use_git_cherry_pick_or_rebase": true,
+    "proactive_not_reactive": true,
+    "location": "BRANCH_SEPARATION.md **§八 操作纪律：禁止跨 worktree 用 cp** / **§九 `llm.py` 前向同步的影响**",
+    "content": "两次真实事故的对照表（4 个提交不可导入 / 3 类断言失败）；「按文件挑着 cp 必然产生半新半旧，而 import 是最先断裂的地方」；同步的**单位是提交，不是文件**；test_imports.py 是**事后**发现，禁止 cp 是**事前**阻止",
+    "executable_assertions": "tools/test_workstream.py 新增 ⑧/⑧b/⑧c（源码级扫描文档中的 cp 命令 + 纪律文本核查），9 -> **18 项**",
+    "self_application": "本轮我自己又用 cp 造出半新半旧（见下），纪律当场被验证有必要"
+  },
+
+  "third_half_sync_incident": {
+    "what": "我此前用 cp 从主树挑文件到分支，只取了 `test_gates.py` 与 `llm.py`，**漏了 `pipeline.py`** -> T37j/T37k 报红（配额中止能力缺失）",
+    "handling_per_new_discipline": [
+      "① 在 main 上提交 T40（`a14e47d`）—— 让 git 能提供该文件",
+      "② 分支用 `git checkout main -- tools/test_gates.py` 取（**不用 cp**）",
+      "③ 发现 `pipeline.py` 仍缺 -> 尝试 `git merge main`，但 **11 个文件冲突**（含 `task_report.json` / 架构文档）",
+      "④ 判断 merge 超出本任务范围 -> **中止合并**",
+      "⑤ 改为**最小一致修复**：只把 main 的配额中止能力合入分支 `pipeline.py`，保住我的契约冻结接线（3 处仍在）",
+      "   - 循环内 `try/except ModelQuotaExhaustedError -> break`（立即收摊）",
+      "   - `report.ok` 加 `not quota_exhausted` guard",
+      "   - `quota_exhausted` 初始化"
+    ],
+    "lesson": "**同一类问题第三次**。cp 挑文件必然造成半新半旧。本次因 main 与分支分叉较深（11 文件冲突），完整的 merge 应作为**独立任务**做 —— 不该顺手在验证轮里做，那会混淆「P0 验证」与「分支整合」两个变量",
+    "recommendation": "**分支整合（merge main）应作为下一个独立任务**，不与特性验证混在一起"
+  },
+
+  "check_all": {
+    "main_tree": "**408 项 / 14 类**",
+    "branch": "**408 项 / 14 类**",
+    "all_pass": true,
+    "delta": "较上轮 +4（T40 三条 + 纪律断言三条，另冻结套件微调）"
+  },
+
+  "v6_package": {
+    "filename": "dist/arcbench-agent-v6.zip",
+    "size": "784 KB / 209 文件",
+    "integrity": "✅ 无损坏、无重复项",
+    "tag_file": "V6-TAG.txt 已打入包内",
+    "tag": "相对 v5 新增内嵌 integrity 字段（两路哈希互补）、八信号分类型预算、19.2.8 前提断言、禁止跨 worktree 用 cp 纪律；补跑验证 P0 机制真实生效（REQ-11 尝试 7 次、依赖门禁预算正确耗尽、CONTRACT_TAMPERED 零误报）；诚实声明 llm.py 与基线差 110 行故通过率不可与 cf3 直接对比归因",
+    "pushed": "release/v6 分支（GitHub）"
+  },
+
+  "not_this_round": {
+    "baseline_comparison_run": "未做（按要求，可选非必须）",
+    "run_from_baseline4": "未做（按要求 —— P0-1/P0-2 不在基线提交里）",
+    "cp_between_worktrees": "**本轮又违反了**（见 third_half_sync_incident），已按纪律用 git 补救",
+    "full_merge_of_main": "未做 —— 判断应作为独立任务（11 文件冲突，会混淆变量）"
+  },
+
+  "next_step": {
+    "recommendation": "**把「分支整合 merge main」作为下一个独立任务**，不要再顺手做",
+    "why": "main 已领先分支 5 个提交（配额中止 / 实现侧模块图审计 / llm 记账补齐 等），分叉达 11 个文件冲突。整合本身是一次实打实的工程动作，与特性验证混在一起会无法归因",
+    "after_merge": "再补跑 closure6 验证 P0 + 合并后的代码，并观测修复后的 `repair_budget` 账本（本次修复尚未经真实运行验证）"
+  }
+}

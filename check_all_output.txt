@@ -1,23 +1,29 @@
 ==============================================================================
-统一校验：17 类断言
+统一校验：23 类断言
 ==============================================================================
 ✅  声称变更核查       tools/verify_changes.py      ✅ 全部 24 项声称的改动均已核实存在
 ✅  import 冒烟守卫  tools/test_imports.py        ✅ 全部 4 项断言通过
-✅  门禁行为断言       tools/test_gates.py          ✅ 全部 193 项断言通过
+✅  门禁行为断言       tools/test_gates.py          ✅ 全部 207 项断言通过
 ✅  度量函数审计       tools/test_measures.py       ✅ 全部 18 项断言通过
 ✅  依赖使用审计       tools/test_dependency_audit.py ✅ 全部 46 项断言通过
 ✅  D10 修复验证     tools/verify_d10.py          ✅ 全部 6 项断言通过
 ✅  依赖边方向断言      tools/test_call_edges.py     ✅ 全部 11 项 call edge / node contract 断言通过
 ✅  UI 契约        tests/test_ui_contracts.py   ✅ 8 项断言通过（pytest）
-✅  Playwright E2E tests/test_playwright_e2e.py ✅ 11 项断言通过（pytest）
-✅  UI 门禁        tests/test_ui_gate.py        ✅ 18 项断言通过（pytest）
+✅  Playwright E2E tests/test_playwright_e2e.py ✅ 14 项断言通过（pytest）
+✅  UI 门禁        tests/test_ui_gate.py        ✅ 20 项断言通过（pytest）
+✅  WEAK_TEST 分型 tests/test_weak_test_classification.py ✅ 18 项断言通过（pytest）
+✅  UI_TEST_WEAK 判据 tests/test_ui_test_weak.py   ✅ 14 项断言通过（pytest）
+✅  UI 探针 error_messages tests/test_ui_probe.py       ✅ 8 项断言通过（pytest）
+✅  UI 契约正文提取    tests/test_ui_contract_extraction.py ✅ 22 项断言通过（pytest）
 ✅  契约完整性        tests/test_contract_integrity.py ✅ 3 项断言通过（pytest）
 ✅  错误分类预算       tests/test_retry_budget.py   ✅ 33 项断言通过（pytest）
 ✅  契约冻结         tests/test_contract_freeze.py ✅ 17 项断言通过（pytest）
+✅  治理套件         tools/test_governance_kit.py ✅ 全部 10 项断言通过
+✅  RED 三态判定     tests/test_valid_red_unverified.py ✅ 6 项断言通过（pytest）
 ✅  判据双向验证       tests/test_assertion_meta.py ✅ 4 项断言通过（pytest）
 ✅  契约合成验证       tests/test_contract_mismatch.py ✅ 全部 25 项断言通过
 ✅  工作流隔离        tools/test_workstream.py     ✅ 全部 19 项断言通过
 ✅  架构核验工具       tools/test_audit_architecture.py ✅ 全部 10 项断言通过
 ==============================================================================
-✅ 全部 17 类断言通过（合计 450 项）
+✅ 全部 23 类断言通过（合计 547 项）
    任何关键改动之后都应重跑本入口，而不是靠肉眼确认。
