@@ -297,6 +297,15 @@ class RequirementResult:
     state: str
     attempts: int = 0
     red_first_ok: bool | None = None
+    # RED 阶段的三态判定（步骤⑤）：
+    #   "VALID_RED"            失败原因**已确认**是「实现尚未生产」（import 不到）
+    #   "VALID_RED_UNVERIFIED" 测试确实失败了，但原因**不是**已确认的那一种
+    #                          -> 记录但**不算 WEAK_TEST**（它是有效失败，只是成因未归类）
+    #   "WEAK_TEST"            RED 阶段**根本没失败**（测试无效）
+    # 为什么需要第三态：此前只有二值（weak / 非 weak）。「失败原因未确认」与
+    # 「已确认是实现缺失」被合并成同一个"通过"，读日志的人无法区分
+    # 「我确认过它为什么失败」与「它失败了但我不知道为什么」。
+    red_verdict: str = ""
     note: str = ""
     # A：计划内测试文件（白名单）
     test_plan_files: list[str] = field(default_factory=list)
@@ -370,6 +379,7 @@ REQUIREMENT_RESULT_FIELDS: tuple[str, ...] = (
     "state",
     "attempts",
     "red_first_ok",
+    "red_verdict",
     "note",
     "test_rewrites",
     "test_case_count",
@@ -479,6 +489,7 @@ class RunReport:
                     "state": r.state,
                     "attempts": r.attempts,
                     "red_first_ok": r.red_first_ok,
+                    "red_verdict": r.red_verdict,
                     "note": r.note,
                     "test_rewrites": r.test_rewrites,
                     "test_case_count": r.test_case_count,

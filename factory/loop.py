@@ -1208,6 +1208,24 @@ class TddLoop:
         broken_test = self._is_uncollectable(red)
         result.red_first_ok = not weak
         result.broken_test = broken_test
+
+        # ---- RED 三态判定（步骤⑤）----
+        # 此前只有二值：weak（阻断）或「通过」。于是「失败原因已确认是实现缺失」
+        # 与「它失败了但我不知道为什么」在结果上是同一个「通过」。
+        _expected = self._expected_red_reason(red)
+        if weak:
+            result.red_verdict = "TEST_BROKEN" if broken_test else "WEAK_TEST"
+        elif _expected is not None:
+            result.red_verdict = "VALID_RED"
+        else:
+            result.red_verdict = "VALID_RED_UNVERIFIED"
+            logger.warning(
+                "[门禁] %s VALID_RED_UNVERIFIED —— 测试确实失败了，但失败原因"
+                "**不是**已确认的「实现尚未生产」（import 不到）。"
+                "按有效 RED 放行，但成因未归类，记入 red_verdict 供复核。摘要: %s",
+                req_id, (red.summary() or "")[:160],
+            )
+        logger.info("[门禁] %s red_verdict=%s", req_id, result.red_verdict)
         if weak:
             # 阻断：不进入实现阶段
             reason = (self._broken_test_reason(red, test_paths) if broken_test
