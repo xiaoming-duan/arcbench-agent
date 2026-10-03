@@ -1,0 +1,11 @@
+# dsh-governance-kit 的挂载配置。
+#
+# 只插入一个 Host 插件行：本包的两个 Tool 都在 index.js 的 apply 内注册，
+# 由 `inject: ['tools']` 保证只在 tools 服务存在时激活。
+#
+# 不改动任何既有插件行 —— 本层是**新增**的治理层，
+# 不替代编排插件（dsh-ai-team / dsh-engineering-control-plane）。
+- insert:
+    - id: dsh-governance-kit
+      name: '@local/dsh-governance-kit'
+      config: {}
