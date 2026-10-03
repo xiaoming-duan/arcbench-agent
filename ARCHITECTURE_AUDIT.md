@@ -239,6 +239,8 @@ python3 main.py <req_dir> --output-dir <out> --type web
 export PYTHONPATH=arcbench-agent-runtime/src:.
 python3 main.py requirements_sample --output-dir out-audit --type web --install-deps never
 python3 tools/audit_architecture.py --json architecture_audit.json
-python3 tools/test_audit_architecture.py     # 核验工具自身的 9 项断言
-python3 tools/check_all.py                   # 全量 216 项（8 类）
+python3 tools/test_audit_architecture.py     # 核验工具自身的 10 项断言
+python3 tools/check_all.py                   # 全量 547 项（23 类）
+# 注：本行初稿写「9 项断言」「216 项（8 类）」，是 2026-09-30 的值；
+#     2026-10-03 复核后更新。
 ```

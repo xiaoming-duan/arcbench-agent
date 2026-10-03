@@ -102,7 +102,10 @@ python3 tools/workstream.py guard --label v2-verified -- \
 
 ## 验证状态
 
-`tools/test_workstream.py` —— **8 项断言**，已登记进 `check_all`：
+`tools/test_workstream.py` —— **19 项断言**，已登记进 `check_all`：
+
+> 本文初稿写「8 项」，是 2026-09-30 的值；之后陆续补入
+> FROZEN 覆盖度、陈旧快照、跨 worktree cp 纪律等断言，**2026-10-03 复核为 19 项**。
 
 | 断言 | 覆盖 |
 |---|---|

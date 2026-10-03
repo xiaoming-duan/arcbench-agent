@@ -87,7 +87,8 @@ requirements_sample/          合成样例需求（推断格式）
     └── patches.yaml          插入式补丁（幂等）
 
 tools/                        验证、实验与运维工具（21 个）
-├── check_all.py              ★ 统一断言入口（8 类 / 216 项），关键改动后必跑
+├── check_all.py              ★ 统一断言入口（23 类 / 547 项），关键改动后必跑
+│                              注：初稿写「8 类 / 216 项」（2026-09-30 值）
 ├── anchored_edit.py          ★ 锚点式安全编辑 replace_once()（所有代码改动的落地通道）
 ├── verify_changes.py         声称的改动是否真的在代码里
 ├── test_gates.py             门禁行为端到端断言
