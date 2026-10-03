@@ -1,0 +1,63 @@
+arcbench-agent v11 —— 交付标签（诚实标注）
+============================================================
+
+依据：c9462d0bafc2-template.zip（一次真实平台运行后回传的工作区快照）
+与本地 template/ 逐文件比对后，改了三处。
+------------------------------------------------------------
+
+★★ ① 找到并堵住了「did not become ready within 120 seconds」的**真实根因**
+
+   该次运行**产出**的 backend/src/app.js 全文（逐字照抄，已作为测试夹具）：
+
+       const express = require('express');
+       const app = express();
+       app.use(express.json());
+       const columnsRouter = require('./routes/columns');
+       app.use('/api/columns', columnsRouter);
+       module.exports = app;
+
+   模型只关心"把我这条需求的路由挂上去"，**把整个应用外壳删掉了**：
+     · /api/health 没了
+       -> 平台就绪探测永远 404（模板 README 明写健康检查就是
+          `curl http://127.0.0.1:<port>/api/health`）
+          => "template application server did not become ready within 120 seconds"
+     · express.static(frontend/dist) 与 SPA 兜底 sendFile 没了
+       -> `page.goto('/')` 404 -> 基准测试第一步 `openHome` 就挂
+     · initializeDatabase() 没了 -> 数据层从未初始化
+
+   这与「引用了不存在的模块」同类：**局部正确、整体不可运行**。
+   模块图审计只看引用能否解析，**看不见外壳被删**。
+
+   新增 factory/testaudit.audit_app_shell()，接入实施循环（回传 + 有界重试）：
+     APP_SHELL_HEALTH_MISSING         缺 /api/health 或 /health
+     APP_SHELL_FRONTEND_NOT_SERVED    不再托管前端（缺 static + SPA 兜底）
+   只对**真实可服务的工程**生效（必须有 backend/package.json），
+   避免误伤合成工作区。
+   反馈明确写着「新增路由必须**追加**，不能重写整个文件」。
+
+② 移除模板里的**游离运行产物**
+   template/backend/database.db（0 字节）—— 我本地起服务验证时生成的，
+   被卷进了模板，会随每次提交复制进产出。
+   同时给打包器加了排除：*.db / *.sqlite / *.sqlite3 与 .arc-test-db/。
+   （此前 packager 只排除 dist/ 与 node_modules/，这类文件会漏进去。）
+
+③ 补 template/.gitignore
+   与捕获到的工作区一致（ArcBench 托管块）：node_modules / dist /
+   dist-ssr / coverage / *.db / .env / .arc/*（保留 traceability）。
+
+验证
+------------------------------------------------------------
+tools/check_all.py —— 21 类 / 531 项全部通过（解压后的包内自跑）
+  · t42 用**那次真实产出的 app.js 逐字作为夹具**：判定破坏外壳 ✓
+  · 出厂模板与"正确追加路由"两种情形均不误报 ✓
+  · T38d 曾被误伤（合成工作区无 backend/package.json），已修并留 T42g 守卫
+main.py 冒烟（stub + node 方言，不耗额度）
+v10 线为 21 类 / 524 项。
+
+诚实标注（未验证 / 已知缺口）
+------------------------------------------------------------
+· **未在平台上复验**：本次修复的直接证据来自那份回传快照，
+  但"修好后平台就能起来"仍需一次真实运行确认。
+· **closure6 / 真实基准测试跑通仍未执行**（额度/凭据）。
+· **LLM 兜底未实现**（UI 契约正文提取只有正则：70.7% / 90.8%）。
+· tests/test_dag.py 的 10 项失败是既有缺口，不在 check_all 内。

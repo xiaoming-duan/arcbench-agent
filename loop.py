@@ -14,10 +14,6 @@ from typing import Sequence
 
 from .config import FactoryConfig
 from .generator import Generator
-from .llm import ModelFatalError
-from .contracts import check_contracts, describe as describe_contracts
-from .uigate import check_ui, describe as describe_ui, e2e_sources_of
-from .errors import RepairBudget, budgets_from_config, describe_budget
 from .models import (
     DesignPlan,
     GeneratedFile,
@@ -31,9 +27,7 @@ from .testaudit import (
     ImportAudit,
     InjectionAudit,
     MockAudit,
-    audit_app_shell,
     audit_imports,
-    audit_relative_imports,
     audit_injection_bypass,
     audit_mocked_dependencies,
     audit_requirement_dependencies,
@@ -67,12 +61,6 @@ _BROKEN_TEST_PATTERNS = (
 
 # 瞬时/传输层故障特征。这类失败**不应直接判需求失败**：重试一次有意义，
 # 且一次超时不该把已经过了设计/写测试/RED 的需求整条丢掉。
-# 配额/余额耗尽（终局，绝不可重试）——与限流同码不同命
-_QUOTA_TEXT_MARKERS = (
-    "insufficient_quota", "quota exhausted", "exceeded your current quota",
-    "balance too low", "recharge", "compute credits", "insufficient balance",
-)
-
 _TRANSIENT_MODEL_MARKERS = (
     "timed out", "timeout", "超时", "temporarily", "rate limit", "429",
     "500", "502", "503", "504", "connection", "连接", "network", "网络",
@@ -81,20 +69,8 @@ _TRANSIENT_MODEL_MARKERS = (
 
 
 def _is_transient_model_error(exc: Exception) -> bool:
-    """模型/传输层故障是否为「瞬时」——决定是回传重试还是直接判失败。
-
-    ★必须先排除**终局性**故障（配额耗尽 / 凭据无效）：它们也带 4xx，
-    但重试永远不会成功，且会影响后续每一次调用。
-    实测教训：把配额耗尽当瞬时，一次运行白白「网关重试 11 次（成功 0）」，
-    外加每个需求的 3 次循环级重试。
-    """
-    if isinstance(exc, ModelFatalError):
-        return False
+    """模型/传输层故障是否为「瞬时」——决定是回传重试还是直接判失败。"""
     text = str(exc).lower()
-    # 兜底：异常被别的层重新包装过（不再是 ModelQuotaExhaustedError）时，
-    # 仍靠文本认出「配额/余额」——它绝不能进重试路径。
-    if any(marker in text for marker in _QUOTA_TEXT_MARKERS):
-        return False
     return any(marker in text for marker in _TRANSIENT_MODEL_MARKERS)
 
 # 收集阶段「模块找不到」的两种典型措辞。**路径两侧的引号可有可无**：
@@ -233,44 +209,22 @@ class TddLoop:
         normalized = path.lstrip("./")
         return normalized if normalized.startswith(prefix) else f"{prefix}{normalized}"
 
-    def _declared_types(self, req_id: str, plan: DesignPlan) -> dict[str, tuple[str, ...]]:
-        """测试文件 -> 声明的类型集合（用于 e2e 豁免）。
-
-        ★键的**坐标空间必须与查找键一致**（都是 output_dir 相对）。
-
-        实测 bug：本函数原来只读 `DesignPlan.tests[].file_path`，而设计产物的
-        file_path 是 **backend 相对**（如 `tests/x.spec.js`），审计的查找键却是
-        output 相对（`backend/tests/x.spec.js`）—— 键对不上 -> `types` 为空 ->
-        e2e **拿不到豁免**，落回 import 判据 -> WEAK_TEST 误报。
-        （而「E2E 不 import 后端实现」本来完全正确。）
-
-        现在优先用**测试计划**：`TestFileSpec.path` 的注释明确写着
-        「output_dir 相对」，与查找键同一坐标空间，且自带 type；
-        设计产物仅作补充。两者都同时登记原样键与归一化键，
-        以免任一方的约定变化再次造成静默不匹配。
-        """
+    def _declared_types(self, plan: DesignPlan) -> dict[str, tuple[str, ...]]:
+        """测试文件 -> 声明的类型集合（用于 e2e 豁免）。"""
         mapping: dict[str, tuple[str, ...]] = {}
-
-        def register(raw_path: str, kind: str) -> None:
-            if not raw_path:
-                return
-            normalized = str(raw_path).lstrip("./")
-            for key in {normalized, self._to_output_relative(normalized)}:
-                mapping[key] = mapping.get(key, ()) + ((kind or "unit"),)
-
-        entry = self._plans.get(req_id)
-        for spec in (getattr(entry, "test_files", ()) or ()):
-            register(str(getattr(spec, "path", "") or ""), str(getattr(spec, "type", "")))
-        for spec in (getattr(plan, "tests", ()) or ()):
-            register(str(getattr(spec, "file_path", "") or ""), str(getattr(spec, "type", "")))
+        for spec in plan.tests:
+            if not spec.file_path:
+                continue
+            key = spec.file_path.lstrip("./")
+            mapping[key] = mapping.get(key, ()) + ((spec.type or "unit"),)
         return mapping
 
-    def _audit(self, req_id: str, test_paths: Sequence[str], plan: DesignPlan) -> ImportAudit:
+    def _audit(self, test_paths: Sequence[str], plan: DesignPlan) -> ImportAudit:
         return audit_imports(
             self.output_dir,
             [self._to_output_relative(p) for p in test_paths],
             implementation_root=self.config.implementation_root,
-            declared_types=self._declared_types(req_id, plan),
+            declared_types=self._declared_types(plan),
             aliases=self.config.import_aliases,
         )
 
@@ -433,37 +387,7 @@ class TddLoop:
     ) -> None:
         logger.error("%s", self._broken_test_diagnostics(test_paths, outcome, head_lines))
 
-    def _empty_test_paths(self, test_paths: Sequence[str]) -> list[str]:
-        """实际落盘的测试文件里，哪些是**空的**（或只有空白）。"""
-        empties: list[str] = []
-        for rel in test_paths:
-            for candidate in (
-                self.output_dir / rel,
-                self.output_dir / self.config.backend_dir / rel,
-            ):
-                if not candidate.is_file():
-                    continue
-                try:
-                    if not candidate.read_text(encoding="utf-8").strip():
-                        empties.append(rel)
-                except OSError:
-                    pass
-                break
-        return empties
-
-    def _broken_test_reason(
-        self, outcome: TestOutcome, test_paths: Sequence[str] = ()
-    ) -> str:
-        # ★先判"文件是空的"：否则模型会去修一个并不存在的语法错误。
-        empties = self._empty_test_paths(test_paths)
-        if empties:
-            return (
-                "测试文件**是空的**（没有任何有效字符）: "
-                + ", ".join(empties[:3])
-                + " —— 既没有 import 也没有断言，当然收集不到测试。"
-                "这**不是**语法错误，也不是 import 失败。\n"
-                f"运行器输出:\n{self._runner_excerpt(outcome, 18)}"
-            )
+    def _broken_test_reason(self, outcome: TestOutcome) -> str:
         excerpt = self._runner_excerpt(outcome, 18)
         return (
             "测试文件无法被收集/执行（0 个测试被发现）——"
@@ -472,19 +396,8 @@ class TddLoop:
             f"运行器输出:\n{excerpt}"
         )
 
-    def _weak_reason(
-        self, outcome: TestOutcome, audit: ImportAudit, test_paths: Sequence[str] = ()
-    ) -> str:
+    def _weak_reason(self, outcome: TestOutcome, audit: ImportAudit) -> str:
         """WEAK_TEST 的成因。**必须带 verdict**，否则下次仍然看不出是哪一类。"""
-        # ★node 方言下空文件会被计为 1 个通过的测试 -> 走到这里。
-        #   若只报「整组测试在实现前就通过」，模型会去加强断言，
-        #   而真正该做的是**把文件写出来**。
-        empties = self._empty_test_paths(test_paths)
-        if empties and outcome.passed:
-            return (
-                "测试文件**是空的**: " + ", ".join(empties[:3])
-                + "（node 方言把空文件计为 1 个通过的测试，并不代表断言有效）"
-            )
         if outcome.passed:
             return "整组测试在实现前就通过（无 RED 证据）"
         weak = audit.weak_files
@@ -595,11 +508,6 @@ class TddLoop:
             downstream_files=self._impl_files.get(requirement.req_id, []),
             produced_files=self._impl_files,
             indirect_dependencies=indirect,
-            # 跨模块调用契约（可选；未声明时为空元组，门禁行为不变）
-            declared_calls=(
-                requirement.cross_module_calls
-                if self.config.enforce_contract_signature else ()
-            ),
         )
 
     def _audit_mocks(self, requirement: Requirement, allowed_paths: Sequence[str]) -> MockAudit:
@@ -642,40 +550,12 @@ class TddLoop:
         TEST_BROKEN 往返，并让反馈在模型还「记得上下文」时立刻给出。
 
         只在 vitest 方言下生效——node 方言里 `require('node:test')` 是正确写法。
-
-        ★另有一条**与方言无关**的拦截：测试文件是空的。
-        实测两种方言都把空文件报成完全不同的东西，就是不说"它是空的"：
-
-            vitest: 「No test suite found in file …」+ `Tests no tests`
-                    -> 0 个测试 -> 判 TEST_BROKEN，
-                       理由却是「多半是语法错误、import 失败…」—— 误导
-            node  : `node --test <空文件>` **把文件本身计为 1 个通过的测试**
-                    -> passed=True -> 判 WEAK_TEST
-                       「整组测试在实现前就通过（无 RED 证据）」—— 更误导：
-                       模型会以为自己的断言太弱，而真实原因是**文件根本没内容**
-
-        静态拦在跑之前，既不浪费一轮收集，也让反馈说准原因。
         """
-        dialect = getattr(self.runner, "dialect", "")
+        if getattr(self.runner, "dialect", "") != "vitest":
+            return []
         violations: list[dict[str, Any]] = []
         for item in files:
             content = item.content or ""
-            path = item.path.lstrip("./")
-            if not content.strip():
-                violations.append(
-                    {
-                        "code": "EMPTY_TEST_FILE",
-                        "path": path,
-                        "detail": (
-                            "测试文件是**空的**（没有任何有效字符）—— 这不是语法错误、"
-                            "也不是 import 失败，而是根本没有内容。"
-                            "请写出含 import 与真实断言的完整测试文件。"
-                        ),
-                    }
-                )
-                continue
-            if dialect != "vitest":
-                continue
             if _CJS_REQUIRE.search(content):
                 violations.append(
                     {
@@ -958,8 +838,6 @@ class TddLoop:
             try:
                 plan = self.generator.design(requirement)
                 break
-            except ModelFatalError:
-                raise          # 终局故障：重试永远不会成功，交给 pipeline 提前收摊
             except Exception as exc:
                 design_error = str(exc)
                 transient = _is_transient_model_error(exc)
@@ -1031,8 +909,6 @@ class TddLoop:
                     ),
                     allowed_paths=allowed_paths,
                 )
-            except ModelFatalError:
-                raise          # 终局故障，见上
             except Exception as exc:
                 # 与实现阶段同理：写测试这一环**本来就有**带反馈的重试循环
                 # （max_write_attempts + write_violations），但模型异常此前直接
@@ -1060,16 +936,6 @@ class TddLoop:
                     }
                 )
                 continue
-
-            # 根节点测试用例数上限（默认关闭 -> 两个调用都是恒等操作）
-            from .testplan import apply_root_test_limit, count_test_cases
-            test_files = apply_root_test_limit(
-                requirement, tuple(test_files),
-                limit=self.config.root_test_limit,
-            )
-            result.test_case_count = sum(
-                count_test_cases(f.content) for f in test_files
-            )
 
             test_files, violations = self._enforce_test_whitelist(
                 requirement, test_files, allowed_paths
@@ -1126,7 +992,7 @@ class TddLoop:
 
         # ---- 阶段 4: RED 门禁（逐文件判定 + 白名单 + 基线守卫） ----
         red = self.runner.run(test_paths)
-        audit = self._audit(req_id, test_paths, plan)
+        audit = self._audit(test_paths, plan)
         rewrites = 0
         last_violations: list[dict[str, Any]] = []
         broken_test = False
@@ -1144,8 +1010,8 @@ class TddLoop:
                 "[门禁] %s %s（%s），回退到写测试阶段重写（%d/%d）",
                 req_id,
                 "TEST_BROKEN" if broken_test else "WEAK_TEST",
-                (self._broken_test_reason(red, test_paths)[:80] if broken_test
-                 else self._weak_reason(red, audit, test_paths)),
+                (self._broken_test_reason(red)[:80] if broken_test
+                 else self._weak_reason(red, audit)),
                 rewrites,
                 self.config.max_test_rewrites,
             )
@@ -1202,34 +1068,15 @@ class TddLoop:
             test_paths = self._run_paths(allowed_paths, rewritten)
 
             red = self.runner.run(test_paths)
-            audit = self._audit(req_id, test_paths, plan)
+            audit = self._audit(test_paths, plan)
 
         weak = self._is_weak(red, audit) or self._is_uncollectable(red)
         broken_test = self._is_uncollectable(red)
         result.red_first_ok = not weak
         result.broken_test = broken_test
-
-        # ---- RED 三态判定（步骤⑤）----
-        # 此前只有二值：weak（阻断）或「通过」。于是「失败原因已确认是实现缺失」
-        # 与「它失败了但我不知道为什么」在结果上是同一个「通过」。
-        _expected = self._expected_red_reason(red)
-        if weak:
-            result.red_verdict = "TEST_BROKEN" if broken_test else "WEAK_TEST"
-        elif _expected is not None:
-            result.red_verdict = "VALID_RED"
-        else:
-            result.red_verdict = "VALID_RED_UNVERIFIED"
-            logger.warning(
-                "[门禁] %s VALID_RED_UNVERIFIED —— 测试确实失败了，但失败原因"
-                "**不是**已确认的「实现尚未生产」（import 不到）。"
-                "按有效 RED 放行，但成因未归类，记入 red_verdict 供复核。摘要: %s",
-                req_id, (red.summary() or "")[:160],
-            )
-        logger.info("[门禁] %s red_verdict=%s", req_id, result.red_verdict)
         if weak:
             # 阻断：不进入实现阶段
-            reason = (self._broken_test_reason(red, test_paths) if broken_test
-                      else self._weak_reason(red, audit, test_paths))
+            reason = self._broken_test_reason(red) if broken_test else self._weak_reason(red, audit)
             code = "TEST_BROKEN" if broken_test else "WEAK_TEST"
             note = f"{code}（{reason}）：重写 {rewrites} 次仍无效，未进入实现"
             logger.error("[门禁] %s BLOCK -> FAILED（%s）", req_id, code)
@@ -1265,26 +1112,12 @@ class TddLoop:
         # 最近一次「测试通过」的实现，用于重写后回归回退
         last_good_impl: list[GeneratedFile] = []
         last_good_passed = False
-        # ---- 分类重试预算（P0-2）----
-        # 四类错误**独立计数**：环境错误重试 1 次不会挤占实现预算。
-        # 循环上界取四类预算之和 + 1（首轮不计费），实际停止由各类预算分别决定。
-        # 信号级预算来自 config.RETRY_BUDGET（表外信号回退到四类兜底）
-        _signal_budgets = dict(getattr(self.config, "RETRY_BUDGET", None)
-                               or getattr(type(self.config), "RETRY_BUDGET", {}) or {})
-        # UI 门禁结果的初值（未声明 ui_contracts 时恒为 ok）
-        ui_check = check_ui(requirement)
-        ui_ok_raw = ui_check.ok
-        budget = RepairBudget(signal_budgets=_signal_budgets,
-                              class_budgets=budgets_from_config(self.config))
-        while attempts <= sum(budget.signal_budgets.values()) + sum(
-                budget.class_budgets.values()) + 1:
+        while attempts <= self.config.max_repairs:
             attempts += 1
             try:
                 impl_files = self.generator.implement(
                     requirement, plan, failures, test_context=test_context
                 )
-            except ModelFatalError:
-                raise          # 终局故障，见上
             except Exception as exc:
                 # ★模型/传输层故障**不应直接判需求失败**。
                 # 实测（平台 2026-09-30 14:46）：一处 `openai SDK 调用失败: Request
@@ -1301,14 +1134,8 @@ class TddLoop:
                     "（疑似瞬时故障，回传后重试）" if transient else "",
                     model_error,
                 )
-                # ★ 环境错误独立计费：网关/DNS/配额重试再多也不会成功，
-                #   让它占用实现预算等于用一个不可控因素压低模型能力评估。
-                _kind, _can_retry = budget.charge("ENVIRONMENT", model_error)
-                if not _can_retry:
-                    self.store.implement_failed(
-                        req_id,
-                        f"{req_id} 实现失败（{_kind} 预算 {budget.budget(_kind)} 次已耗尽）: {model_error}",
-                    )
+                if attempts > self.config.max_repairs:
+                    self.store.implement_failed(req_id, f"{req_id} 实现失败: {model_error}")
                     result.state = "FAILED"
                     result.note = f"实现失败（{attempts} 次尝试）: {model_error}"
                     logger.error(result.note)
@@ -1324,67 +1151,6 @@ class TddLoop:
             impl_files = self._guard_implementation_files(requirement, impl_files, result)
             apply_generated_files(self.output_dir, impl_files)
             self._record_impl_files(requirement, impl_files)
-
-            # ---- 实现侧模块图审计 ----
-            # ★必须**独立于测试**：测试 import 的是服务层，不会因为 app.js 里
-            #   多了一行 require('./routes/xxx') 而失败 —— 但平台会 `npm start`
-            #   验证产物，那一行会让启动直接崩溃。
-            #   实测（平台 2026-10-01 01:50）：模型在 app.js 的
-            #   「// route modules imports」后插入 require('./routes/branchRoutes')，
-            #   却从未创建该文件 -> 启动即
-            #     Error: Cannot find module './routes/branchRoutes'
-            #   整次提交死在启动阶段，而我们的门禁一路绿灯。
-            impl_dir = self.output_dir / self.config.implementation_root
-            impl_paths = sorted(p for p in impl_dir.rglob("*.js") if p.is_file()) if impl_dir.is_dir() else []
-            broken_modules = audit_relative_imports(self.output_dir, impl_paths)
-            if broken_modules:
-                detail = "; ".join(
-                    f"{item['file']} 引用 {item['specifier']}" for item in broken_modules[:5]
-                )
-                logger.error("[实现审计] %s 引用了不存在的模块: %s", req_id, detail)
-                _kind, _can_retry = budget.charge("IMPLEMENTATION_REGRESSION", detail)
-                if not _can_retry:
-                    self.store.implement_failed(
-                        req_id, f"{req_id} 实现引用了不存在的模块: {detail}")
-                    result.state = "FAILED"
-                    result.note = f"实现引用了不存在的模块（{attempts} 次尝试）: {detail}"
-                    result.attempts = attempts
-                    logger.error(result.note)
-                    return result
-                failures = [
-                    "你的实现里 import/require 了**并不存在**的模块，应用启动会直接崩溃：\n"
-                    + "\n".join(
-                        f"  - {item['file']} 引用 {item['specifier']}（文件不存在）"
-                        for item in broken_modules[:8]
-                    )
-                    + "\n请**补写这些文件**（放在引用它的相对位置），或去掉这些引用。"
-                    "注意平台会执行 `npm start` 验证，启动失败即整次提交失败。"
-                ]
-                continue
-
-            # ---- 应用外壳契约审计（启动 + 首页服务）----
-            # ★实测（c9462d0bafc2-template）：模型把 app.js 整个重写成"只挂自己的路由"，
-            #   于是 /api/health 没了（平台就绪探测永远 404 -> 120s 超时），
-            #   express.static(frontend/dist) 与 SPA 兜底也没了（page.goto('/') 404
-            #   -> 基准测试第一步就挂）。模块图审计看不见"外壳被删"。
-            shell_broken = audit_app_shell(self.output_dir)
-            if shell_broken:
-                detail = "; ".join(f"{v['path']}:{v['code']}" for v in shell_broken[:3])
-                logger.error("[外壳审计] %s 应用外壳被破坏: %s", req_id, detail)
-                if attempts > self.config.max_repairs:
-                    self.store.implement_failed(req_id, f"{req_id} 应用外壳被破坏: {detail}")
-                    result.state = "FAILED"
-                    result.note = f"应用外壳被破坏（{attempts} 次尝试）: {detail}"
-                    result.attempts = attempts
-                    logger.error(result.note)
-                    return result
-                failures = [
-                    "你把 **app.js 的外壳删掉了** —— 新增路由必须**追加**，不能重写整个文件。\n"
-                    + "\n".join(f"  - [{v['code']}] {v['detail']}" for v in shell_broken[:4])
-                    + "\n请恢复这些既有能力（健康检查、前端静态托管与 SPA 兜底），"
-                    "只在你需要的位置**追加**新路由。"
-                ]
-                continue
 
             outcome = self.runner.run(test_paths)
 
@@ -1433,23 +1199,6 @@ class TddLoop:
                 #   方案1  声明了依赖就必须真实调用上游（模块层空转）
                 #   方案2-A 测试不得 mock 未声明的上游（测试层空转）
                 #   方案2-B 实现不得用形参守卫绕过上游（仅警告）
-                # ---- 第五道门：UI 门禁（P0-3）----
-                # 位置必须**在循环内、reasons 之前**：
-                #   ① UI 违规要进 reasons，模型才能拿到「E2E 缺什么」的反馈；
-                #   ② 初版误放在循环之后（gate 段），而 reasons 在循环内用它 ->
-                #      `UnboundLocalError: ui_ok_raw`（被 t7–t11 抓出）。
-                # ★ 必须用**测试计划**（RequirementTestPlan），不是 `plan`。
-                #   实测 bug：`plan` 在本函数里是 **DesignPlan**，没有 test_files ->
-                #   e2e_sources_of 永远读不到 type=e2e -> UI_TEST_MISSING 误报，
-                #   而磁盘上明明躺着 3 个 .spec.js。
-                _test_plan = self._plans.get(req_id)
-                _e2e_src, _planned_e2e = e2e_sources_of(self.output_dir, _test_plan)
-                ui_check = check_ui(
-                    requirement, e2e_sources=_e2e_src, planned_e2e=_planned_e2e,
-                )
-                ui_ok_raw = ui_check.ok
-                result.ui_violations = [v.to_dict() for v in ui_check.violations]
-
                 reasons = []
                 if not dep_audit.ok:
                     reasons.append(describe_dependencies(dep_audit))
@@ -1457,10 +1206,6 @@ class TddLoop:
                     reasons.append(describe_mocked_dependencies(mock_audit))
                 if bypass_audit.findings and self.config.block_injection_bypass:
                     reasons.append(describe_injection_bypass(bypass_audit))
-                # UI 门禁违规也要进重试理由 —— 否则模型拿不到「E2E 缺什么」的反馈，
-                # 只能反复瞎试（与之前「拒绝理由必须可执行」的教训一致）。
-                if not ui_ok_raw:
-                    reasons.append(describe_ui([ui_check]))
                 if not reasons:
                     break
                 failures = reasons
@@ -1472,15 +1217,7 @@ class TddLoop:
                     ) + (";" if dep_audit.violations and mock_audit.violations else "")
                     + "; ".join(f"{u.upstream}=UNVERIFIED_DEPENDENCY" for u in mock_audit.violations),
                 )
-                # 依赖违规按**具体判定**计费（NOT_USED / MISMATCH / MISSING 各有预算）
-                _verdicts = ([u.verdict for u in dep_audit.violations]
-                             + [c["reason"] for c in result.contract_violations]
-                             + [v["verdict"] for v in result.ui_violations])
-                _kind, _can_retry = budget.charge(
-                    _verdicts[0] if _verdicts else "DEPENDENCY_NOT_USED",
-                    "; ".join(_verdicts),
-                )
-                if not _can_retry:
+                if attempts > self.config.max_repairs:
                     break
                 continue
 
@@ -1508,9 +1245,7 @@ class TddLoop:
                 # 实测 E2 给了 5 次预算却只用了 1 次重写，预算变量完全失效。
                 # 同时把「上次重写把测试改坏了」这一信息回传给模型，
                 # 否则它会重复同一种改法。
-                _kind, _can_retry = budget.charge(
-                    "IMPLEMENTATION_REGRESSION", "测试被改坏并已回退")
-                if not _can_retry:
+                if attempts > self.config.max_repairs:
                     break
                 failures = [
                     "上一次重写把测试从通过改成了失败，已回退。"
@@ -1525,14 +1260,12 @@ class TddLoop:
                 continue
 
             failures = list(outcome.failures) or [outcome.stderr[-2000:] or "测试失败（无结构化输出）"]
-            # 主修复路径：测试有效但实现没过 —— 记在**实现类**预算上
-            _kind, _can_retry = budget.charge("TEST_FAILED", " ".join(failures)[:200])
-            if _can_retry:
+            if attempts <= self.config.max_repairs:
                 logger.warning(
                     "[修复] %s 第 %d 次修复（剩余 %d 次）",
                     req_id,
                     attempts,
-                    budget.left(_kind),
+                    self.config.max_repairs - attempts + 1,
                 )
 
         result.attempts = attempts
@@ -1551,27 +1284,10 @@ class TddLoop:
             or not self.config.warn_injection_bypass
             or not self.config.block_injection_bypass   # 默认警告级，不阻断
         )
-        # 冻结合同完整性：需求**声明了** cross_module_calls 时必须存在冻结件且一致。
-        # 未声明时 check_contract 返回 ok（可选能力的默认关闭语义）。
-        contract_ok_raw, contract_checks = check_contracts(self.output_dir, [requirement])
-        result.contract_violations = [c.to_dict() for c in contract_checks if not c.ok]
-
         dep_ok, mock_ok, bypass_ok = dep_ok_raw, mock_ok_raw, bypass_ok_raw
-        # 四道门全部参与，**不短路** —— 任一门禁为假都不放行
-        # 五道门全部参与，**不短路** —— 任一门禁为假都不放行
-        dep_ok = dep_ok and mock_ok and bypass_ok and contract_ok_raw and ui_ok_raw
+        dep_ok = dep_ok and mock_ok and bypass_ok
         result.gate_audits = {
             "dep_ok": dep_ok_raw, "mock_ok": mock_ok_raw, "bypass_ok": bypass_ok_raw,
-            "contract_ok": contract_ok_raw,
-            "ui_ok": ui_ok_raw,
-            "ui_element_coverage": ui_check.element_coverage,
-            "ui_message_coverage": ui_check.message_coverage,
-            # ★ 分类预算账本必须在**门禁赋值之后**再写。
-            #   实测 bug：初版写在循环结束处，而下面这个 `result.gate_audits = {...}`
-            #   会**整体覆盖**它 —— 于是真实运行里 6 个需求的账本全部丢失，
-            #   而 REQ-11 明明消费了 4 次 DEPENDENCY_NOT_USED / 3 次回归。
-            #   机制在正确工作，可观测性却为零。
-            "repair_budget": budget.to_dict(),
             "combined_ok": dep_ok,
             "enforce_dependency_usage": self.config.enforce_dependency_usage,
             "enforce_mock_check": self.config.enforce_mock_check,
@@ -1600,29 +1316,16 @@ class TddLoop:
                 parts += [
                     f"{f.upstream}=INJECTION_BYPASS({f.parameter})" for f in bypass_audit.findings
                 ]
-            # 冻结合同违规单独成段：它是**编译期**问题（合同缺失/未冻结/漂移），
-            # 与「实现不符合同」性质不同，混在一句里会让归因含糊。
-            contract_parts = [
-                f"{c['req_id']}={c['reason']}" for c in result.contract_violations
-            ] + [f"{v['verdict']}" for v in result.ui_violations]
-            reason = "; ".join(parts + contract_parts) or "依赖未通过使用审计"
+            reason = "; ".join(parts) or "依赖未通过使用审计"
             self.store.test_failed(req_id, f"{req_id} 依赖未真实验证: {reason}")
             self.store.set_state(req_id, "FAILED", "test")
             self.store.commit(f"{req_id} (blocked): {requirement.name} 依赖未验证")
             result.state = "FAILED"
-            if result.contract_violations and not parts:
-                # 纯合同问题：理由是**可执行**的（见 contracts.describe）
-                result.note = (
-                    "冻结合同不成立（"
-                    + "; ".join(contract_parts)
-                    + "）：" + describe_contracts(contract_checks).replace("\n", " ")
-                )
-            else:
-                result.note = (
-                    f"测试通过但依赖未被真实验证（{reason}）："
-                    f"重写 {attempts} 次仍未满足依赖使用要求"
-                )
-            logger.error("[门禁] %s BLOCK -> FAILED（%s）", req_id, reason)
+            result.note = (
+                f"测试通过但依赖未被真实验证（{reason}）："
+                f"重写 {attempts} 次仍未满足依赖使用要求"
+            )
+            logger.error("[依赖门禁] %s BLOCK -> FAILED（%s）", req_id, reason)
         else:
             self.store.test_failed(
                 req_id, f"{req_id} 测试失败（{attempts} 次尝试）: {outcome.summary()}"

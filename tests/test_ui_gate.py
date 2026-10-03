@@ -94,10 +94,48 @@ def test_planned_but_file_absent_blocks(ui_req):
 
 
 def test_weak_test_blocks(ui_req):
-    """RED 阶段没失败 -> 测不出东西 -> UI_TEST_WEAK。"""
-    c = check_ui(ui_req, e2e_sources=[("x", _good_source(ui_req))],
-                 planned_e2e=True, red_failed=False)
+    """E2E 存在但**没有真实 UI 断言** -> 测不出东西 -> UI_TEST_WEAK。
+
+    判据已从「E2E 在 RED 阶段是否失败」改为「是否真的断言了 UI 元素的存在/状态」。
+    原判据的问题：RED 是否失败**在写测试时无法观测**，调用点只能传
+    `red_failed=None`，于是这道门从未触发过（语义错位）。
+    """
+    hollow = (
+        "import { test } from '@playwright/test';\n"
+        "test('req-1-1-1', async ({ page }) => {\n"
+        "  await page.goto('/');\n"
+        "  await page.getByRole('link').click();\n"
+        "});\n"
+    )
+    # ★ 前提断言（19.2.8）：这份样本里确实一句断言都没有
+    assert "expect" not in hollow and "assert" not in hollow
+    c = check_ui(ui_req, e2e_sources=[("x", hollow)], planned_e2e=True)
+    assert not c.ok
     assert any(v.verdict == UI_TEST_WEAK for v in c.violations)
+    # 反向：同一需求换成**真有断言**的源码，就不该再报 WEAK
+    good = check_ui(ui_req, e2e_sources=[("x", _good_source(ui_req))], planned_e2e=True)
+    assert not any(v.verdict == UI_TEST_WEAK for v in good.violations)
+
+
+def test_vacuous_assertion_is_weak(ui_req):
+    """空断言（expect(true).toBe(true)）不算「断言了 UI」—— 应用坏掉也照样通过。"""
+    vacuous = (
+        "import { test, expect } from '@playwright/test';\n"
+        "test('req-1-1-1', async () => { expect(true).toBe(true); });\n"
+    )
+    c = check_ui(ui_req, e2e_sources=[("x", vacuous)], planned_e2e=True)
+    assert any(v.verdict == UI_TEST_WEAK for v in c.violations), \
+        f"空断言未被判弱: {[v.verdict for v in c.violations]}"
+
+
+def test_red_failed_parameter_is_gone():
+    """语义修正的回归守卫：判据不再依赖 RED 阶段。
+
+    若有人把 `red_failed` 加回来，说明判据又回到「拿不到的事实」上，
+    这道门会重新变成永不触发。用签名断言钉死。
+    """
+    import inspect
+    assert "red_failed" not in inspect.signature(check_ui).parameters
 
 
 def test_missing_element_blocks(ui_req):

@@ -20,6 +20,10 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+# ★「断言是否有意义」只有一份实现，放在 uigate（UI 语义所在）。
+#   e2e 判据与 UI 门禁共用它，避免两处各写一套后静默分叉。
+from .uigate import has_meaningful_ui_assertions
+
 # import ... from 'x' / import 'x'
 _IMPORT_FROM = re.compile(r"""\bimport\s+(?:[\w*{},\s$]+\s+from\s+)?['"]([^'"]+)['"]""")
 # require('x')
@@ -52,6 +56,9 @@ V_DYNAMIC_UNRESOLVED = "DYNAMIC_IMPORT_UNRESOLVED"
 V_ALIAS = "ALIAS_UNRESOLVED"
 V_MISSING = "MISSING_FILE"
 V_E2E = "E2E_EXEMPT"
+#: 声明为 e2e，但源码里**没有任何真实 UI 断言**（只跑流程 / 空断言）。
+#: 与 UI 门禁的 UI_TEST_WEAK 同一判据 —— 两边共用 has_meaningful_ui_assertions()。
+V_E2E_NO_ASSERTION = "E2E_NO_UI_ASSERTION"
 V_HELPER = "HELPER_EXEMPT"
 
 # ★ 单一定义：什么算「引用了实现」。
@@ -60,7 +67,8 @@ V_HELPER = "HELPER_EXEMPT"
 #   一个放行、一个阻断，而且不报错（这正是上一版 DYNAMIC_IMPORT 的坑）。
 #   MEANINGFUL / WEAK / EXEMPT 三者互补，恰好划分全部 verdict。
 MEANINGFUL_VERDICTS = frozenset({V_IMPORTS, V_DYNAMIC_LITERAL})
-WEAK_VERDICTS = frozenset({V_NO_IMPORT, V_DYNAMIC_UNRESOLVED, V_ALIAS, V_MISSING})
+WEAK_VERDICTS = frozenset({V_NO_IMPORT, V_DYNAMIC_UNRESOLVED, V_ALIAS, V_MISSING,
+                           V_E2E_NO_ASSERTION})
 EXEMPT_VERDICTS = frozenset({V_E2E, V_HELPER})
 
 
@@ -85,9 +93,22 @@ def is_helper_file(path: str) -> bool:
     return any(pattern in lowered for pattern in HELPER_PATTERNS)
 
 
-def looks_like_alias(specifier: str) -> bool:
-    """`@/x`、`~/x` 这类多半是路径别名；真外部包（express、vitest）不会这样开头。"""
-    return specifier.startswith("@") or specifier.startswith("~")
+def looks_like_alias(specifier: str, aliases: dict[str, str] | None = None) -> bool:
+    """`@/x`、`~/x` 这类多半是路径别名。
+
+    ★修正（P0）：**不能只看首字符 `@`**。`@playwright/test`、
+    `@testing-library/react`、`@vitest/expect` 这些 **scoped npm 包**同样以 `@`
+    开头，会被误判成别名；别名未配置时判 ALIAS_UNRESOLVED -> 进 WEAK_VERDICTS
+    -> **WEAK_TEST 误报**。实测这就是 E2E（必用 `@playwright/test`）被判空转的
+    直接原因之一 —— 而它本该是外部依赖，直接跳过。
+
+    仍判为别名的：`@/...`、`~/...`，以及**确实配置过前缀**的别名（如 `@app/`）。
+    """
+    if specifier.startswith("@/") or specifier.startswith("~/"):
+        return True
+    if aliases:
+        return any(specifier.startswith(prefix) for prefix in aliases)
+    return False
 
 
 def extract_specifiers(source: str) -> list[str]:
@@ -234,10 +255,21 @@ def audit_imports(
             record.detail = f"读取失败: {exc}"
             continue
 
-        # 纯 E2E：显式声明 type: e2e 才允许不 import 实现
+        # 纯 E2E：**不要求 import 实现**（Playwright 不会 import 后端实现），
+        # 但也不能无条件豁免 —— 改为与 UI 门禁**共用同一套判据**：
+        # 测试是否真的断言了 UI 元素的存在与状态。
+        # 否则一个空的 .spec.js（只 goto/click、无断言）也会被当成有效证据。
         if types and all(t.lower() == "e2e" for t in types):
-            record.verdict = V_E2E
-            record.detail = "声明为 e2e，豁免 import 要求"
+            assertion_ok, assertion_why = has_meaningful_ui_assertions(source)
+            if assertion_ok:
+                record.verdict = V_E2E
+                record.detail = f"声明为 e2e，豁免 import 要求；{assertion_why}"
+            else:
+                record.verdict = V_E2E_NO_ASSERTION
+                record.detail = (
+                    f"声明为 e2e，但{assertion_why} —— 测不出东西"
+                    "（与 UI 门禁 UI_TEST_WEAK 同一判据）"
+                )
             continue
 
         specifier_kinds = extract_specifier_kinds(source)
@@ -247,7 +279,7 @@ def audit_imports(
         resolved_dynamic: list[str] = []
 
         for spec, is_dynamic in specifier_kinds:
-            if looks_like_alias(spec):
+            if looks_like_alias(spec, aliases):
                 matched = next((p for p in aliases if spec.startswith(p)), None)
                 if matched is None:
                     unresolved_alias = spec
@@ -1212,3 +1244,89 @@ def audit_relative_imports(root: Path, files: "list[Path] | tuple[Path, ...]") -
                 }
             )
     return missing
+
+
+# ---------------------------------------------------------------------------
+# 应用外壳契约：产出物是否仍能被平台**启动并服务**
+# ---------------------------------------------------------------------------
+
+_HEALTH_ROUTE = re.compile(
+    r"""app\s*\.\s*(?:get|use|all)\s*\(\s*['"`](?:/api)?/healthz?['"`]"""
+)
+_STATIC_SERVE = re.compile(r"express\s*\.\s*static\s*\(")
+_SPA_FALLBACK = re.compile(r"sendFile\s*\(")
+
+
+def audit_app_shell(output_dir: Path, *, backend_dir: str = "backend") -> list[dict]:
+    """产出物的 `src/app.js` 是否仍满足**应用的启动契约**。
+
+    ═══════════════════════════════════════════════════════════════════════
+     实测根因（c9462d0bafc2-template，一次真实平台的产出）
+    ═══════════════════════════════════════════════════════════════════════
+    模型把 `backend/src/app.js` 整个重写成了：
+
+        const express = require('express');
+        const app = express();
+        app.use(express.json());
+        const columnsRouter = require('./routes/columns');
+        app.use('/api/columns', columnsRouter);
+        module.exports = app;
+
+    只关心「把我这条需求的路由挂上去」，**没意识到自己删掉了整个应用外壳**：
+
+      · `/api/health`                      -> 就绪探测永远 404
+        => 平台报 "template application server did not become ready
+           within 120 seconds"（模板 README 明确写的就是这条健康检查）
+      · `express.static(frontend/dist)` + SPA fallback
+        => `page.goto('/')` 404 -> 基准测试第一步 `openHome` 就挂
+      · `initializeDatabase()`             -> 数据层从未初始化
+
+    这与「引用了不存在的模块」是同一类毛病：**局部正确、整体不可运行**。
+    模块图审计只看"引用能不能解析"，看不见"外壳被删了" —— 所以补这一道。
+
+    只对 express 形态的工程生效（没有 `backend/src/app.js` 就跳过）。
+    返回 [{"code","path","detail"}, ...]；空列表 = 外壳完好。
+    """
+    app_js = Path(output_dir) / backend_dir / "src" / "app.js"
+    if not app_js.is_file():
+        return []
+    # ★只在**真实可服务的工程**上审计：必须有 backend/package.json。
+    #   否则合成/局部工作区（例如只建了 backend/src 的门禁用例）会被误判 ——
+    #   实测 T38d 就是这么被误伤的。平台模板永远带 backend/package.json。
+    if not (Path(output_dir) / backend_dir / "package.json").is_file():
+        return []
+    try:
+        source = app_js.read_text(encoding="utf-8")
+    except OSError:
+        return []
+
+    rel = app_js.relative_to(Path(output_dir)).as_posix()
+    violations: list[dict] = []
+
+    if not _HEALTH_ROUTE.search(source):
+        violations.append({
+            "code": "APP_SHELL_HEALTH_MISSING",
+            "path": rel,
+            "detail": (
+                "app.js 里没有健康检查路由（/api/health 或 /health）—— "
+                "平台的就绪探测要打它，缺了会让整个服务判定为「未就绪」"
+                "（实测报错：did not become ready within 120 seconds）。"
+                "请把健康检查路由加回去，不要删除既有外壳。"
+            ),
+        })
+
+    frontend = Path(output_dir) / "frontend"
+    expects_frontend = (frontend / "package.json").is_file() or (frontend / "dist").is_dir()
+    if expects_frontend and not (_STATIC_SERVE.search(source) or _SPA_FALLBACK.search(source)):
+        violations.append({
+            "code": "APP_SHELL_FRONTEND_NOT_SERVED",
+            "path": rel,
+            "detail": (
+                "app.js 不再托管前端（缺 express.static(frontend/dist) 与 SPA 兜底 "
+                "sendFile(...index.html)）。平台基准测试第一步就是 "
+                "`page.goto('/')` 然后找一个 heading —— 首页 404 则全部用例必挂。"
+                "新增 API 路由请**追加**，不要重写整个 app.js。"
+            ),
+        })
+
+    return violations

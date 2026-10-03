@@ -28,6 +28,8 @@ from .models import (
     TestSpec,
 )
 
+from .uicontract import contracts_from_text, requirement_text
+
 logger = logging.getLogger("factory.adapter")
 
 # ---------------------------------------------------------------------------
@@ -322,23 +324,43 @@ def _adapt(raw: dict[str, Any] | list[Any], *, source: Path) -> RequirementSet:
                 for scenario in scenarios
             )
 
-        requirements.append(
-            Requirement(
-                req_id=req_id,
-                name=_as_str(_pick(node, "name"), req_id) or req_id,
-                description=_as_str(_pick(node, "description")),
-                parent_id=parent_id,
-                children_ids=_as_str_list(_pick(node, "children")),
-                dependencies=_as_str_list(_pick(node, "dependencies")),
-                cross_module_calls=_parse_cross_module_calls(node),
-                ui_contracts=_parse_ui_contracts(node),
-                visual_reference=_as_str_list(_pick(node, "visual_reference")),
-                acceptance=_as_str_list(_pick(node, "acceptance")),
-                scenarios=scenarios,
-                interfaces=interfaces,
-                tests=tests,
-            )
+        requirement = Requirement(
+            req_id=req_id,
+            name=_as_str(_pick(node, "name"), req_id) or req_id,
+            description=_as_str(_pick(node, "description")),
+            parent_id=parent_id,
+            children_ids=_as_str_list(_pick(node, "children")),
+            dependencies=_as_str_list(_pick(node, "dependencies")),
+            cross_module_calls=_parse_cross_module_calls(node),
+            ui_contracts=_parse_ui_contracts(node),
+            visual_reference=_as_str_list(_pick(node, "visual_reference")),
+            acceptance=_as_str_list(_pick(node, "acceptance")),
+            scenarios=scenarios,
+            interfaces=interfaces,
+            tests=tests,
         )
+
+        # ★UI 契约来源：**字段优先，正文兜底**。
+        #   实测：平台从不发 `ui_contracts` 字段（6 个真实 app 全无），
+        #   于是第五道 UI 门禁在真实输入上永远走 NO_UI_CONTRACT_DECLARED ——
+        #   这道门从未真正活过。真实契约藏在描述正文里，例如
+        #       "exactly one visible heading with accessible name `BookStack`"
+        #   字段仍在时**优先用字段**（显式覆盖；平台将来若发字段，行为立即回归）。
+        if not requirement.ui_contracts:
+            extracted = contracts_from_text(
+                requirement_text(requirement),
+                req_id=requirement.req_id,
+                title=requirement.name,
+            )
+            if extracted:
+                requirement = replace(requirement, ui_contracts=extracted)
+                logger.debug(
+                    "UI 契约（从正文提取）%s: %d 个元素",
+                    requirement.req_id,
+                    sum(len(c.elements) for c in extracted),
+                )
+
+        requirements.append(requirement)
 
     if not requirements:
         raise ValueError(f"需求文件未解析出任何需求节点: {source}")

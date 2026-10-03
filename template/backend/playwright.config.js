@@ -1,6 +1,8 @@
 const { defineConfig } = require('@playwright/test');
 
-const baseURL = process.env.PLAYWRIGHT_BASE_URL || process.env.ARC_WEB_BASE_URL || 'http://127.0.0.1:3000';
+// 与平台基准测试对齐：上游为 TARGET_URL || PLAYWRIGHT_BASE_URL || :3301
+const baseURL = process.env.TARGET_URL || process.env.PLAYWRIGHT_BASE_URL
+  || process.env.ARC_WEB_BASE_URL || 'http://127.0.0.1:3301';
 
 module.exports = defineConfig({
   testDir: './test-e2e',

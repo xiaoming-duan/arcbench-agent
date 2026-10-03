@@ -24,9 +24,17 @@ UI 部分被模型自由发挥，发挥不好就失败。
  四个判定
 ═══════════════════════════════════════════════════════════════════════════
     UI_TEST_MISSING           未生成 E2E 测试（计划里没有 type=e2e，或文件不存在）
-    UI_TEST_WEAK              E2E 测试在 RED 阶段**没有失败** —— 它测不出东西
+    UI_TEST_WEAK              E2E 测试**没有真正断言 UI 元素的存在与状态** —— 它测不出东西
     UI_ELEMENT_MISSING        需求声明的 UI 元素未出现在测试里
     UI_ERROR_MESSAGE_MISMATCH 需求声明的错误消息文本未出现在测试里
+
+**判据统一（P0 修复）**：UI_TEST_WEAK 与 WEAK_TEST 对 `type=e2e` 的文件
+**共用同一套判据** `has_meaningful_ui_assertions()`：只看源码里有没有
+「对页面元素的存在/状态的真实断言」。
+
+原判据是「E2E 在 RED 阶段是否失败」，但 RED 是否失败**无法在写测试时观测** ——
+调用方一律传 `red_failed=None`，于是这道门**从未触发过**（语义错位）。
+判据换成源码本身可判定的事实后，它才真正会拦人。
 
 **可选语义**：未声明 `ui_contracts` 的需求不做任何检查（返回 ok）——
 与既有四道门的「字段可选」约定一致。
@@ -159,6 +167,83 @@ def element_mentioned(source_norm: str, element_id: str, label: str,
     return False
 
 
+# ---------------------------------------------------------------------------
+# 「断言是否有意义」—— WEAK_TEST(type=e2e) 与 UI_TEST_WEAK **共用唯一判据**
+# ---------------------------------------------------------------------------
+
+#: Playwright 定位器：断言的对象是**页面上的元素**
+_UI_LOCATOR = re.compile(
+    r"\.(?:getByRole|getByLabel|getByText|getByTestId|getByPlaceholder|"
+    r"getByAltText|getByTitle|locator)\s*\(",
+    re.IGNORECASE,
+)
+
+#: Playwright 元素状态/内容断言
+_UI_MATCHER = re.compile(
+    r"\.(?:toBeVisible|toBeHidden|toBeEnabled|toBeDisabled|toBeChecked|"
+    r"toBeEditable|toBeFocused|toBeEmpty|toBeAttached|toBeInViewport|"
+    r"toHaveText|toContainText|toHaveValue|toHaveValues|toHaveCount|"
+    r"toHaveAttribute|toHaveClass|toHaveId|toHaveTitle|toHaveURL|"
+    r"toHaveCSS|toMatchAriaSnapshot)\s*\(",
+    re.IGNORECASE,
+)
+
+_EXPECT_CALL = re.compile(r"(?:^|[^\w.])expect\s*\(", re.MULTILINE)
+_BARE_ASSERT = re.compile(r"(?:^|[^\w.])assert\s*(?:\.\s*\w+\s*)?\(", re.MULTILINE)
+
+#: 引用了 assert 库（node:assert / chai / assert）——
+#: 因为常见写法是 `const a = require('node:assert'); a.equal(...)`，
+#: 断言方法是**别名调用**，上面的 _BARE_ASSERT 认不出来。
+_ASSERT_LIB = re.compile(
+    r"""require\(\s*['"](?:node:)?(?:assert|chai)['"]\s*\)"""
+    r"""|from\s+['"](?:node:)?(?:assert|chai)['"]""",
+)
+_ASSERT_METHOD = re.compile(
+    r"\.(?:equal|deepEqual|strictEqual|notEqual|notDeepEqual|ok|fail|throws|"
+    r"doesNotThrow|match|doesNotMatch|isTrue|isFalse|isOk|should)\s*\("
+)
+
+
+def has_meaningful_ui_assertions(source: str) -> tuple[bool, str]:
+    """测试是否**真的断言了 UI 元素的存在与状态**（而不是只跑流程 / 空断言）。
+
+    ★这是 WEAK_TEST（对 `type=e2e` 的文件）与 UI_TEST_WEAK **共用的唯一判据**。
+    两处必须调用本函数，不许各自就地写一套 —— 否则会像 DYNAMIC_IMPORT 那次一样
+    静默分叉：一个放行、一个阻断，且不报错。
+
+    为什么需要它：UI_TEST_WEAK 原本判「E2E 在 RED 阶段是否失败」，
+    而这件事**在写测试时无法观测**，调用方只能传 `red_failed=None`，
+    于是这道门从未触发。判据改为源码本身可判定的事实后才真正生效。
+
+    判为「有意义」的情形：
+      · 有 Playwright 定位器（getByRole/getByLabel/getByTestId/locator…）
+        且有 expect(...) 或元素状态匹配器（toBeVisible/toHaveText…）
+      · 或使用了 assert.* （非 Playwright 的 E2E）
+
+    判为「无意义」的情形：
+      · 只有流程操作（goto / click），没有任何断言
+      · 只有空断言（如 `expect(true).toBe(true)`），不涉及任何页面元素
+    """
+    text = source or ""
+    has_locator = bool(_UI_LOCATOR.search(text))
+    has_matcher = bool(_UI_MATCHER.search(text))
+    has_expect = bool(_EXPECT_CALL.search(text))
+    has_bare = bool(_BARE_ASSERT.search(text))
+
+    if has_bare:
+        return True, "包含 assert.* 断言"
+    # 别名写法：require('node:assert') + a.equal(...)
+    if _ASSERT_LIB.search(text) and _ASSERT_METHOD.search(text):
+        return True, "包含 assert 库断言（别名调用）"
+    if has_locator and (has_matcher or has_expect):
+        return True, "包含对 UI 元素的定位与断言"
+    if has_matcher:
+        return True, "包含 UI 元素状态断言"
+    if not has_expect:
+        return False, "没有任何断言（只有流程操作，如 goto/click）"
+    return False, "有 expect 但没有断言任何 UI 元素的存在或状态（空断言）"
+
+
 def message_mentioned(source_norm: str, message: str) -> bool:
     """错误消息文本是否出现在测试里（**逐字**比对）。"""
     msg = _norm(message)
@@ -177,7 +262,6 @@ def check_ui(
     *,
     e2e_sources: Sequence[tuple[str, str]] = (),
     planned_e2e: bool = True,
-    red_failed: bool | None = None,
 ) -> UICheck:
     """检查 UI 契约的测试覆盖。
 
@@ -185,7 +269,10 @@ def check_ui(
     ----
     e2e_sources : [(相对路径, 源码)] —— 计划里 type=e2e 且**实际存在**的测试文件
     planned_e2e : 测试计划里是否声明了 type=e2e 的文件
-    red_failed  : E2E 在 RED 阶段是否失败。None 表示未观测（不做 WEAK 判定）
+
+    注意：**不再接受 `red_failed`**。原判据「E2E 在 RED 阶段是否失败」在
+    调用点无法观测（一律传 None），使 UI_TEST_WEAK 从未触发；现改为
+    检查测试源码是否真的断言了 UI 元素（见 has_meaningful_ui_assertions）。
 
     未声明 `ui_contracts` -> 直接 ok（可选能力的默认关闭语义）。
     """
@@ -207,12 +294,17 @@ def check_ui(
         return UICheck(req_id=requirement.req_id, ok=False, reason=UI_TEST_MISSING,
                        violations=violations, e2e_files=files)
 
-    # ② RED 阶段是否失败（测不出东西的测试不算覆盖）
-    if red_failed is False:
+    # ② 测试是否**真的断言了 UI 元素**（与 WEAK_TEST 对 type=e2e 共用同一判据）
+    #    原判据是「RED 阶段是否失败」，但调用点拿不到该事实（只能传 None），
+    #    于是本判定从未触发 —— 这是语义错位，不是漏配。
+    assertion_ok, assertion_why = has_meaningful_ui_assertions(
+        "\n".join(src for _, src in e2e_sources)
+    )
+    if not assertion_ok:
         violations.append(UIViolation(
             UI_TEST_WEAK,
-            "E2E 测试在 RED 阶段**没有失败** —— 应用尚未实现却能通过，"
-            "说明它没有真正断言任何 UI 行为（空断言 / 只 import / 恒真）",
+            f"E2E 测试没有真正断言 UI 元素的存在或状态（{assertion_why}）—— "
+            "它测不出东西：只跑流程或写空断言，应用坏掉也照样通过",
         ))
 
     joined = _norm("\n".join(src for _, src in e2e_sources))
@@ -298,5 +390,7 @@ def describe(checks: Sequence[UICheck]) -> str:
     lines.append("    ① 每个元素至少被引用一次（推荐 `getByLabel('<可访问名>')` 或 `getByRole`）；")
     lines.append("    ② 每条 error_messages 的文本必须**逐字**出现在断言里；")
     lines.append("    ③ 不变量（含「不得出现」这类否定式）要有对应断言；")
-    lines.append("    ④ E2E 在 RED 阶段应失败 —— 不要写空断言让它提前通过。")
+    lines.append("    ④ 断言必须落在**真实页面元素**上"
+                 "（`getByLabel`/`getByRole`/`getByTestId` + `toBeVisible`/`toHaveText` 等）；")
+    lines.append("       只 `goto`/`click` 不写断言，会被判为 E2E 空转（UI_TEST_WEAK）。")
     return "\n".join(lines)

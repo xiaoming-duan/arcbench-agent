@@ -33,6 +33,9 @@ requirements:
       在同一或更晚的浏览器会话中访问该确切工作簿状态，
       必须恢复该工作簿**最近一次成功**的状态，且无需经过首页。
       入口格式为实现自定义。
+      在公式栏输入**非法公式**时，公式栏旁必须显示错误消息
+      "Invalid formula"；在网格单元格输入**非法值**时，
+      该单元格旁必须显示错误消息 "Invalid cell value"。
     depends_on: []
     acceptance:
       - 首页列出工作簿，每条显示 "Last updated: <值>" 与可访问名为工作簿名的链接
@@ -43,6 +46,8 @@ requirements:
       - 另一工作簿的数据不得出现在当前网格中
       - 编辑器入口可直接访问，刷新后仍指向同一工作簿
       - 同一或更晚的浏览器会话访问该状态时恢复最近一次成功状态，且无需经过首页
+      - 公式栏输入非法公式时显示错误消息 "Invalid formula"
+      - 网格单元格输入非法值时显示错误消息 "Invalid cell value"
     scenarios:
       - id: REQ-1-1-1-SCN-1
         name: 从首页进入编辑器
@@ -71,6 +76,24 @@ requirements:
             content: 直接访问该入口并刷新
           - keyword: THEN
             content: 仍指向同一工作簿，且不经首页
+      - id: REQ-1-1-1-SCN-5
+        name: 非法输入给出具体错误消息
+        steps:
+          - keyword: GIVEN
+            content: 编辑器已打开且网格可编辑
+          - keyword: WHEN
+            content: '在公式栏输入非法公式 "=SUM("'
+          - keyword: THEN
+            content: '公式栏旁显示错误消息 "Invalid formula"'
+      - id: REQ-1-1-1-SCN-6
+        name: 非法单元格值给出错误消息
+        steps:
+          - keyword: GIVEN
+            content: 编辑器已打开且网格可编辑
+          - keyword: WHEN
+            content: 在网格单元格输入不允许的值
+          - keyword: THEN
+            content: '该单元格旁显示错误消息 "Invalid cell value"'
       - id: REQ-1-1-1-SCN-4
         name: 会话恢复最近成功状态
         steps:
@@ -130,10 +153,16 @@ requirements:
             type: grid
             label: "Grid"
             validation: "行列结构与网格值正确"
+            # ★ error_messages 是 UI_ERROR_MESSAGE_MISMATCH 门禁的**触发对象**：
+            #   文本必须**具体、逐字可断言**，不能用占位符。
+            error_messages:
+              非法单元格值: "Invalid cell value"
           - id: formula-bar
             type: textbox
             label: "Formula bar"
             validation: "显示当前单元格的公式内容"
+            error_messages:
+              非法公式: "Invalid formula"
           - id: filter-views
             type: control
             label: "Filter views"
@@ -146,7 +175,10 @@ requirements:
             type: table
             label: "Pivot table"
             validation: "透视表结果正确"
-        error_display: "无（本需求不涉及表单错误）"
+        error_display: >-
+          公式栏输入非法公式时，在其旁显示 "Invalid formula"；
+          网格单元格输入非法值时，在该单元格旁显示 "Invalid cell value"。
+          两条文本必须**逐字**一致。
         state_preservation: >-
           编辑器入口可直接访问；刷新后仍指向同一工作簿；
           同一或更晚的浏览器会话访问该确切状态时，

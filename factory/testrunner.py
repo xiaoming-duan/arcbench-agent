@@ -290,3 +290,78 @@ def ensure_backend_dependencies(output_dir: Path, *, timeout_s: int = 900) -> bo
         return False
     logger.info("backend 依赖安装完成")
     return True
+
+
+def _run_npm(command: list[str], cwd: Path, timeout_s: int, label: str) -> bool:
+    """跑一条 npm 命令（尽力而为）。成功 True，失败/超时 False（只告警）。"""
+    cache_dir = os.environ.get("FACTORY_NPM_CACHE", "").strip()
+    if cache_dir:
+        Path(cache_dir).mkdir(parents=True, exist_ok=True)
+        command = [*command, "--cache", cache_dir]
+    try:
+        completed = subprocess.run(
+            command, cwd=str(cwd), capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=timeout_s, check=False,
+        )
+    except subprocess.TimeoutExpired:
+        logger.warning("%s 超时（>%ss）", label, timeout_s)
+        return False
+    except OSError as exc:
+        logger.warning("%s 无法执行: %s", label, exc)
+        return False
+    if completed.returncode != 0:
+        logger.warning("%s 失败: %s", label, (completed.stderr or "").strip()[:300])
+        return False
+    logger.info("%s 完成", label)
+    return True
+
+
+def ensure_frontend_build(output_dir: Path, *, timeout_s: int = 900) -> bool:
+    """确保 `frontend/dist` 被构建出来。**尽力而为，绝不抛异常。**
+
+    ═══════════════════════════════════════════════════════════════════════
+     为什么这是必需的（实测，不是推测）
+    ═══════════════════════════════════════════════════════════════════════
+    平台模板的预览指向 `frontend/dist/index.html`：
+
+        preview:
+          html: frontend/dist/index.html
+          assets: frontend/dist/assets
+
+    而 `backend/src/app.js` 在 dist **不存在**时返回的是一个 **503 页面**。
+    基准测试的第一步恰恰是：
+
+        await h.openHome(page)                     // page.goto('/')
+        await h.expectTextsVisible(page, [/BookStack/i])
+
+    拿到 503 页面就找不到任何 heading —— 全部用例必然挂，而且**看不出是构建没做**。
+    平台日志里那条「application server exited before becoming ready (code=1)」
+    与这条路径直接相关。
+
+    幂等：dist/index.html 已存在则直接返回。
+    """
+    frontend = output_dir / "frontend"
+    if not (frontend / "package.json").is_file():
+        return False
+    if (frontend / "dist" / "index.html").is_file():
+        logger.info("frontend/dist 已存在，跳过构建")
+        return True
+    if not shutil.which("npm"):
+        logger.warning("未找到 npm，跳过 frontend 构建（preview 将回 503）")
+        return False
+
+    if not (frontend / "node_modules").is_dir():
+        logger.info("frontend 依赖未安装，尝试安装（超时 %ss）...", timeout_s)
+        if not _run_npm(["npm", "install", "--no-audit", "--no-fund"],
+                        frontend, timeout_s, "frontend 依赖安装"):
+            logger.warning("frontend 依赖安装失败，preview 将回 503")
+            return False
+
+    logger.info("构建 frontend（超时 %ss）...", timeout_s)
+    if not _run_npm(["npm", "run", "build"], frontend, timeout_s, "frontend 构建"):
+        return False
+    if not (frontend / "dist" / "index.html").is_file():
+        logger.warning("构建命令成功但 frontend/dist/index.html 仍不存在")
+        return False
+    logger.info("frontend/dist 构建完成（preview 可用）")
+    return True

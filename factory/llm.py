@@ -114,7 +114,32 @@ class ModelCallError(RuntimeError):
     """模型调用失败（网络或服务端错误）。"""
 
 
-class ModelQuotaExhaustedError(ModelCallError):
+class ModelFatalError(ModelCallError):
+    """★终局性模型故障：本进程内**不可能**靠重试或换提示词恢复。
+
+    与普通 `ModelCallError` 的区别只有一条，但很关键：
+    **要不要终止整轮**。普通失败只影响当前需求；终局故障会让后面
+    *每一次* 调用都撞同一堵墙 —— 逐个需求去撞纯属烧时间。
+
+    目前两类：
+      · 配额 / 余额耗尽（429 insufficient_quota）
+      · 凭据无效（401 invalid_api_key）
+    """
+
+
+class ModelAuthError(ModelFatalError):
+    """凭据无效（401 invalid_api_key / unauthorized）。实测（平台 2026-10-02 07:19）：
+
+        POST https://api.arc-bench.com/v1/chat/completions "HTTP/1.1 401 Unauthorized"
+        Error code: 401 - {'code': 'invalid_api_key', 'message': 'unauthorized'}
+
+    401 不被重试是**对的**（当时已经如此），但它此前**不会终止整轮**，
+    于是每个需求都各自撞一次同一堵墙。
+    """
+    ...
+
+
+class ModelQuotaExhaustedError(ModelFatalError):
     """模型配额 / 余额耗尽 —— **不是瞬时故障**，重试永远不会成功。
 
     实测（平台 2026-09-30 18:26）：
@@ -142,6 +167,28 @@ _QUOTA_MARKERS = (
 def _is_quota_exhausted(text: str) -> bool:
     lowered = str(text or "").lower()
     return any(marker in lowered for marker in _QUOTA_MARKERS)
+
+
+#: 凭据无效的特征词（与「配额耗尽」区分：一个要充值，一个要换 key）
+_AUTH_MARKERS = (
+    "invalid_api_key", "invalid api key", "incorrect api key",
+    "unauthorized", "authentication_error", "authentication failed",
+)
+
+
+def _is_auth_error(exc: Exception) -> bool:
+    """是否凭据无效。
+
+    优先看**状态码**（401 是权威信号），文本特征作为兜底 ——
+    SDK 与 HTTP 两条后端抛出的异常类型不同，状态码是唯一的共同信号。
+    """
+    status = getattr(exc, "status_code", None) or getattr(
+        getattr(exc, "response", None), "status_code", None
+    )
+    if status == 401:
+        return True
+    lowered = str(exc or "").lower()
+    return any(marker in lowered for marker in _AUTH_MARKERS)
 
 
 class ModelClient:
@@ -386,6 +433,8 @@ class ModelClient:
                     # ★配额耗尽优先判定：它也带 429，但重试永远不会成功。
                     if _is_quota_exhausted(exc):
                         raise ModelQuotaExhaustedError(f"模型配额/余额耗尽: {exc}") from exc
+                    if _is_auth_error(exc):
+                        raise ModelAuthError(f"模型凭据无效: {exc}") from exc
                     last_error = ModelCallError(f"openai SDK 调用失败: {exc}")
                     if (_is_retryable_sdk_error(exc)
                             and retries_used < self._retry_allowance(exc)):
@@ -445,6 +494,10 @@ class ModelClient:
                     if _is_quota_exhausted(detail) or _is_quota_exhausted(exc.reason):
                         raise ModelQuotaExhaustedError(
                             f"模型配额/余额耗尽（HTTP {exc.code}）: {detail[:200]}"
+                        ) from exc
+                    if exc.code == 401 or _is_auth_error(exc.reason) or _is_auth_error(detail):
+                        raise ModelAuthError(
+                            f"模型凭据无效（HTTP {exc.code}）: {detail[:200]}"
                         ) from exc
                     message = f"HTTP {exc.code} {exc.reason}: {detail}"
                     last_error = ModelCallError(message)

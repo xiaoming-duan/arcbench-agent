@@ -1,0 +1,62 @@
+arcbench-agent v7 —— 交付标签（诚实标注）
+============================================================
+
+相对 v6 的变化
+------------------------------------------------------------
+★★ 本包是**分支整合后的第一个包**。v2–v6 全部打自分支整合之前：
+   v5/v6 来自 factory-verify 合并 main **之前**的快照（其 factory/loop.py
+   为 5b905888），因此**完全没有** main 侧的 UI P0 三条线，
+   包内甚至不含 factory/uigate.py。
+
+① 分支整合（merge main → factory-verify）
+   merge 提交 f4ff87c：9 个 main 独有提交并入 factory-verify 的 27 个提交。
+   引入 main 侧 UI P0 三条线：
+     · ui_contracts 契约字段（元素/不变量/错误消息）+ 提示词注入
+     · Playwright E2E 生成指引 + webServer 修复
+     · 第五道 UI 门禁 factory/uigate.py（四判定）
+   冲突仅 1 处（.pack_v2.py，modify/delete），按 BRANCH_SEPARATION.md §四
+   取删除侧。逐文件解决后均跑 tools/test_imports.py（4/4）。
+
+② WEAK_TEST 按 type 分规则（ee5610b）
+   原判据「测试有没有 import 实现」对 e2e 不成立 —— Playwright 驱动浏览器，
+   本来就不 import 后端实现，于是每次误报、每次无谓重写。
+     unit / integration -> 保留原判据
+     e2e                -> 改判「是否真的断言了 UI 元素的存在与状态」
+   同时修掉两个使它更严重的缺陷：
+     · looks_like_alias 只看首字符 @，把 @playwright/test 这类 scoped npm 包
+       误判成路径别名 -> ALIAS_UNRESOLVED -> 弱（实测的直接原因）
+     · declared_types 的键取设计产物 file_path（backend 相对），与查找键
+       （output 相对）不同坐标空间 -> types 为空 -> e2e 拿不到豁免
+   新增 verdict V_E2E_NO_ASSERTION（算弱）：声明 e2e 但无任何真实 UI 断言。
+
+③ UI_TEST_WEAK 判据脱离 RED（ee5610b）
+   该判定**从未触发过**。不是漏配而是语义错位：语义是「E2E 存在但没验证 UI」，
+   判据却是「RED 阶段是否失败」——而这件事在写测试时无法观测，调用方只能传
+   red_failed=None，于是恒不触发。判据改为源码可判定的事实，并**删掉
+   red_failed 形参**；两门禁共用唯一实现 has_meaningful_ui_assertions()。
+
+④ 含 error_messages 的 UI 探针（ee5610b）
+   requirements_probe_ui 的 12 条元素声明里 error_messages 全空，导致
+   UI_ERROR_MESSAGE_MISMATCH **没有真实触发对象**。已给 grid / formula-bar
+   补上逐字可断言的文本，并补 SCN-5/6 与验收标准使规格自洽。
+
+⑤ 空测试文件如实报出（66a7692）
+   空文件在两种方言下都被报成完全不同的东西，就是不说"它是空的"：
+     vitest: 0 个测试 -> TEST_BROKEN，理由却说「多半是语法错误、import 失败」
+     node  : `node --test <空文件>` 把文件本身计为 1 个**通过**的测试
+             -> WEAK_TEST「整组测试在实现前就通过」
+   且静态拦截此前**只在 vitest 方言生效**，node 方言下空文件无人管。
+   现在两种方言都在跑之前拦下（EMPTY_TEST_FILE），两处理由函数也如实说明。
+
+验证
+------------------------------------------------------------
+tools/check_all.py —— 20 类 / 492 项全部通过（解压后的包内自跑，非工作区）
+原 v6 线为 17 类 / 450 项。
+
+诚实标注（未验证 / 已知缺口）
+------------------------------------------------------------
+· tests/test_dag.py 的 10 项失败是**既有**缺口（DAG_DESIGN.md：悬空依赖 / 环
+  性质未被报告），在整合前的 main 上同样失败，不在 check_all 套件内。
+· UI 探针的**真实运行**与 closure6 因 API 额度耗尽**未执行** ——
+  本包只含静态与合成验证，不含真实 E2E 跑通证据。
+· 打包由 factory-verify worktree 直接产出（同一工作区，未跨 worktree 复制）。

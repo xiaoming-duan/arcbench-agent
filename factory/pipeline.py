@@ -16,11 +16,11 @@ from .adapter import _adapt
 from .config import FactoryConfig
 from .contracts import contracts_dir
 from .generator import build_generator
-from .llm import ModelClient, ModelQuotaExhaustedError
+from .llm import ModelClient, ModelFatalError
 from .loop import TddLoop
 from .models import RequirementResult, RunReport
 from .store import FactoryStore
-from .testrunner import build_runner, ensure_backend_dependencies
+from .testrunner import build_runner, ensure_backend_dependencies, ensure_frontend_build
 from .version import git_state, log_state
 from .workspace import copy_template_contents, load_requirements_raw, write_json
 
@@ -174,7 +174,7 @@ def run_factory(
         # 让「依赖累积」的失败归因变得不可分辨（是上游的问题还是下游的问题）。
         # 有这条传播后，下游判 UPSTREAM_FAILED 并**不计入通过率分母**。
         outcomes: dict[str, RequirementResult] = {}
-        quota_exhausted = False
+        fatal_model_error = False
 
         # ---- 容器节点（ROOT）识别 ----
         # 平台会把「整个平台」作为 ROOT 塞进需求树。若照常走设计，等于让模型
@@ -230,14 +230,15 @@ def run_factory(
             cost_before = model_client.stats.snapshot() if model_client else {}
             try:
                 outcome = loop.run(requirement)
-            except ModelQuotaExhaustedError as exc:
-                # ★配额/余额耗尽：后面每个需求都注定失败。立刻收摊，
-                #   而不是逐个把重试预算烧完 —— 实测代价：
-                #   「网关重试 11 次（成功 0）」外加每个需求 3 次循环级重试。
-                quota_exhausted = True
-                report.error = f"ModelQuotaExhaustedError: {exc}"
+            except ModelFatalError as exc:
+                # ★终局性模型故障（配额耗尽 / 凭据无效）：后面每个需求都注定
+                #   失败。立刻收摊，而不是逐个去撞同一堵墙。
+                #   实测代价：配额耗尽那次「网关重试 11 次（成功 0）」；
+                #   凭据无效那次（401 invalid_api_key）每个需求各撞一次。
+                fatal_model_error = True
+                report.error = f"{type(exc).__name__}: {exc}"
                 logger.error(
-                    "[致命] 模型配额/余额耗尽，停止本轮剩余需求（共 %d 个）: %s",
+                    "[致命] 模型终局故障（配额/凭据），停止本轮剩余需求（共 %d 个）: %s",
                     len(req_set.requirements),
                     exc,
                 )
@@ -246,6 +247,13 @@ def run_factory(
                 outcome.cost = model_client.stats.delta(cost_before)
             report.results.append(outcome)
             outcomes[requirement.req_id] = outcome
+
+        # ---- 收尾：确保 frontend/dist 被构建 ----
+        # 平台 preview 指向 frontend/dist/index.html；缺了它 app.js 会回 503，
+        # 而基准测试第一步就是 page.goto('/') 找一个 heading —— 必然全挂。
+        # 尽力而为，失败只告警（构建失败不该让整轮需求失败）。
+        if config.install_deps != "never":
+            ensure_frontend_build(output_dir, timeout_s=config.install_timeout_s)
 
         # ---- 容器节点收敛状态 ----
         # 容器节点自己不跑测试，状态由子需求聚合而来。用的是平台文档枚举里的
@@ -297,7 +305,7 @@ def run_factory(
         # 配额耗尽中止时绝不能判 ok：即使恰好没有失败，本轮也没跑完
         report.ok = (
             failed == 0 and passed > 0 and weak == 0
-            and upstream_failed == 0 and not quota_exhausted
+            and upstream_failed == 0 and not fatal_model_error
         )
         if model_client is not None:
             report.cost = model_client.stats.to_dict()
