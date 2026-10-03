@@ -1244,3 +1244,89 @@ def audit_relative_imports(root: Path, files: "list[Path] | tuple[Path, ...]") -
                 }
             )
     return missing
+
+
+# ---------------------------------------------------------------------------
+# 应用外壳契约：产出物是否仍能被平台**启动并服务**
+# ---------------------------------------------------------------------------
+
+_HEALTH_ROUTE = re.compile(
+    r"""app\s*\.\s*(?:get|use|all)\s*\(\s*['"`](?:/api)?/healthz?['"`]"""
+)
+_STATIC_SERVE = re.compile(r"express\s*\.\s*static\s*\(")
+_SPA_FALLBACK = re.compile(r"sendFile\s*\(")
+
+
+def audit_app_shell(output_dir: Path, *, backend_dir: str = "backend") -> list[dict]:
+    """产出物的 `src/app.js` 是否仍满足**应用的启动契约**。
+
+    ═══════════════════════════════════════════════════════════════════════
+     实测根因（c9462d0bafc2-template，一次真实平台的产出）
+    ═══════════════════════════════════════════════════════════════════════
+    模型把 `backend/src/app.js` 整个重写成了：
+
+        const express = require('express');
+        const app = express();
+        app.use(express.json());
+        const columnsRouter = require('./routes/columns');
+        app.use('/api/columns', columnsRouter);
+        module.exports = app;
+
+    只关心「把我这条需求的路由挂上去」，**没意识到自己删掉了整个应用外壳**：
+
+      · `/api/health`                      -> 就绪探测永远 404
+        => 平台报 "template application server did not become ready
+           within 120 seconds"（模板 README 明确写的就是这条健康检查）
+      · `express.static(frontend/dist)` + SPA fallback
+        => `page.goto('/')` 404 -> 基准测试第一步 `openHome` 就挂
+      · `initializeDatabase()`             -> 数据层从未初始化
+
+    这与「引用了不存在的模块」是同一类毛病：**局部正确、整体不可运行**。
+    模块图审计只看"引用能不能解析"，看不见"外壳被删了" —— 所以补这一道。
+
+    只对 express 形态的工程生效（没有 `backend/src/app.js` 就跳过）。
+    返回 [{"code","path","detail"}, ...]；空列表 = 外壳完好。
+    """
+    app_js = Path(output_dir) / backend_dir / "src" / "app.js"
+    if not app_js.is_file():
+        return []
+    # ★只在**真实可服务的工程**上审计：必须有 backend/package.json。
+    #   否则合成/局部工作区（例如只建了 backend/src 的门禁用例）会被误判 ——
+    #   实测 T38d 就是这么被误伤的。平台模板永远带 backend/package.json。
+    if not (Path(output_dir) / backend_dir / "package.json").is_file():
+        return []
+    try:
+        source = app_js.read_text(encoding="utf-8")
+    except OSError:
+        return []
+
+    rel = app_js.relative_to(Path(output_dir)).as_posix()
+    violations: list[dict] = []
+
+    if not _HEALTH_ROUTE.search(source):
+        violations.append({
+            "code": "APP_SHELL_HEALTH_MISSING",
+            "path": rel,
+            "detail": (
+                "app.js 里没有健康检查路由（/api/health 或 /health）—— "
+                "平台的就绪探测要打它，缺了会让整个服务判定为「未就绪」"
+                "（实测报错：did not become ready within 120 seconds）。"
+                "请把健康检查路由加回去，不要删除既有外壳。"
+            ),
+        })
+
+    frontend = Path(output_dir) / "frontend"
+    expects_frontend = (frontend / "package.json").is_file() or (frontend / "dist").is_dir()
+    if expects_frontend and not (_STATIC_SERVE.search(source) or _SPA_FALLBACK.search(source)):
+        violations.append({
+            "code": "APP_SHELL_FRONTEND_NOT_SERVED",
+            "path": rel,
+            "detail": (
+                "app.js 不再托管前端（缺 express.static(frontend/dist) 与 SPA 兜底 "
+                "sendFile(...index.html)）。平台基准测试第一步就是 "
+                "`page.goto('/')` 然后找一个 heading —— 首页 404 则全部用例必挂。"
+                "新增 API 路由请**追加**，不要重写整个 app.js。"
+            ),
+        })
+
+    return violations

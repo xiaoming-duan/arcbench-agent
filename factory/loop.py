@@ -31,6 +31,7 @@ from .testaudit import (
     ImportAudit,
     InjectionAudit,
     MockAudit,
+    audit_app_shell,
     audit_imports,
     audit_relative_imports,
     audit_injection_bypass,
@@ -1340,6 +1341,30 @@ class TddLoop:
                     )
                     + "\n请**补写这些文件**（放在引用它的相对位置），或去掉这些引用。"
                     "注意平台会执行 `npm start` 验证，启动失败即整次提交失败。"
+                ]
+                continue
+
+            # ---- 应用外壳契约审计（启动 + 首页服务）----
+            # ★实测（c9462d0bafc2-template）：模型把 app.js 整个重写成"只挂自己的路由"，
+            #   于是 /api/health 没了（平台就绪探测永远 404 -> 120s 超时），
+            #   express.static(frontend/dist) 与 SPA 兜底也没了（page.goto('/') 404
+            #   -> 基准测试第一步就挂）。模块图审计看不见"外壳被删"。
+            shell_broken = audit_app_shell(self.output_dir)
+            if shell_broken:
+                detail = "; ".join(f"{v['path']}:{v['code']}" for v in shell_broken[:3])
+                logger.error("[外壳审计] %s 应用外壳被破坏: %s", req_id, detail)
+                if attempts > self.config.max_repairs:
+                    self.store.implement_failed(req_id, f"{req_id} 应用外壳被破坏: {detail}")
+                    result.state = "FAILED"
+                    result.note = f"应用外壳被破坏（{attempts} 次尝试）: {detail}"
+                    result.attempts = attempts
+                    logger.error(result.note)
+                    return result
+                failures = [
+                    "你把 **app.js 的外壳删掉了** —— 新增路由必须**追加**，不能重写整个文件。\n"
+                    + "\n".join(f"  - [{v['code']}] {v['detail']}" for v in shell_broken[:4])
+                    + "\n请恢复这些既有能力（健康检查、前端静态托管与 SPA 兜底），"
+                    "只在你需要的位置**追加**新路由。"
                 ]
                 continue
 

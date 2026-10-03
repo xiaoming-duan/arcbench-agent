@@ -1768,6 +1768,103 @@ def t39_backend_accounting_parity() -> None:
     check("T39 成功率不再恒为 n/a", rate == 1.0, str(rate))
 
 
+def t42_app_shell_contract() -> None:
+    """★应用外壳契约：新增路由不得把 app.js 的外壳删掉。
+
+    实测根因（c9462d0bafc2-template，一次真实平台的产出）——模型把
+    `backend/src/app.js` 整个重写成了：
+
+        const express = require('express');
+        const app = express();
+        app.use(express.json());
+        const columnsRouter = require('./routes/columns');
+        app.use('/api/columns', columnsRouter);
+        module.exports = app;
+
+    只关心"把我这条需求的路由挂上去"，**没意识到删掉了整个外壳**：
+
+      · /api/health 没了  -> 平台就绪探测永远 404
+        => "template application server did not become ready within 120 seconds"
+           （模板 README 明写健康检查就是 curl /api/health）
+      · express.static(frontend/dist) + SPA 兜底没了
+        => page.goto('/') 404 -> 基准测试第一步 openHome 就挂
+
+    与「引用了不存在的模块」同类：**局部正确、整体不可运行**。
+    模块图审计只看引用能否解析，看不见外壳被删 —— 所以独立成这道门。
+    """
+    import tempfile
+    from pathlib import Path as _Path
+
+    from factory.testaudit import audit_app_shell
+
+    def ws_with(app_js: str, *, with_frontend: bool = True):
+        ws = _Path(tempfile.mkdtemp(prefix="shell-"))
+        (ws / "backend/src").mkdir(parents=True)
+        # 前提：审计只对"真实可服务的工程"生效 -> 夹具必须有 backend/package.json，
+        # 否则这三个用例会**空转通过**（什么都没检查）。
+        (ws / "backend/package.json").write_text('{"name":"backend"}', encoding="utf-8")
+        (ws / "backend/src/app.js").write_text(app_js, encoding="utf-8")
+        if with_frontend:
+            (ws / "frontend/dist").mkdir(parents=True)
+            (ws / "frontend/package.json").write_text("{}", encoding="utf-8")
+        return ws
+
+    # ① 那次真实产出的 app.js（逐字照抄，作为夹具）
+    REAL_BAD = (
+        "const express = require('express');\n"
+        "const app = express();\n"
+        "app.use(express.json());\n"
+        "const columnsRouter = require('./routes/columns');\n"
+        "app.use('/api/columns', columnsRouter);\n"
+        "module.exports = app;\n"
+    )
+    ws = ws_with(REAL_BAD)
+    codes = {v["code"] for v in audit_app_shell(ws)}
+    check("T42a 真实那次产出被判破坏外壳（缺健康检查）",
+          "APP_SHELL_HEALTH_MISSING" in codes, str(codes))
+    check("T42b 同时判出不再托管前端（首页会 404）",
+          "APP_SHELL_FRONTEND_NOT_SERVED" in codes, str(codes))
+    shutil.rmtree(ws, ignore_errors=True)
+
+    # ② 反向：我们的模板外壳必须完好（否则每次都要误报）
+    tpl_app = (ROOT / "template" / "backend" / "src" / "app.js").read_text(encoding="utf-8")
+    ws = ws_with(tpl_app)
+    check("T42c 出厂模板 app.js 外壳完好（不误报）",
+          audit_app_shell(ws) == [], str(audit_app_shell(ws)))
+    shutil.rmtree(ws, ignore_errors=True)
+
+    # ③ 追加路由（正确做法）不得被判违规
+    appended = tpl_app.replace(
+        "// register routes",
+        "// route modules imports\nconst columnsRouter = require('./routes/columns');\n\n"
+        "// register routes\napp.use('/api/columns', columnsRouter);",
+    )
+    assert appended != tpl_app, "夹具未生效"
+    ws = ws_with(appended)
+    check("T42d 正确追加路由不被判违规", audit_app_shell(ws) == [], str(audit_app_shell(ws)))
+    shutil.rmtree(ws, ignore_errors=True)
+
+    # ④ 非 express 形态（没有 backend/src/app.js）跳过，不误报
+    ws = _Path(tempfile.mkdtemp(prefix="shell-none-"))
+    check("T42e 无 app.js 时跳过（不误报）", audit_app_shell(ws) == [])
+    shutil.rmtree(ws, ignore_errors=True)
+
+    # ④b 合成/局部工作区（有 app.js 但**不是**可服务工程）也要跳过 ——
+    #     否则会误伤只建了 backend/src 的门禁用例（实测 T38d）。
+    ws = _Path(tempfile.mkdtemp(prefix="shell-synth-"))
+    (ws / "backend/src").mkdir(parents=True)
+    (ws / "backend/src/app.js").write_text(REAL_BAD, encoding="utf-8")
+    check("T42g 无 backend/package.json 时跳过（不误伤合成工作区）",
+          audit_app_shell(ws) == [])
+    shutil.rmtree(ws, ignore_errors=True)
+
+    # ⑤ 已接入实施循环：破坏外壳必须回传并消耗重试预算
+    import inspect
+
+    src = inspect.getsource(TddLoop.run)
+    check("T42f 实施循环已接入外壳审计", "audit_app_shell(self.output_dir)" in src)
+
+
 def t23_uncollectable_test_rolls_back_to_test_stage() -> None:
     """测试文件跑不起来（0 个测试被收集）-> 判 TEST_BROKEN 并回退到写测试阶段，
     而不是把 4 轮实现预算浪费在一个坏掉的测试文件上。
@@ -2163,6 +2260,7 @@ def main() -> int:
         t37_quota_exhaustion_is_terminal_and_fails_fast,
         t38_implementation_module_graph_audit,
         t39_backend_accounting_parity,
+        t42_app_shell_contract,
     ):
         try:
             fn()
