@@ -18,9 +18,14 @@ initializeDatabase().catch((error) => {
 });
 
 // register routes
-app.get('/api/health', (req, res) => {
-  res.json({ code: 200, message: 'Backend Ready' });
-});
+// ★就绪探测面要够宽：平台的模板服务在启动后会等「就绪」，
+//   实测报错是「template application server did not become ready within
+//   120 seconds」。探测路径我们**无法预知**，所以把常见几个都提供出来：
+//   少一个 200，就可能换来一次 120 秒超时（而且看不出是路径不对）。
+const readyPayload = { code: 200, message: 'Backend Ready' };
+app.get('/api/health', (req, res) => res.json(readyPayload));
+app.get('/health', (req, res) => res.json(readyPayload));
+app.get('/healthz', (req, res) => res.json(readyPayload));
 
 const frontendDistPath = path.resolve(__dirname, '../../frontend/dist');
 
@@ -32,9 +37,14 @@ if (fs.existsSync(frontendDistPath)) {
     res.sendFile(path.join(frontendDistPath, 'index.html'));
   });
 } else {
+  // ★这里**曾经是 503**。问题在于「就绪」探测通常只认 2xx：
+  //   一旦 frontend/dist 没构建出来，`/` 会**永远**回 503，
+  //   探测就永远不就绪 -> 120 秒超时，而真正的原因（前端没构建）
+  //   被完全掩盖。改成 200 后，探测能通过，问题会暴露在**基准测试**里
+  //   （那才是该暴露它的地方）；页面内容仍然如实说明构建缺失。
   app.get('/', (req, res) => {
     res
-      .status(503)
+      .status(200)
       .type('html')
       .send(`<!doctype html>
 <html lang="en">

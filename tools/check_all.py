@@ -33,7 +33,7 @@ SUITES = (
     ("D10 修复验证", "tools/verify_d10.py", "6 项：mock 违规是否真的阻断（含旧判定复算）"),
     ("依赖边方向断言", "tools/test_call_edges.py", "11 项：call edge 方向(source=调用方) + node contract 落盘"),
     ("UI 契约", "tests/test_ui_contracts.py", "8 项：ui_contracts 解析/prompt 注入/未声明时空"),
-    ("Playwright E2E", "tests/test_playwright_e2e.py", "11 项：模板已备/路径按类型分流/提示词指引"),
+    ("Playwright E2E", "tests/test_playwright_e2e.py", "14 项：模板已备/路径按类型分流/提示词指引/就绪探测面"),
     ("UI 门禁", "tests/test_ui_gate.py", "20 项：第五道门四判定 + matcher 三级防误报"),
     ("WEAK_TEST 分型", "tests/test_weak_test_classification.py",
      "18 项：unit/integration 用 import 判据，e2e 用 UI 断言判据；空测试文件两种方言都拦"),
