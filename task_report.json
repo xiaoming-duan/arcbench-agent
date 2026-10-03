@@ -1,157 +1,135 @@
 {
-  "headline": "三项 P0 全部落地并**部分真实验证**：计划门禁路径分流两次正确拦下模型放错目录；生成的 E2E 测试**覆盖全部 11 个 UI 元素**。UI 门禁首轮因**我传错计划对象**误报 UI_TEST_MISSING，已修并用真实产物复核。第三次运行被**余额耗尽（HTTP 402）**阻断。",
+  "headline": "七步全部走完。**②④⑥ 发现已由独立会话完成**（分支已远超主树）；我补做了 ③ 确认、⑤ VALID_RED_UNVERIFIED、⑦ DSH 插件打包。**两树项数不一致是 main→分支单向合并的预期结果，未做反向合并** —— 见 §post_merge_confirmations。",
 
-  "read_locations": {
-    "requirement_parser": "factory/adapter.py `_FIELD_ALIASES`（原 26 个字段）+ `_adapt()`。本轮新增 `ui_contracts` 别名与解析",
-    "cross_module_calls_path": "adapter.py:43 别名 -> :329 `_parse_cross_module_calls(node)` -> :361 `_derive_incoming_contracts`。**本轮照此模式新增 `_parse_ui_contracts`**",
-    "test_generator_types": ["unit", "integration", "e2e"],
-    "test_generator_note": "`testplan.py:75` `type: str = \"unit\"  # unit | integration | e2e`；`:301` 已把 e2e 列入合法类型。**类型层面本就支持，缺的是生成提示词与路径白名单**",
-    "template_dir": "template/ —— backend/ frontend/ template.yaml README.md",
-    "playwright_config_exists": "**已存在**（`template/backend/playwright.config.js`，testDir=./test-e2e）；`@playwright/test` 与 `playwright` 均在 package.json 依赖中；`template/template.yaml:20` 写 `e2e: Playwright`；`vitest.config.js` 已 `exclude: ['test-e2e/**/*']`。**任务说「若无则加」—— 实际已具备**",
-    "gate_judgments": ["依赖使用（dep_ok）", "mock（mock_ok）", "注入旁路（bypass_ok）", "合同（contract_ok）", "**UI（ui_ok，本轮新增）**"],
-    "combined_ok_location": "factory/loop.py —— `dep_ok = dep_ok and mock_ok and bypass_ok and contract_ok_raw and ui_ok_raw`（**五道门不短路**）",
-    "req_1_1_1_yaml": "**原本不存在** —— 8 个需求规格（requirements_sample / probe / probe_roots / probe_chain5 / probe_subset3 / probe_closure6 / probe_ui）中都没有 REQ-1-1-1。本轮按用户提供的需求原文新建 `requirements_probe_ui/requirements.yaml`",
-    "diagnosis_verification": {
-      "①测试生成器不生成 GUI 测试": "部分成立 —— 历史产物确实无 E2E；但根因是**无需求声明 e2e**（closure6 六个需求全是 type: unit）",
-      "②截图参考从未被使用": "**不成立** —— 所有规格中**没有任何** visual_reference / screenshot 字段",
-      "③契约只覆盖 API": "成立 —— 原无 ui_contracts 字段",
-      "④验证只检查单元/集成测试": "成立 —— 四道既有门禁全面向后端逻辑"
+  "fork_overview": {
+    "branch_commits": "41 个（main..HEAD）",
+    "main_commits": "1 个（HEAD..main，即我本轮那条 repo 清理提交）",
+    "check_all_branch": "**547 项 / 23 类**",
+    "check_all_main": "450 项 / 17 类",
+    "diff_81_source": "**不是 81 而是 97 项**（分支在本轮又新增 2 个套件）。构成 = 分支独有的 **6 个套件**，仅主树有 0 个：\n  并发工作流（4 个）: test_ui_contract_extraction / test_ui_probe / test_ui_test_weak / test_weak_test_classification\n  本轮新加（2 个）: tests/test_valid_red_unverified.py / tools/test_governance_kit.py\n判定：**全部来自并发工作流与自己，无重复、无来源不明。**",
+    "branch_only_suites": [
+      "tests/test_ui_contract_extraction.py",
+      "tests/test_ui_probe.py",
+      "tests/test_ui_test_weak.py",
+      "tests/test_weak_test_classification.py",
+      "tests/test_valid_red_unverified.py",
+      "tools/test_governance_kit.py"
+    ],
+    "already_done_by_independent_session": {
+      "merge": "f4ff87c merge main into factory-verify（早于本轮，当时 main 在 f4a4f2c）",
+      "step_4_WEAK_TEST_by_type": "ee5610b fix(ui): WEAK_TEST 按 type 分规则；UI_TEST_WEAK 判据脱离 RED；补 error_messages 探针",
+      "step_6_empty_file": "66a7692 fix(gate): 空测试文件必须被如实报出来 —— 两种方言此前都在说假话",
+      "note": "分支上另有 30+ 提交（3301 端口 / frontend 构建 / UI 契约改从正文提取 / 401 终局故障 / shell 就绪超时），均非本会话所做"
     }
   },
 
-  "P0_1_ui_contracts": {
-    "yaml_field_added": true,
-    "field_shape": "`ui_contracts: [{page, title, elements:[{id,type,label,validation,error_messages,initial}], error_display, state_preservation, invariants}]`",
-    "invariants_extension": "**必要扩展**：有些 UI 要求是「某种情况**不得发生**」（如跨工作簿数据隔离），用元素清单表达不了，故单列 `invariants`",
-    "parser_reads_field": true,
-    "parser_location": "factory/adapter.py `_parse_ui_contracts()` + `models.UIElement` / `models.UIContract` / `Requirement.ui_contracts`",
-    "empty_when_undeclared": true,
-    "empty_when_undeclared_evidence": "closure6 六个需求的 `ui_contracts` 长度全为 0；提示词里「UI 契约」段完全不出现",
-    "malformed_tolerance": "形状不对的条目**跳过而不抛错**；`elements` 支持列表与映射两种写法",
-    "prompt_injection_test": true,
-    "prompt_injection_impl": true,
-    "prompt_location": "factory/generator.py `_requirement_brief()` —— 四个 prompt（design/plan_tests/write_tests/implement）的**唯一共用注入点**",
-    "prompt_content": "每页的 page/title、每个元素的 id/type/可访问名/校验/初始状态/错误消息、error_display、state_preservation、**不变量**，外加「逐字一致」的实现要求",
-    "sample_REQ_1_1_1_extracted": true,
-    "sample_note": "用户提供了 REQ-1-1-1 的**需求原文**（工作簿首页与编辑器），任务里的 `/register` 是**格式示例**而非真实需求。据此新建探针规格",
-    "line_count": "models +~70 / adapter +~70 / generator +~35 ≈ 175 行"
+  "merge": {
+    "session": "本会话（worktree .wt/factory-verify，独立工作目录）",
+    "merge_command": "git merge --no-commit --no-ff main",
+    "conflicts": [".pack_v2.py —— 分支删除（v4 剥离对方产物）、main 修改 → **取 main 版本**（他们持续维护；release/v5、v6 仍保持剥离）"],
+    "test_imports_after_each": true,
+    "test_imports_evidence": "解析后立即跑；4 项通过",
+    "check_all_after_full": "21 类 / **531 项**通过（合并态，未提交前先跑）",
+    "commit_hash": "**4a8facc**"
   },
 
-  "P0_2_playwright": {
-    "playwright_config_added": "**已存在**，本轮补上它**缺的 `webServer` 块**",
-    "webserver_gap": "原 `playwright.config.js` 只有 testDir/testMatch/use，**没有 webServer** —— 即使浏览器装好，用例也会因连不上 `baseURL` 全红，且失败原因是「环境」而非「实现」，会**污染归因**。已补（command: npm start / url: baseURL / reuseExistingServer: true）",
-    "browsers": "本轮安装了 Chromium headless shell（109.7 MiB -> `.pw-browsers`），E2E 因此**可真实执行**",
-    "test_type_e2e_supported": true,
-    "test_type_note": "类型层面本就支持（testplan.py:75/:301）；**真正的阻塞是路径白名单**",
-    "path_whitelist_fix": "原 `test_prefix = backend/tests/` 恒定，E2E 计划**必然被拒** -> UI 需求连计划都过不了。改为**按类型分流**：unit/integration -> `backend/tests/`；e2e -> `backend/test-e2e/`",
-    "path_whitelist_verified_in_real_runs": "**两次**真实运行都命中：模型把 e2e 放进 `backend/tests/`（第一次）与 `backend/tests/e2e/`（第二次），均被计划门禁以精确理由拦下并促使改正",
-    "template_added": "无需新增模板文件；补 webServer 一处",
-    "prompt_injection": true,
-    "prompt_content": "六条覆盖要求（元素可见 / 错误消息在对应字段旁 / 多错误同时 / state_preservation / 不变量含否定式 / 成功路径）+ Playwright 示例 + 「RED 阶段应失败」提醒",
-    "test_file_generated": "**是** —— 首次运行生成 3 个 E2E 文件于 `backend/test-e2e/`：`req1-1-1.home-to-editor.e2e.spec.js` / `req1-1-1.direct-entry-refresh.e2e.spec.js` / `req1-1-1.session-restore-isolation.e2e.spec.js`",
-    "line_count": "testplan 分流 +~20 / 提示词 +~30 / webServer +10 ≈ 60 行"
+  "post_merge_confirmations": {
+    "check_all_consistent": "**不一致，且这是预期结果**：分支 547 / 主树 450。\n任务只要求 **main → 分支** 单向合并，故分支成了 main 的**超集**（main 独有 0 个实质提交），主树看不到分支的工作。\n**「基于主树的结论可能错」这个担心已消解** —— 主树是分支的真子集，分支上的结论全都成立，只是主树还没有那些套件。\n未做反向合并（branch → main）：它会移动共享线，超出本任务范围。分支进 main 目前是**可 fast-forward 的**（`git merge-base --is-ancestor main HEAD` 成立，无冲突）。",
+    "llm_py_final_version": "**分支版本**（sha256 前缀 b9ed8bdc5311；主树 8b96cf18bbd0；差 55 行）。\n分支版本新增 **401 凭据无效的终局判定**（`_is_auth_error`）—— 「凭据无效」与「配额耗尽」同属终局故障，不再逐个需求去撞。\n合并后分支的 llm.py 即最终版；主树仍是旧的（因未反向合并）。",
+    "module_4_5_status_still_valid": "**仍然成立**：\n  模块 4（审计 Provider）：❌ **未写** —— 全仓无 InspectProvider 形态\n  模块 5（五道门禁）：✅ **已合入** combined_ok（`loop.py:1544` 五道门不短路）\n  但模块 5 的**验证状态**仍是「⚠️ 合成验证」—— 合入 ≠ 已验证。SKILLS.md 的标注无需修改。"
   },
 
-  "P0_3_ui_gate": {
-    "fifth_gate_added": true,
-    "module": "factory/uigate.py（新增）",
-    "judgments": ["UI_TEST_MISSING", "UI_TEST_WEAK", "UI_ELEMENT_MISSING", "UI_ERROR_MESSAGE_MISMATCH"],
-    "combined_ok_updated": true,
-    "combined_ok_expression": "`dep_ok and mock_ok and bypass_ok and contract_ok and ui_ok`",
-    "not_short_circuit": "五道门全部求值后合并，不存在短路",
-    "element_coverage_map": true,
-    "coverage_map_detail": "按 **element_id** 建键（同 id 出现在多页时合并）；另含 `message_coverage`（错误消息 -> 是否逐字出现）",
-    "three_level_matcher": {
-      "①": "元素 id 原样 / 连字符 / 下划线 / 驼峰变体",
-      "②": "可访问名 label 的**可字面部分**（`getByLabel('Last updated:')`）",
-      "③": "**占位符型 label**（如 `<workbook name>`，可访问名运行时才确定）-> 回退到按**角色**匹配（`getByRole('link' / 'button' ...)`）",
-      "why_third_level_needed": "只认字面 label 会误报；**误报会让人关掉门禁 —— 那比没有门禁更糟**。这是真实误报（`workbook-link` 的 label 是占位符）逼出来的设计"
+  "WEAK_TEST_E2E_fix": {
+    "status": "**已由独立会话完成（ee5610b）**，本轮未重复改动",
+    "per_type_rules": {
+      "unit_integration": "import implementation（保留原判据）",
+      "e2e": "不要求 import 实现；改查 UI 元素断言"
     },
-    "optional_semantics": "未声明 ui_contracts 的需求返回 ok（reason=NO_UI_CONTRACT_DECLARED），行为逐位不变",
-    "executable_reason": "拒绝理由含**修正指令**（用 getByLabel/getByRole、错误消息逐字、不变量要有断言、不要写空断言骗过 RED）",
-    "line_count": "factory/uigate.py ≈ 250 行 + loop 接线 ≈ 30 行"
+    "shares_criterion_with_UI_TEST_WEAK": true,
+    "evidence": "ee5610b 改了 factory/loop.py(46) / testaudit.py(48) / uigate.py(110) 并新增 tests/test_ui_probe.py(166)",
+    "test_passed": "tests/test_weak_test_classification.py + tests/test_ui_test_weak.py + tests/test_ui_probe.py 均在 check_all 中通过"
   },
 
-  "real_bugs_found_by_real_runs": [
-    {
-      "id": "①",
-      "what": "**UI 门禁拿错计划对象** —— 传了 `plan`，而它是 `DesignPlan`（无 `test_files`）",
-      "symptom": "`UI_TEST_MISSING` 误报：「需求声明了 ui_contracts，但测试计划中没有 type=e2e 的测试文件」—— **而磁盘上明明躺着 3 个 `.spec.js`**",
-      "danger": "**它看起来像真结论**：报告完整、理由具体、状态 FAILED。若无磁盘核对就会误判为「E2E 未生成」",
-      "fix": "改用 `self._plans[req_id]`（RequirementTestPlan）",
-      "verification": "**用那次运行的真实产物复核**：传 DesignPlan -> 0 个 e2e（误报）；传测试计划 -> 3 个 e2e 且 **元素覆盖 11/11、门禁 ok=True**"
+  "VALID_RED_UNVERIFIED": {
+    "added": true,
+    "location": "factory/loop.py（RED 确认处）+ factory/models.py（`RequirementResult.red_verdict`）",
+    "distinguishes_from_WEAK_TEST": true,
+    "three_states": {
+      "VALID_RED": "失败原因**已确认**是实现尚未生产（`_expected_red_reason` 非 None）",
+      "VALID_RED_UNVERIFIED": "测试确实失败了，但原因**不是**已确认的那一种 → 记入 red_verdict + logger.warning，**不算 WEAK_TEST**",
+      "WEAK_TEST": "RED 阶段**根本没失败**（测试无效）"
     },
-    {
-      "id": "②",
-      "what": "**UI 检查位置错** —— 放在循环之后（gate 段），而 `reasons` 在**循环内**用它",
-      "symptom": "`UnboundLocalError: ui_ok_raw`，t7–t11 五条断言同时报红",
-      "caught_by": "**现有断言**（t7–t11）",
-      "fix": "移到循环内、reasons 之前（模型才能拿到「E2E 缺什么」的反馈）；循环前给初值保证 gate 段有值"
-    },
-    {
-      "id": "③",
-      "what": "UI 违规未进重试理由、未参与预算计费",
-      "fix": "`reasons.append(describe_ui([ui_check]))`；预算计费带上 `ui_violations`"
-    },
-    {
-      "id": "④",
-      "what": "**新规格未登记进 FROZEN** -> guard 的快照不带它 -> 运行报「未找到需求文件」，白跑一轮",
-      "fix": "FROZEN 补 `requirements_probe_ui`；加断言 ⑨「所有 requirements_* 目录都已登记进 FROZEN」（7 个全覆盖）"
-    },
-    {
-      "id": "⑤",
-      "what": "**YAML 未加引号的标量含 `: `** -> `mapping values are not allowed here`",
-      "note": "第 8 次同类自伤；已修并借此确认「夹具/制品本身也要被验证」"
-    }
-  ],
-
-  "design_tension_found": {
-    "what": "**WEAK_TEST 对 E2E 是误报**",
-    "log_evidence": "`[门禁] REQ-1-1-1 WEAK_TEST（3 个测试文件未引用实现（backend/test-e2e/*.spec.js[ALIAS_UNRESOLVED]）），回退到写测试阶段重写（1/4）`",
-    "why_it_happens": "`WEAK_TEST` 规则要求测试 **import 真实实现**（防「断言自己造的假数据」），是**为 unit 测试设计的**。而 E2E 测试**天然不 import 实现** —— 它通过**浏览器**驱动应用",
-    "consequence": "一次无谓的写测试重写（消耗预算与 token）",
-    "not_fixed_this_round": "本轮未修 —— 需要按 `type` 给 WEAK_TEST 加豁免，属独立改动。**但它是真实发现的规则冲突，应记入待办**"
+    "why_needed": "此前只有二值（weak / 非 weak）。「失败原因已确认」与「它失败了我不知道为什么」在结果上是同一个「通过」，读日志的人无法发现成因未归类。",
+    "boundary": "只增加**可观测性**，不改变阻断行为 —— 有反向断言钉住 `red_verdict` 不得参与 weak 计算",
+    "test_passed": "tests/test_valid_red_unverified.py —— **6 项通过**",
+    "field_serialized": "进 REQUIREMENT_RESULT_FIELDS，报告里可见"
   },
 
-  "unit_tests": {
-    "ui_contracts": "tests/test_ui_contracts.py —— **8 项**",
-    "playwright": "tests/test_playwright_e2e.py —— **11 项**",
-    "ui_gate": "tests/test_ui_gate.py —— **18 项**",
-    "note": "三个文件均按 19.2.7 判据双向验证 + 19.2.8 修改型夹具前提断言编写。测试中我自己也踩了两次：`element_coverage` 断言 12 实为 11（`last-updated` 两页重复，按 id 建键）；以及「替换 grid」前提断言报红（`Grid` 也出现在 label 里）——**后者正是 19.2.8 起作用**"
+  "empty_file_branch": {
+    "status": "**已由独立会话完成（66a7692）**，本轮未重复改动",
+    "TEST_BROKEN_reasons": ["empty_file", "syntax_error", "idiom_error"],
+    "diagnosis_log_split": true,
+    "evidence": "66a7692 「空测试文件必须被如实报出来 —— 两种方言此前都在说假话」；新增 tests/test_weak_test_classification.py(89)",
+    "test_passed": "在 check_all 中通过"
+  },
+
+  "dsh_kit": {
+    "directory": "dsh-governance-kit/",
+    "modules": ["ui-contract-extraction", "contract-freeze"],
+    "package_json_has_dsh_bundle": true,
+    "cordis_patch_yml": true,
+    "index_ts": "**用 index.js 而非 index.ts** —— 见 deviated_from_spec",
+    "module_3_deferred": true,
+    "files": [
+      "package.json（dsh.bundle.patch -> cordis.patch.yml）",
+      "cordis.patch.yml（只 insert，不改既有插件行）",
+      "index.js（export function apply(ctx) + export const inject=['tools']）",
+      "lib/contract.js（共享序列化与哈希，生成与校验**必须共用**）",
+      "tools/freeze_contract.js",
+      "tools/verify_contract.js",
+      "skills/ui-contract-extraction/SKILL.md",
+      "skills/contract-freeze/SKILL.md",
+      "kit-test.mjs（13 项端到端自测）",
+      "ARCHITECTURE.md / SKILLS.md / LESSONS.md / README.md"
+    ],
+    "deviated_from_spec": [
+      "① 用 `index.js` 而非任务写的 `index.ts`：DSH 的 Host-only bundle **无需构建工具**（install_bundle 不跑 TS 构建），`.ts` 会得到一个无法加载的模块。",
+      "② 用 `ctx.tools.register(definition)` 而非任务写的 `defineTool`：这是经 `cordis_inspect_query(Service, 'tools')` **实查**到的 API；`defineTool` 在 DSH 中不存在，照抄会静默失效。"
+    ],
+    "verified": {
+      "manifest": "dsh.bundle.patch / exports['.'] / meta.title 齐全",
+      "entry": "index.js 导出 apply（函数）+ inject=['tools'] + VERDICTS 三态名",
+      "tool_modules": "两个模块的 name/description/parameters/execute/render 齐全（ToolDefinition 要求）",
+      "end_to_end": "**kit-test.mjs 13 项全通过** —— 冻结 / 完好(OK) / 漂移(MISSING) / 实现不符(MISMATCH) / 篡改(TAMPERED，含前提断言) / 不存在 / 空声明不生成 / 重新冻结",
+      "reverse_verification": "**破坏 lib/contract.js 的 sha256 后自测必须报红** —— 已确认报红，证明自测不是恒绿"
+    },
+    "install_status": "**未安装**（`plugin_manager install_bundle` 需 danger-full-access 审批）。交付物是**可安装的包**，不是已安装的插件。"
   },
 
   "check_all": {
-    "assertions_passed": "**450 项 / 17 类**（主树与分支一致）",
+    "assertions_passed": "**547 项 / 23 类**（分支；主树 450 项 / 17 类）",
     "all_pass": true,
-    "delta": "较上轮 +42（UI 契约 8 + Playwright 11 + UI 门禁 18 + T41 四条 + FROZEN 覆盖 1）"
+    "delta_this_round": "+16（RED 三态 6 + 治理套件 10）"
   },
 
-  "closure6_run": {
-    "note": "**本轮跑的不是 closure6 而是 UI 探针** —— closure6 是 6 个纯后端需求，**不含 UI 需求**，用它验证 UI 三项 P0 无意义",
-    "REQ_1_1_1_status": "**FAILED**（首轮：UI_TEST_MISSING，实为我传错计划对象的误报；已修）",
-    "ui_gate_triggered": "**是** —— `UI_TEST_MISSING`（首轮）；修复后按真实产物复核为 `ok=True`",
-    "e2e_tests_generated": "**是** —— 3 个 `.spec.js` 于 `backend/test-e2e/`，**覆盖全部 11 个元素**",
-    "full_chain_result": "0 通过 / 1 失败（单需求探针）",
-    "run_1": "uiprobe2 —— 计划门禁拦下 e2e 放错目录（第 1 次）；生成 3 个 E2E；UI 门禁误报 UI_TEST_MISSING（我的 bug）",
-    "run_2": "uiprobe3 —— 计划门禁**再次**拦下（模型把 e2e 放进 `tests/e2e/`）；随后 **HTTP 402 余额耗尽**，未能跑完",
-    "environment_blocker": "**API 余额耗尽（HTTP 402 insufficient_balance）** —— 无法重跑。与此前的 429 配额耗尽同类，是外部约束"
+  "mistake_i_made_and_fixed": {
+    "what": "在主树提交时**把整个 `.pw-browsers/`（619 个文件、109 MB Chromium 二进制）提交了**，且提交信息声称「分支的 RED 三态与治理套件同步回主树」—— **而同步根本没发生**（主树 loop.py 里 VALID_RED_UNVERIFIED 0 处、两个新文件不存在、check_all 无登记）",
+    "severity": "两个问题叠加：① 109 MB 二进制污染仓库 ② **提交信息说了假话**，会误导后人以为主树已有那些改动",
+    "how_found": "紧接着核对「两树项数」时发现主树仍是 450 项 —— 与提交信息矛盾",
+    "fix": "`git reset --soft HEAD~1` 撤销；`.pw-browsers/` / `.npm-cache/` / `.cache/` / `*.zip:Zone.Identifier` 写入 .gitignore；重提为 `d983a6e`，**提交信息改为如实描述现状**（明写两树不一致、未做反向合并）",
+    "verified": "仓库中 .pw-browsers 文件数 = **0**"
+  },
+
+  "blocked_by_balance": {
+    "closure6": "pending —— API 余额耗尽（本轮前一次运行遇 HTTP 402 insufficient_balance）",
+    "UI_probe": "pending —— 同上"
   },
 
   "honest_caveats": [
-    "**UI 门禁的端到端修复未经完整真实运行验证** —— 第三次运行被余额耗尽阻断。验证依据是**第二次运行的真实磁盘产物复核**（3 个 e2e / 覆盖 11/11 / ok=True），这是强证据但不是端到端",
-    "**UI_TEST_WEAK 与 UI_ERROR_MESSAGE_MISMATCH 在真实运行中从未触发过** —— 前者因我传 `red_failed=None`（无法从「测试已通过」反推 RED）；后者因工作簿需求**没有错误消息**。两者只有合成测试覆盖",
-    "**E2E 从未真正跑起来过** —— 浏览器已装、webServer 已补，但实现的 UI 从未生成到可运行的程度（需求失败于计划/门禁阶段）。故「E2E 能真的驱动浏览器」这一层**未验证**",
-    "本轮**不是 closure6** —— closure6 无 UI 需求，验证对象是新建的 UI 探针"
-  ],
-
-  "next_step": {
-    "blocked_by": "API 余额耗尽（HTTP 402）",
-    "when_unblocked": [
-      "重跑 UI 探针，确认 UI 门禁真的 ok（而非靠产物复核）",
-      "修 WEAK_TEST 对 E2E 的误报（按 type 加豁免）",
-      "给 UI 探针补一个**含 error_messages** 的需求，让 UI_ERROR_MESSAGE_MISMATCH 有真实触发对象",
-      "验证 E2E 能真的驱动浏览器（需要一个能跑起来的 UI 实现）"
-    ],
-    "recommended_next_task": "**分支整合 merge main**（上轮已建议，仍未做）—— main 领先分支多个提交、分叉较深"
-  }
+    "**两树项数不一致（547 vs 450）** —— 这是 main→分支单向合并的预期结果，不是缺陷。但若期望「两树一致」，需要额外的 branch→main 合并（当前可 fast-forward）。**本任务未做。**",
+    "**dsh-governance-kit 未安装** —— 只验证了「包形态正确 + 工具端到端能判定三态」，未验证「注册进 DSH 后模型真的能调用它」。后者需要 install_bundle 审批。",
+    "**WEAK_TEST 修复与空文件分支不是本轮做的** —— 是独立会话的 ee5610b / 66a7692。本轮只确认其存在并在 check_all 中通过。",
+    "**步骤⑤ 的行为边界**：VALID_RED_UNVERIFIED 只增加可观测性，不改变任何通过/阻断判定。它的价值需要真实运行才能体现（目前只有合成断言）。",
+    "**模块 4/5 状态未变** —— 模块 4 仍未写，模块 5 仍是合成验证。"
+  ]
 }
